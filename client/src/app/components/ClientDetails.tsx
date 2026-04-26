@@ -43,7 +43,7 @@ export const ClientDetails = ({
   client, onBack, tasks, onEdit, onAddTask, onDelete, onToggleTask,
   onAddRecord, onEditRecord, onCompleteRecord, onRestoreRecord, onDeleteRecord,
   onDeleteTask, onEditTask, onUpdateAvatar, avatarSavingId,
-  categories, tags = [], users = [], userRole = 'admin'
+  categories, tags = [], users = [], userRole = 'owner'
 }: ClientDetailsProps) => {
   const clientTasks = tasks.filter(t => t.clientId && client.id && String(t.clientId) === String(client.id));
   const activeTasks = clientTasks.filter(t => !t.completed);

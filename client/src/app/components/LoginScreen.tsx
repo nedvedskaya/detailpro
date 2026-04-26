@@ -29,8 +29,11 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');           // только для signup
-  const [studioName, setStudioName] = useState(''); // только для signup
+  // signup-поля. Имя/фамилию шлём отдельно (после миграции 001 в saas_meta.users
+  // есть first_name/last_name). Для обратной совместимости бэк сам соберёт `name`.
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [studioName, setStudioName] = useState('');
   const [consentPersonalData, setConsentPersonalData] = useState(false);
   const [consentTerms, setConsentTerms] = useState(false);
   const [consentMarketing, setConsentMarketing] = useState(false);
@@ -84,7 +87,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
   const handleSignup = async () => {
     if (!studioName.trim()) return setError('Введите название студии');
-    if (!name.trim()) return setError('Введите ваше имя');
+    if (!firstName.trim()) return setError('Введите ваше имя');
     if (!email.trim()) return setError('Введите email');
     if (!validateEmail(email)) return setError('Введите корректный email');
     if (!password || password.length < 8) {
@@ -103,7 +106,8 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
         studioName: studioName.trim(),
         email: email.trim(),
         password,
-        name: name.trim(),
+        firstName: firstName.trim(),
+        lastName: lastName.trim() || undefined,
         consents: {
           personal_data: consentPersonalData,
           terms: consentTerms,
@@ -188,17 +192,30 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
                   className={inputClass('studioName')}
                   autoComplete="organization"
                 />
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => { setName(e.target.value); setError(''); }}
-                  onKeyPress={handleKeyPress}
-                  onFocus={() => setFocusedField('name')}
-                  onBlur={() => setFocusedField(null)}
-                  placeholder="Ваше имя"
-                  className={inputClass('name')}
-                  autoComplete="name"
-                />
+                <div className="grid grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => { setFirstName(e.target.value); setError(''); }}
+                    onKeyPress={handleKeyPress}
+                    onFocus={() => setFocusedField('firstName')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="Имя"
+                    className={inputClass('firstName')}
+                    autoComplete="given-name"
+                  />
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => { setLastName(e.target.value); setError(''); }}
+                    onKeyPress={handleKeyPress}
+                    onFocus={() => setFocusedField('lastName')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="Фамилия"
+                    className={inputClass('lastName')}
+                    autoComplete="family-name"
+                  />
+                </div>
               </>
             )}
 
@@ -314,7 +331,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
         <p className="mt-6 text-center text-xs text-zinc-400">
           {mode === 'login'
             ? 'Доступ только для авторизованных пользователей'
-            : 'После регистрации сразу попадёте в систему. 14 дней пробного периода.'}
+            : 'После регистрации сразу попадёте в систему. 3 дня пробного периода.'}
         </p>
       </div>
     </div>

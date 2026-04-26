@@ -1,10 +1,9 @@
-// Роль:
-//   admin   — владелец/админ студии. Создаёт пользователей, видит активити-логи.
-//             Заменяет старое 'owner'.
-//   manager — менеджер: видит всё кроме админки.
-//   master  — мастер: видит свои бронирования/задачи (бэк сейчас не фильтрует
-//             по master — это поведенческий слой клиента, бэк отдаёт всё студии).
-export type Role = 'admin' | 'manager' | 'master';
+// Роль (после миграции 001_profile_and_roles.sql):
+//   owner   — Собственник студии. Один на студию, создаётся при signup.
+//             Видит админ-панель, активити-логи, биллинг.
+//   manager — Менеджер: всё кроме админки и биллинга.
+//   master  — Мастер: свои записи/задачи (фильтрация на клиенте).
+export type Role = 'owner' | 'manager' | 'master';
 
 export type PaymentStatus = 'none' | 'advance' | 'paid';
 
@@ -12,15 +11,23 @@ export type TransactionType = 'income' | 'expense';
 
 // UserData приходит из /api/auth/me и /api/auth/login. На бэке id — UUID
 // (saas_meta.users.id). isOwner оставлен как удобный derived-флаг для UI:
-// проще писать `if (user.isOwner)`, чем `if (user.role === 'admin')`,
+// проще писать `if (user.isOwner)`, чем `if (user.role === 'owner')`,
 // и на этот флаг уже завязаны AdminPanel/ProfilePage/ClientDetails.
 export interface UserData {
   id: string;            // UUID
   name: string;
   email: string;
   role: Role;
-  isOwner: boolean;      // === (role === 'admin'); ставится в auth.normalizeUser
+  isOwner: boolean;      // === (role === 'owner'); ставится в auth.normalizeUser
   loginDate: string;     // ISO; для отображения «вошёл такого-то»
+
+  // Profile-поля (после миграции 001). Все опциональны: новый пользователь,
+  // зарегистрированный до апдейта, может их не иметь.
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+  avatarPath?: string | null; // URL для <img>, обычно `/avatars/<uuid>.webp`
+  createdAt?: string | null;
 }
 
 // Studio — отдельный объект из /api/auth/me. Хранит подписочные данные;
@@ -28,9 +35,46 @@ export interface UserData {
 export interface Studio {
   id: string;            // UUID
   name: string;          // display_name из saas_meta.studios
-  plan: string;          // 'trial' | 'starter' | ... — пока строкой, тарифы потом
+  plan: string;          // 'trial' | 'solo' | 'studio' | 'cancelled'
   access_until: string;  // ISO timestamp; null/прошлое → подписка истекла
   is_active: boolean;
+
+  // Опциональные поля из /api/auth/me и /api/profile (после wiring-а).
+  createdAt?: string | null;
+  schemaName?: string;
+}
+
+// ProfileResponse — структура GET /api/profile. Используется ProfilePage
+// и AdminPanel (последний берёт limits для блокировки кнопки «Добавить»).
+export interface ProfileResponse {
+  user: {
+    id: string;
+    email: string;
+    role: Role;
+    name: string;
+    firstName: string | null;
+    lastName: string | null;
+    phone: string | null;
+    avatarPath: string | null;
+    isActive: boolean;
+    createdAt: string;
+  };
+  studio: {
+    id: string;
+    displayName: string;
+    plan: string;
+    planLabel: string;       // «Соло», «Студия», «Пробный»…
+    planPriceRub: number;    // 4900 / 8900 / 0
+    planUpgradeable: boolean;// показывать ли CTA «Повысить тариф»
+    accessUntil: string;
+    isActive: boolean;
+    createdAt: string;
+  };
+  limits: {
+    currentUsers: number;
+    maxUsers: number;
+    canAddUsers: boolean;
+  };
 }
 
 export interface Booking {

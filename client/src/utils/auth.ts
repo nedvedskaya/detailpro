@@ -25,7 +25,18 @@ export type { UserData, Studio, Role } from './types';
 export { getRoleName } from './constants';
 
 interface MeResponse {
-  user: { id: string; name: string; email: string; role: Role };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role: Role;
+    // Profile-поля (после миграции 001). Бэк уже отдаёт их через /api/auth/me.
+    firstName?: string | null;
+    lastName?: string | null;
+    phone?: string | null;
+    avatarPath?: string | null;
+    createdAt?: string | null;
+  };
   studio: Studio;
 }
 
@@ -38,10 +49,25 @@ function normalizeUser(raw: MeResponse['user']): UserData {
     name: raw.name,
     email: raw.email,
     role: raw.role,
-    // isOwner — удобный derived-флаг, чтобы UI не писал везде role === 'admin'
-    isOwner: raw.role === 'admin',
+    // isOwner — удобный derived-флаг, чтобы UI не писал везде role === 'owner'
+    isOwner: raw.role === 'owner',
     loginDate: new Date().toISOString(),
+    firstName: raw.firstName ?? null,
+    lastName: raw.lastName ?? null,
+    phone: raw.phone ?? null,
+    avatarPath: raw.avatarPath ?? null,
+    createdAt: raw.createdAt ?? null,
   };
+}
+
+/**
+ * Обновить кэшированного пользователя после изменений в /profile.
+ * ProfilePage и UserMenu могут показывать новые данные без перезагрузки.
+ */
+export function patchCachedUser(patch: Partial<UserData>): UserData | null {
+  if (!cachedUser) return null;
+  cachedUser = { ...cachedUser, ...patch };
+  return cachedUser;
 }
 
 /**

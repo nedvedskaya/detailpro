@@ -51,14 +51,26 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
   return (
     <div className="bg-white border-b border-zinc-200 px-4 py-2 relative">
       <div className="flex items-center justify-between">
-        <button 
+        <button
           onClick={() => setIsMenuOpen(!isMenuOpen)}
-          className="flex items-center gap-1.5 hover:bg-zinc-50 px-2 py-1.5 rounded-lg transition-all"
+          className="flex items-center gap-2 hover:bg-zinc-50 px-2 py-1.5 rounded-lg transition-all"
         >
+          {/* Маленький аватар. Если файла нет — кружок-инициал. nginx /avatars/ кеширует 1д. */}
+          {user.avatarPath ? (
+            <img
+              src={user.avatarPath}
+              alt=""
+              className="w-6 h-6 rounded-full object-cover bg-zinc-100"
+            />
+          ) : (
+            <div className="w-6 h-6 rounded-full bg-zinc-200 text-zinc-600 text-[10px] font-bold flex items-center justify-center">
+              {(user.name || user.email || '?').charAt(0).toUpperCase()}
+            </div>
+          )}
           <div className="text-xs font-bold text-zinc-900">{user.name}</div>
-          <ChevronDown 
-            size={14} 
-            className={`text-zinc-400 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`} 
+          <ChevronDown
+            size={14}
+            className={`text-zinc-400 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`}
           />
         </button>
         {networkIndicator}
