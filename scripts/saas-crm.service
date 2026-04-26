@@ -1,0 +1,60 @@
+# systemd unit для saas-crm.
+#
+# Установка:
+#   sudo cp scripts/saas-crm.service /etc/systemd/system/saas-crm.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now saas-crm
+#
+# Логи: journalctl -u saas-crm -f
+#
+# sudoers фрагмент для пользователя deploy (положить в /etc/sudoers.d/saas-crm):
+#   deploy ALL=(root) NOPASSWD: /bin/systemctl restart saas-crm, /bin/systemctl status saas-crm
+
+[Unit]
+Description=SaaS CRM (multi-tenant detailing)
+After=network.target
+# Если Postgres локальный, раскомментировать:
+# After=network.target postgresql.service
+# Wants=postgresql.service
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/saas-crm
+EnvironmentFile=/var/www/saas-crm/.env
+ExecStart=/usr/bin/env node server/server.cjs
+Restart=on-failure
+RestartSec=3
+# Не убивать дочерние процессы pg_dump, если бэкап вдруг был запущен из node
+KillMode=mixed
+TimeoutStopSec=20
+
+# Логи в journald (без ротации файлов — journald сам ротирует)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=saas-crm
+
+# ── Hardening (минимальный, без ломающих опций) ────────────────────────
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# Запись разрешена только в эти каталоги:
+ReadWritePaths=/var/www/saas-crm/var /var/backups/saas-crm /var/log
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+# Без сети ломается pg → SOCK_STREAM/SOCK_DGRAM нужны
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Лимиты — небольшой Node-процесс не должен жрать много
+LimitNOFILE=65536
+MemoryHigh=512M
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
