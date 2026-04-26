@@ -115,12 +115,31 @@ chmod 600 "$DUMP_FILE"
 SIZE=$(du -h "$DUMP_FILE" | awk '{print $1}')
 echo "$LOG_PREFIX OK: размер $SIZE, записей в TOC $ENTRIES"
 
-# ── 6. Lastrun-маркер для внешнего мониторинга ────────────────────────
+# ── 6. Аватары пользователей ──────────────────────────────────────────
+# Не пихаем в pg_dump (раздулся бы). tar отдельным файлом, ротация общая.
+# AVATARS_DIR можно переопределить в .env, по умолчанию — стандартное место.
+AVATARS_DIR="${AVATARS_DIR:-$PROJECT_ROOT/var/avatars}"
+AVATARS_TGZ="$BACKUP_DIR/avatars-${DATE_TAG}.tgz"
+if [ -d "$AVATARS_DIR" ]; then
+  echo "$LOG_PREFIX tar avatars/ → $AVATARS_TGZ"
+  if tar -C "$(dirname "$AVATARS_DIR")" -czf "$AVATARS_TGZ" "$(basename "$AVATARS_DIR")" 2>/dev/null; then
+    chmod 600 "$AVATARS_TGZ"
+    AVATARS_SIZE=$(du -h "$AVATARS_TGZ" | awk '{print $1}')
+    echo "$LOG_PREFIX OK avatars: $AVATARS_SIZE"
+  else
+    echo "$LOG_PREFIX WARN: tar avatars failed (продолжаем — БД сохранена)" >&2
+    rm -f "$AVATARS_TGZ"
+  fi
+else
+  echo "$LOG_PREFIX skip avatars: $AVATARS_DIR не существует"
+fi
+
+# ── 7. Lastrun-маркер для внешнего мониторинга ────────────────────────
 date -Iseconds > "$BACKUP_DIR/lastrun.timestamp"
 
-# ── 7. Ротация ────────────────────────────────────────────────────────
+# ── 8. Ротация ────────────────────────────────────────────────────────
 echo "$LOG_PREFIX ротация: старше ${BACKUP_RETENTION_DAYS} дней"
-find "$BACKUP_DIR" -maxdepth 1 -type f -name 'saas-*.dump' \
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'saas-*.dump' -o -name 'avatars-*.tgz' \) \
      -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete || true
 
 echo "$LOG_PREFIX done"

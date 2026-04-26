@@ -1,9 +1,11 @@
 import type { Role, PaymentStatus } from './types';
 
 // === РОЛИ ===
-// admin — владелец/админ студии (бывший 'owner').
+// owner   — Собственник (создатель студии, единственный, не создаётся через UI)
+// manager — Менеджер: всё кроме админки и биллинга
+// master  — Мастер: свои записи/задачи
 export const ROLE_NAMES: Record<Role, string> = {
-  admin: 'Администратор',
+  owner: 'Собственник',
   manager: 'Менеджер',
   master: 'Мастер'
 };

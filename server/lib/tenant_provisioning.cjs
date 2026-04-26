@@ -31,7 +31,8 @@ const { safeIdent, validateSchemaName, suggestSchemaName } = require('./tenant.c
 const { hashPassword } = require('./auth.cjs');
 
 const TENANT_TEMPLATE_PATH = path.join(__dirname, '..', 'sql', '100_tenant_template.sql');
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 14;
+// Триал — 3 дня для всех новых студий. Существующие не трогаем.
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 3;
 
 // Загружаем шаблон один раз при старте — это крошечный файл, кешируется.
 let TEMPLATE_SQL_CACHE = null;
@@ -72,11 +73,13 @@ async function applyTenantTemplate(executor, schemaName) {
  * @param {string} args.displayName    — отображаемое имя студии (для UI).
  * @param {string} args.ownerEmail     — email первого админа (логин).
  * @param {string} args.ownerPassword  — plain-пароль (≥8 символов).
- * @param {string} [args.ownerName]    — имя для отображения.
+ * @param {string} [args.ownerName]    — имя для отображения (legacy).
+ * @param {string} [args.ownerFirstName] — имя для users.first_name.
+ * @param {string} [args.ownerLastName]  — фамилия для users.last_name.
  * @param {string} [args.plan='trial'] — стартовый план.
  * @returns {Promise<{ studioId: string, userId: string, schemaName: string }>}
  */
-async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword, ownerName, plan }) {
+async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword, ownerName, ownerFirstName, ownerLastName, plan }) {
   // Валидация на входе — до открытия транзакции.
   validateSchemaName(schemaName);
   if (!displayName || typeof displayName !== 'string') {
@@ -109,14 +112,28 @@ async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword
     // 3. Применяем шаблон таблиц.
     await applyTenantTemplate(client, schemaName);
 
-    // 4. Создаём первого пользователя-админа.
+    // 4. Создаём первого пользователя — Собственника.
+    // Если ownerName был передан как «Имя Фамилия», делим по первому пробелу
+    // в first_name/last_name (для совместимости со старым signup-флоу).
+    let firstName = ownerFirstName || null;
+    let lastName  = ownerLastName  || null;
+    if (!firstName && !lastName && ownerName) {
+      const parts = ownerName.trim().split(/\s+/);
+      firstName = parts[0] || null;
+      lastName  = parts.slice(1).join(' ') || null;
+    }
+    const computedName = ownerName
+      || [firstName, lastName].filter(Boolean).join(' ').trim()
+      || null;
+
     let userRes;
     try {
       userRes = await client.query(
-        `INSERT INTO saas_meta.users (studio_id, email, password_hash, role, name, is_active)
-           VALUES ($1, $2, $3, 'admin', $4, true)
+        `INSERT INTO saas_meta.users
+           (studio_id, email, password_hash, role, name, first_name, last_name, is_active)
+           VALUES ($1, $2, $3, 'owner', $4, $5, $6, true)
            RETURNING id`,
-        [studioId, ownerEmail.toLowerCase(), passwordHash, ownerName || null]
+        [studioId, ownerEmail.toLowerCase(), passwordHash, computedName, firstName, lastName]
       );
     } catch (err) {
       // unique_violation на email → понятная ошибка

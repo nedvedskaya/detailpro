@@ -60,7 +60,7 @@ import { api } from '@/utils/api';
 // AutocompleteInput вынесен в отдельный файл: /src/app/components/ui/AutocompleteInput.tsx
 // AppointmentInputs вынесен в отдельный файл: /src/app/components/forms/AppointmentInputs.tsx
 
-const TabBar = ({ activeTab, setActiveTab, userRole = 'admin', onTabChange = null }) => {
+const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', onTabChange = null }) => {
   const allTabs = [
     { id: 'clients', icon: Users, label: 'Клиенты' },
     { id: 'tasks', icon: CheckSquare, label: 'Задачи' },
@@ -1222,10 +1222,10 @@ const App = () => {
           {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} /></React.Suspense>}
           {activeTab === 'finance' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} /></React.Suspense>}
 
-          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} userRole={user?.role || 'admin'} />}
+          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} userRole={user?.role || 'owner'} />}
           {editingClient && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} />}
       </div>
-      <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={user?.role || 'admin'} onTabChange={() => setSelectedClient(null)} />
+      <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={user?.role || 'owner'} onTabChange={() => setSelectedClient(null)} />
       <style>{`
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
         :root {

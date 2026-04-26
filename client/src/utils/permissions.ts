@@ -26,7 +26,7 @@ export type Permission =
   | 'delete_database';
 
 const rolePermissions: Record<Role, Permission[]> = {
-  admin: [
+  owner: [
     'view_clients',
     'create_clients',
     'edit_clients',
@@ -70,8 +70,14 @@ export const hasPermission = (role: Role, permission: Permission): boolean => {
   return rolePermissions[role]?.includes(permission) || false;
 };
 
+// Сохраняем имя isAdmin для обратной совместимости со старыми импортами
+// (по семантике это «полные права студии» = собственник).
 export const isAdmin = (role: Role): boolean => {
-  return role === 'admin';
+  return role === 'owner';
+};
+
+export const isOwner = (role: Role): boolean => {
+  return role === 'owner';
 };
 
 export const getAvailableTabs = (role: Role): string[] => {

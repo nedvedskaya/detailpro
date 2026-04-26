@@ -162,7 +162,14 @@ router.post('/signup', async (req, res, next) => {
     const email = body.email;
     const password = body.password;
     const displayName = body.displayName || body.studioName;
-    const ownerName = body.ownerName || body.name;
+    const ownerFirstName = body.firstName || null;
+    const ownerLastName  = body.lastName  || null;
+    // Legacy: старый клиент шлёт `name` одной строкой. Если есть first/last —
+    // используем их; иначе ownerName сработает как fallback в createStudio.
+    const ownerName = body.ownerName
+      || body.name
+      || [ownerFirstName, ownerLastName].filter(Boolean).join(' ').trim()
+      || null;
     const rawSchemaName = body.schemaName;
     const policyVersion = body.policyVersion || consents.policyVersion || '1.0';
 
@@ -206,6 +213,8 @@ router.post('/signup', async (req, res, next) => {
         ownerEmail: email,
         ownerPassword: password,
         ownerName,
+        ownerFirstName,
+        ownerLastName,
       });
     } catch (err) {
       const code = err.code || '';
@@ -247,7 +256,7 @@ router.post('/signup', async (req, res, next) => {
     res.status(201).json({
       ok: true,
       studio: { id: result.studioId, schemaName: result.schemaName, displayName: displayName || schemaName },
-      user: { id: result.userId, email: email.toLowerCase(), role: 'admin' },
+      user: { id: result.userId, email: email.toLowerCase(), role: 'owner' },
     });
   } catch (err) {
     next(err);
@@ -350,9 +359,11 @@ router.post('/logout', async (req, res, next) => {
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.role, u.name, u.is_active,
+      `SELECT u.id, u.email, u.role, u.name,
+              u.first_name, u.last_name, u.phone, u.avatar_path, u.created_at,
+              u.is_active,
               s.id AS studio_id, s.schema_name, s.display_name, s.plan, s.is_active AS studio_active,
-              s.access_until
+              s.access_until, s.created_at AS studio_created_at
          FROM saas_meta.users u
          JOIN saas_meta.studios s ON s.id = u.studio_id
         WHERE u.id = $1`,
@@ -361,8 +372,23 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const row = rows[0];
     if (!row) return res.status(404).json({ error: 'user_not_found' });
 
+    // Computed name: предпочтение first+last, иначе legacy users.name.
+    const composed = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
+    const displayName = composed || row.name || '';
+
     res.json({
-      user: { id: row.id, email: row.email, role: row.role, name: row.name, isActive: row.is_active },
+      user: {
+        id: row.id,
+        email: row.email,
+        role: row.role,
+        name: displayName,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        phone: row.phone,
+        avatarPath: row.avatar_path,
+        createdAt: row.created_at,
+        isActive: row.is_active,
+      },
       studio: {
         id: row.studio_id,
         schemaName: row.schema_name,
@@ -370,6 +396,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         plan: row.plan,
         isActive: row.studio_active,
         accessUntil: row.access_until,
+        createdAt: row.studio_created_at,
       },
     });
   } catch (err) {

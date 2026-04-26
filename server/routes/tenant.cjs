@@ -113,7 +113,7 @@ router.put('/clients/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.put('/clients/:id/avatar', requireRole('admin', 'manager'), async (req, res, next) => {
+router.put('/clients/:id/avatar', requireRole('owner', 'manager'), async (req, res, next) => {
   try {
     const id = badId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_id' });
@@ -128,7 +128,7 @@ router.put('/clients/:id/avatar', requireRole('admin', 'manager'), async (req, r
   } catch (err) { next(err); }
 });
 
-router.delete('/clients/:id', requireRole('admin', 'manager'), async (req, res, next) => {
+router.delete('/clients/:id', requireRole('owner', 'manager'), async (req, res, next) => {
   try {
     const id = badId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_id' });
@@ -403,7 +403,7 @@ router.put('/transactions/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.delete('/transactions/:id', requireRole('admin', 'manager'), async (req, res, next) => {
+router.delete('/transactions/:id', requireRole('owner', 'manager'), async (req, res, next) => {
   try {
     const id = badId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_id' });
@@ -472,7 +472,7 @@ router.put('/tasks/:id', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.delete('/tasks/:id', requireRole('admin', 'manager'), async (req, res, next) => {
+router.delete('/tasks/:id', requireRole('owner', 'manager'), async (req, res, next) => {
   try {
     const id = badId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_id' });
@@ -781,7 +781,7 @@ router.post('/data/:key', async (req, res, next) => {
 // ACTIVITY LOGS  (только для admin)
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/activity-logs', requireRole('admin'), async (req, res, next) => {
+router.get('/activity-logs', requireRole('owner'), async (req, res, next) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);

@@ -11,7 +11,7 @@
  */
 
 import { logout } from './auth';
-import type { Studio, StudioUser } from './types';
+import type { ProfileResponse, Studio, StudioUser } from './types';
 
 const API_BASE = '/api';
 
@@ -53,7 +53,7 @@ function get<T>(path: string): Promise<T> {
   return fetch(`${API_BASE}${path}`, baseInit).then(handleResponse<T>);
 }
 
-function send<T>(method: 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown): Promise<T> {
+function send<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<T> {
   return fetch(`${API_BASE}${path}`, {
     ...baseInit,
     method,
@@ -80,7 +80,11 @@ export const api = {
     studioName: string;
     email: string;
     password: string;
-    name: string;
+    // name — legacy-поле для обратной совместимости. Если передан, бэк
+    // разрежет его по первому пробелу. Новые формы шлют firstName/lastName.
+    name?: string;
+    firstName?: string;
+    lastName?: string;
     consents: { personal_data: boolean; terms: boolean; marketing?: boolean };
   }) {
     return send<{ user: any; studio: Studio }>('POST', '/auth/signup', payload);
@@ -98,7 +102,30 @@ export const api = {
     return send<{ ok: true }>('POST', '/auth/password', { oldPassword, newPassword });
   },
 
-  // ────── админка студии (role=admin) ──────
+  // ────── профиль (личный кабинет) ──────
+  // Доступен и при просроченной подписке: /api/profile сидит ПОД requireAuth,
+  // но НЕ под requireActiveStudio (см. server/app.cjs).
+  getProfile() {
+    return get<ProfileResponse>('/profile');
+  },
+  updateProfile(patch: { firstName?: string | null; lastName?: string | null; phone?: string | null }) {
+    return send<{ ok: true; user: ProfileResponse['user'] }>('PATCH', '/profile', patch);
+  },
+  uploadAvatar(file: File) {
+    // multipart/form-data — заголовок Content-Type выставит браузер сам.
+    const fd = new FormData();
+    fd.append('avatar', file);
+    return fetch(`${API_BASE}/profile/avatar`, {
+      ...baseInit,
+      method: 'POST',
+      body: fd,
+    }).then(handleResponse<{ avatarPath: string }>);
+  },
+  deleteAvatar() {
+    return send<{ ok: true }>('DELETE', '/profile/avatar');
+  },
+
+  // ────── админка студии (role=owner) ──────
   getAdminUsers(params?: { search?: string; role?: string; is_active?: string }) {
     return get<any[]>(`/admin/users${qs(params)}`);
   },

@@ -1,15 +1,21 @@
 /**
- * AdminPanel — управление членами студии (только role=admin).
+ * AdminPanel — управление членами студии (только role=owner).
  *
- * Изменения относительно старой версии:
- *   - Убран `username` (бэк работает только по email).
- *   - id пользователя теперь UUID (string), не number.
- *   - `isOwner` стало derived: `user.role === 'admin'`.
- *   - `is_active` приходит как snake_case из API → нормализуем в `isActive`.
- *   - Добавлены роли `admin`/`manager`/`master` в селекте создания.
- *   - В качестве защитной меры от случайной деградации админа: фронт
- *     не показывает кнопки disable/delete для текущего пользователя
- *     (бэк это и так заблокирует, но UX лучше превентивно).
+ * Модель ролей (после миграции 001_profile_and_roles.sql):
+ *   owner   — Собственник студии. Один на студию, создаётся при signup.
+ *             Через UI **НЕ создаётся** (этот компонент не показывает option «owner»).
+ *   manager — Менеджер: всё кроме админки и биллинга.
+ *   master  — Мастер: свои записи/задачи.
+ *
+ * Лимит на количество сотрудников зависит от тарифа (см. server/lib/plans.cjs):
+ *   solo=1 (только собственник) → нельзя добавлять
+ *   studio=3 (собственник + 2)
+ *   trial=3
+ *   cancelled=0
+ *
+ * Лимит дублируется на фронте: GET /api/profile.limits — отключаем кнопку
+ * «Добавить пользователя» когда currentUsers >= maxUsers, чтобы юзер увидел
+ * подсказку до запроса. Бэк всё равно проверяет (POST /api/admin/users → 402).
  */
 
 import { useState, useEffect } from 'react';
@@ -20,7 +26,7 @@ import { formatDateTime } from '@/utils/helpers';
 import { Modal } from '@/app/components/ui/Modal';
 import { showToast } from '@/app/components/ui/Toast';
 import { getUser } from '@/utils/auth';
-import type { Role } from '@/utils/types';
+import type { ProfileResponse, Role } from '@/utils/types';
 
 interface ApiUser {
   id: string;
@@ -57,6 +63,11 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  // лимиты тарифа — для блокировки «Добавить» и счётчика «N из M».
+  // Подгружаем тем же эндпоинтом, что и ProfilePage. При ошибке — null,
+  // фронт ведёт себя как раньше (бэк всё равно вернёт 402 на POST).
+  const [limits, setLimits] = useState<ProfileResponse['limits'] | null>(null);
+  const [planLabel, setPlanLabel] = useState<string>('');
 
   const [newUser, setNewUser] = useState<{
     email: string;
@@ -73,6 +84,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
   useEffect(() => {
     loadUsers();
     loadLogs();
+    loadLimits();
   }, []);
 
   const loadUsers = async () => {
@@ -84,6 +96,16 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       console.error('Error loading users:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadLimits = async () => {
+    try {
+      const profile = await api.getProfile();
+      setLimits(profile.limits);
+      setPlanLabel(profile.studio.planLabel || profile.studio.plan);
+    } catch (error) {
+      console.error('Error loading limits:', error);
     }
   };
 
@@ -146,9 +168,22 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       setShowAddModal(false);
       loadUsers();
       loadLogs();
+      loadLimits();
     } catch (error: any) {
+      // 402 plan_limit_reached — бэк уже подсчитал, отдадим текст as-is.
       showToast(error?.message || 'Ошибка при создании пользователя', 'error');
     }
+  };
+
+  const handleAddClick = () => {
+    if (limits && !limits.canAddUsers) {
+      showToast(
+        `Лимит тарифа «${planLabel}» — ${limits.maxUsers}. Повысьте тариф в Профиле.`,
+        'warning'
+      );
+      return;
+    }
+    setShowAddModal(true);
   };
 
   const getActionLabel = (action: string) => {
@@ -178,8 +213,14 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
             <h1 className="text-xl font-black">Админ-панель</h1>
           </div>
           <button
-            onClick={() => setShowAddModal(true)}
-            className="w-10 h-10 rounded-full bg-black flex items-center justify-center active:scale-95 transition-all"
+            onClick={handleAddClick}
+            disabled={!!limits && !limits.canAddUsers}
+            title={limits && !limits.canAddUsers ? `Лимит тарифа «${planLabel}»: ${limits.maxUsers}` : 'Добавить пользователя'}
+            className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+              limits && !limits.canAddUsers
+                ? 'bg-zinc-300 cursor-not-allowed'
+                : 'bg-black active:scale-95'
+            }`}
           >
             <UserPlus size={18} className="text-white" />
           </button>
@@ -207,19 +248,48 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       <div className="flex-1 overflow-y-auto px-4 pt-4 pb-32 overscroll-contain">
         {activeTab === 'users' && (
           <div className="space-y-3">
+            {limits && (
+              <div className="bg-white border border-zinc-200 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-zinc-500">
+                    Сотрудников на тарифе «{planLabel}»
+                  </span>
+                  <span className="text-xs font-bold text-zinc-800">
+                    {limits.currentUsers} из {limits.maxUsers}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-[width] duration-500 ${
+                      limits.canAddUsers ? 'bg-zinc-900' : 'bg-amber-500'
+                    }`}
+                    style={{
+                      width: `${limits.maxUsers > 0
+                        ? Math.min(100, Math.round((limits.currentUsers / limits.maxUsers) * 100))
+                        : 0}%`,
+                    }}
+                  />
+                </div>
+                {!limits.canAddUsers && (
+                  <p className="mt-2 text-[11px] text-amber-600 font-medium">
+                    Лимит достигнут. Чтобы добавить сотрудника — повысьте тариф в Профиле.
+                  </p>
+                )}
+              </div>
+            )}
             {loading ? (
               <div className="text-center py-12 text-zinc-400 font-medium">Загрузка...</div>
             ) : users.length === 0 ? (
               <div className="text-center py-12 text-zinc-400 font-medium">Пользователи не найдены</div>
             ) : (
               users.map((user) => {
-                const isAdmin = user.role === 'admin';
+                const isOwner = user.role === 'owner';
                 const self = isSelf(user);
                 return (
                   <div key={user.id} className="bg-white border border-zinc-200 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center gap-3">
                       <div className={`w-11 h-11 rounded-full flex items-center justify-center text-white text-base font-black shrink-0 ${
-                        isAdmin ? 'bg-gradient-to-br from-amber-400 to-amber-500' : 'bg-gradient-to-br from-zinc-400 to-zinc-500'
+                        isOwner ? 'bg-gradient-to-br from-amber-400 to-amber-500' : 'bg-gradient-to-br from-zinc-400 to-zinc-500'
                       }`}>
                         {user.name.charAt(0).toUpperCase()}
                       </div>
@@ -245,7 +315,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                       <div>
                         <span className="text-zinc-400 font-medium">Роль</span>
                         <div className="flex items-center gap-1 mt-0.5">
-                          {isAdmin && <Shield size={12} className="text-amber-500" />}
+                          {isOwner && <Shield size={12} className="text-amber-500" />}
                           <p className="font-bold text-zinc-800">{getRoleName(user.role)}</p>
                         </div>
                       </div>
@@ -362,7 +432,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
               onChange={(e) => setNewUser({ ...newUser, role: e.target.value as Role })}
               className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-black transition-all bg-white"
             >
-              <option value="admin">Администратор</option>
+              {/* «Собственник» через UI не создаётся (он — единственный, тот, кто завёл студию). */}
               <option value="manager">Менеджер</option>
               <option value="master">Мастер</option>
             </select>

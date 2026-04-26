@@ -25,6 +25,7 @@ const express = require('express');
 
 const webhooksRouter = require('./routes/webhooks.cjs');
 const authRouter = require('./routes/auth.cjs');
+const profileRouter = require('./routes/profile.cjs');
 const tenantRouter = require('./routes/tenant.cjs');
 const adminRouter = require('./routes/admin.cjs');
 
@@ -100,8 +101,15 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRouter);
 
 // ──────────────────────────────────────────────────────────────────────
-// 5. Admin (управление пользователями студии)
-//     requireAuth → requireActiveStudio → router сам делает requireRole('admin')
+// 5. Profile (личный кабинет + аватар).
+//     ВАЖНО: только requireAuth — БЕЗ requireActiveStudio.
+//     Юзер с просроченной подпиской должен видеть профиль, чтобы оплатить.
+// ──────────────────────────────────────────────────────────────────────
+app.use('/api/profile', requireAuth, profileRouter);
+
+// ──────────────────────────────────────────────────────────────────────
+// 6. Admin (управление пользователями студии)
+//     requireAuth → requireActiveStudio → router сам делает requireRole('owner')
 // ──────────────────────────────────────────────────────────────────────
 app.use('/api/admin', requireAuth, requireActiveStudio, adminRouter);
 
