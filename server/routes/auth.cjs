@@ -150,17 +150,25 @@ async function recordConsent(client, { userId, email, types, policyVersion, poli
 // ──────────────────────────────────────────────────────────────────────
 router.post('/signup', async (req, res, next) => {
   try {
-    const {
-      email,
-      password,
-      displayName,
-      schemaName: rawSchemaName,
-      ownerName,
-      acceptedPolicy,
-      acceptedTerms,
-      acceptedMarketing,
-      policyVersion,
-    } = req.body || {};
+    // Принимаем ДВА формата payload:
+    //   (1) фронтовский (текущий клиент):
+    //       { studioName, email, password, name, consents: { personal_data, terms, marketing } }
+    //   (2) старый camelCase (для curl-смоков и совместимости):
+    //       { displayName, schemaName, email, password, ownerName, acceptedPolicy, acceptedTerms, acceptedMarketing, policyVersion }
+    // Из обоих собираем единый набор переменных.
+    const body = req.body || {};
+    const consents = body.consents || {};
+
+    const email = body.email;
+    const password = body.password;
+    const displayName = body.displayName || body.studioName;
+    const ownerName = body.ownerName || body.name;
+    const rawSchemaName = body.schemaName;
+    const policyVersion = body.policyVersion || consents.policyVersion || '1.0';
+
+    const acceptedPolicy = body.acceptedPolicy ?? consents.personal_data;
+    const acceptedTerms = body.acceptedTerms ?? consents.terms;
+    const acceptedMarketing = body.acceptedMarketing ?? consents.marketing;
 
     if (!acceptedPolicy || !acceptedTerms) {
       return res.status(400).json({ error: 'consent_required' });
