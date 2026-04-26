@@ -345,14 +345,29 @@ const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: 
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// Сборка URL для Prodamus с проброшенными параметрами.
+//   _param_studio_id — Prodamus вернёт его в webhook как поле studio_id
+//   _param_plan      — то же, как поле plan ('solo_month' | ...)
+//   customer_email   — Prodamus подставит на чекауте, чтобы клиенту не вводить
+// ──────────────────────────────────────────────────────────────────────
+function buildPayformUrl(card: TariffCard, studioId: string, email: string): string {
+  const u = new URL(card.payformUrl);
+  u.searchParams.set('_param_studio_id', studioId);
+  u.searchParams.set('_param_plan', card.id);
+  if (email) u.searchParams.set('customer_email', email);
+  return u.toString();
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Карточка тарифа (используется внутри сетки 2×2)
 // ──────────────────────────────────────────────────────────────────────
 interface TariffCardViewProps {
   card: TariffCard;
   isCurrent: boolean;
+  payUrl: string;
 }
 
-const TariffCardView = ({ card, isCurrent }: TariffCardViewProps) => {
+const TariffCardView = ({ card, isCurrent, payUrl }: TariffCardViewProps) => {
   // Подсветка: highlight=год → зелёная рамка-«рекомендуем», isCurrent → чёрная.
   const borderClass = isCurrent
     ? 'border-zinc-900 shadow-md'
@@ -398,7 +413,7 @@ const TariffCardView = ({ card, isCurrent }: TariffCardViewProps) => {
       </ul>
 
       <a
-        href={card.payformUrl}
+        href={payUrl}
         target="_blank"
         rel="noopener noreferrer"
         className={
@@ -740,6 +755,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                     currentTariff === card.id
                     || (currentGroup !== null && currentGroup === card.group)
                   }
+                  payUrl={buildPayformUrl(card, studio.id, user.email)}
                 />
               ))}
             </div>

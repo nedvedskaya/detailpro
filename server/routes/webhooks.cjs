@@ -4,31 +4,36 @@
  *
  * Контракт:
  *   POST /api/webhooks/prodamus
- *   Body: form-urlencoded или JSON (Продамус шлёт urlencoded)
- *   Header: Sign — HMAC-SHA256(secret, rawBody) в hex
+ *   Body: application/x-www-form-urlencoded (Продамус по-умолчанию)
+ *   Header: Sign — HMAC-SHA256 в hex
  *
- * Критические свойства:
- *   1. Подпись считается по СЫРЫМ байтам тела. Поэтому здесь используется
- *      express.raw(), а НЕ express.json/urlencoded — те уже попортили бы
- *      исходную строку (порядок ключей, кодирование).
- *   2. Идемпотентность через UNIQUE(order_id) в saas_meta.payments.
- *      Тот же webhook второй раз → ON CONFLICT DO NOTHING → 200, no-op.
- *      Продамус ретраит при не-200, поэтому возвращаем 200 даже на дубликат.
- *   3. Лог в saas_meta.webhook_log — ВСЕГДА, включая невалидную подпись.
- *      Это даёт аудит атак (кто-то пытается подобрать секрет → видим в логе).
- *   4. Невалидная подпись → 401 (не 200), но запись в лог уже есть.
- *      Возврат 401 нужен, чтобы:
- *        - в логах кабинета Продамуса видно «webhook не доставлен»
- *        - админ заметил misconfig (поменялся ключ)
+ * АЛГОРИТМ ПОДПИСИ ПРОДАМУСА (важно — он специфичный):
+ *   1. Парсим тело как form-urlencoded в плоский объект
+ *   2. Убираем поле `signature` (если оно лежит в теле, а не в заголовке)
+ *   3. РЕКУРСИВНО сортируем ключи (ksort/SORT_STRING в их PHP-SDK)
+ *   4. JSON.stringify с флагами JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+ *      (в Node это значит: НЕ escape-им юникод и слеши вручную)
+ *   5. HMAC-SHA256 от этой строки в hex
  *
- * Источники:
- *   https://help.prodamus.ru/payform/integracii/webhooks (общее описание)
+ *   Источник: их официальный PHP SDK Hmac::create:
+ *   https://github.com/Prodamus/Hmac.php
  *
- * ВАЖНО: Продамус использует свою спецификацию подписи — порядок параметров,
- * исключение поля `signature`. На практике секрет применяется к стабильно
- * сериализованному телу. Здесь используется упрощённая версия (HMAC-SHA256
- * по сырому body) — её надо подтвердить смоук-тестом из реального кабинета,
- * перед прод-запуском. См. блок TODO ниже.
+ *   Простой HMAC от raw-байт (как было в первой версии) НЕ работает —
+ *   подпись Продамуса собирается на уровне массива, не строки.
+ *
+ * Идемпотентность:
+ *   UNIQUE(order_id) в saas_meta.payments. Тот же webhook второй раз →
+ *   ON CONFLICT DO NOTHING → 200, no-op. Продамус ретраит при не-200.
+ *
+ * Лог:
+ *   Каждый запрос — в saas_meta.webhook_log (включая невалидную подпись).
+ *
+ * Маппинг плана:
+ *   В URL платформы передаём `_param_studio_id=<uuid>` и `_param_plan=solo_month|
+ *   solo_year|studio_month|studio_year`. Продамус возвращает их в webhook
+ *   как обычные поля. Из плана выводим:
+ *     - длительность (30 / 365 дней)
+ *     - запись в studios.plan: solo / studio (без _month|_year)
  */
 
 const express = require('express');
@@ -37,22 +42,46 @@ const { pool, withTx } = require('../lib/db.cjs');
 
 const router = express.Router();
 
-// ──────────────────────────────────────────────────────────────────────
-// raw-парсер: оставляем тело как Buffer, чтобы можно было считать HMAC
-// до того, как express попытается распарсить его как JSON или urlencoded.
-// ──────────────────────────────────────────────────────────────────────
 const rawParser = express.raw({ type: '*/*', limit: '256kb' });
 
 // ──────────────────────────────────────────────────────────────────────
-// Парсинг form-urlencoded из Buffer без полной зависимости.
-// Возвращает плоский { key: value } (повторяющиеся ключи берём последние).
+// Парсинг form-urlencoded из Buffer.
+// Поддержка вложенных ключей вида `customer[email]` (типичный для Продамуса).
+// На выходе — иерархия { customer: { email: ... } }.
 // ──────────────────────────────────────────────────────────────────────
 function parseUrlencoded(bodyStr) {
   const out = {};
   if (!bodyStr) return out;
   const params = new URLSearchParams(bodyStr);
-  for (const [k, v] of params) out[k] = v;
+  for (const [rawKey, value] of params) {
+    // bracket-нотация: a[b][c] → ['a','b','c']
+    const path = parseKeyPath(rawKey);
+    setDeep(out, path, value);
+  }
   return out;
+}
+
+function parseKeyPath(key) {
+  // 'a[b][c]' → ['a','b','c']
+  const parts = [];
+  const m = key.match(/^([^\[]+)((?:\[[^\]]*\])*)$/);
+  if (!m) return [key];
+  parts.push(m[1]);
+  const rest = m[2];
+  const re = /\[([^\]]*)\]/g;
+  let g;
+  while ((g = re.exec(rest)) !== null) parts.push(g[1]);
+  return parts;
+}
+
+function setDeep(obj, path, value) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    const k = path[i];
+    if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
+    cur = cur[k];
+  }
+  cur[path[path.length - 1]] = value;
 }
 
 function parseBody(buf, contentType) {
@@ -62,21 +91,51 @@ function parseBody(buf, contentType) {
   if (ct.includes('application/json')) {
     try { return JSON.parse(str); } catch (_) { return {}; }
   }
-  // По умолчанию — Продамус шлёт application/x-www-form-urlencoded
   return parseUrlencoded(str);
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Проверка подписи. Возвращает boolean, не throw — чтобы лог писался даже
-// при битых заголовках.
+// Алгоритм подписи Продамуса (port из их PHP Hmac::create).
+//
+// Рекурсивно сортируем ключи объекта. Для массивов сортировки нет — порядок
+// сохраняется как пришёл. На листьях — приводим к строке (Продамус делает то же
+// в JSON-сериализации).
 // ──────────────────────────────────────────────────────────────────────
-function verifySignature(rawBodyBuf, headerSign, secret) {
+function deepSort(value) {
+  if (Array.isArray(value)) {
+    return value.map(deepSort);
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    const out = {};
+    for (const k of keys) out[k] = deepSort(value[k]);
+    return out;
+  }
+  return value;
+}
+
+function prodamusHmac(payload, secret) {
+  // 1. Убираем подпись (на случай если она лежит в теле)
+  const cleaned = { ...payload };
+  delete cleaned.signature;
+  delete cleaned.sign;
+
+  // 2. Рекурсивная сортировка ключей
+  const sorted = deepSort(cleaned);
+
+  // 3. JSON.stringify. JS по-умолчанию НЕ escape-ит юникод и слеши — это и есть
+  //    эквивалент JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES в PHP.
+  const json = JSON.stringify(sorted);
+
+  // 4. HMAC-SHA256 в hex
+  return crypto.createHmac('sha256', secret).update(json, 'utf8').digest('hex');
+}
+
+function verifySignatureProdamus(payload, headerSign, secret) {
   if (!secret) return false;
   if (typeof headerSign !== 'string' || !headerSign) return false;
-  if (!Buffer.isBuffer(rawBodyBuf)) return false;
 
-  const expected = crypto.createHmac('sha256', secret).update(rawBodyBuf).digest('hex');
-  // Сравниваем строки одинаковой длины через timingSafeEqual.
+  const expected = prodamusHmac(payload, secret);
   if (expected.length !== headerSign.length) return false;
   try {
     return crypto.timingSafeEqual(
@@ -100,13 +159,19 @@ function mapStatus(prodamusStatus) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Длительность подписки по плану.
-// Solo / Studio — оба продаются помесячно (30 дней); если появятся годовые
-// тарифы, плюсуется по amount_kop.
+// Парсинг идентификатора плана из payform.
+//   solo_month / solo_year / studio_month / studio_year
+// → { dbPlan: 'solo' | 'studio', durationDays: 30 | 365 }
+// Если plan не распознан — возвращаем дефолт (30 дней, plan не меняем).
 // ──────────────────────────────────────────────────────────────────────
-function planDurationDays(plan) {
-  if (plan === 'solo' || plan === 'studio') return 30;
-  return 30;
+function resolvePlan(planId) {
+  if (typeof planId !== 'string') return { dbPlan: null, durationDays: 30 };
+  const lc = planId.toLowerCase();
+  const isYear = lc.endsWith('_year');
+  const days = isYear ? 365 : 30;
+  if (lc.startsWith('solo'))   return { dbPlan: 'solo',   durationDays: days };
+  if (lc.startsWith('studio')) return { dbPlan: 'studio', durationDays: days };
+  return { dbPlan: null, durationDays: days };
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -122,7 +187,6 @@ async function logWebhook({ source, ip, signatureValid, rawBody, status, errorMe
       [source, ip || null, signatureValid, rawBody || '', status || null, errorMessage || null]
     );
   } catch (err) {
-    // лог самого лога — в stderr, не валим запрос
     console.error('[webhooks] failed to write webhook_log:', err.message);
   }
 }
@@ -132,89 +196,78 @@ async function logWebhook({ source, ip, signatureValid, rawBody, status, errorMe
 // ──────────────────────────────────────────────────────────────────────
 router.post('/prodamus', rawParser, async (req, res) => {
   const ip = req.ip;
-  const rawBuf = req.body; // Buffer от express.raw
+  const rawBuf = req.body;
   const rawStr = rawBuf ? rawBuf.toString('utf8') : '';
   const secret = process.env.PRODAMUS_SECRET_KEY;
 
-  // Sign бывает в разном регистре — берём всё, что есть
-  const headerSign =
-    req.headers['sign'] ||
-    req.headers['x-sign'] ||
-    req.headers['signature'] ||
-    '';
-
-  const signatureValid = verifySignature(rawBuf, headerSign, secret);
-
-  // Если подпись не валидна — пишем лог и отвечаем 401, не обрабатывая.
-  if (!signatureValid) {
-    await logWebhook({
-      source: 'prodamus',
-      ip,
-      signatureValid: false,
-      rawBody: rawStr,
-      status: 401,
-      errorMessage: 'invalid_signature',
-    });
-    return res.status(401).send('invalid signature');
-  }
-
-  // Подпись ок — парсим тело и продолжаем.
+  // Парсим тело — оно нужно и для подписи, и для бизнес-логики
   let payload;
   try {
     payload = parseBody(rawBuf, req.headers['content-type']);
   } catch (err) {
     await logWebhook({
-      source: 'prodamus',
-      ip,
-      signatureValid: true,
-      rawBody: rawStr,
-      status: 400,
-      errorMessage: 'bad_body: ' + err.message,
+      source: 'prodamus', ip, signatureValid: false, rawBody: rawStr,
+      status: 400, errorMessage: 'bad_body: ' + err.message,
     });
     return res.status(400).send('bad body');
   }
 
-  // Извлекаем поля. Имена соответствуют типичным от Продамуса; при подключении
-  // реального кабинета может потребоваться корректировка.
+  // Sign бывает в разном регистре
+  const headerSign =
+    req.headers['sign'] ||
+    req.headers['x-sign'] ||
+    req.headers['signature'] ||
+    payload.signature ||  // на случай если положили в тело
+    '';
+
+  const signatureValid = verifySignatureProdamus(payload, headerSign, secret);
+
+  if (!signatureValid) {
+    await logWebhook({
+      source: 'prodamus', ip, signatureValid: false, rawBody: rawStr,
+      status: 401, errorMessage: 'invalid_signature',
+    });
+    return res.status(401).send('invalid signature');
+  }
+
+  // ─── Извлечение полей. Продамус отдаёт _param_* как простые поля без префикса. ───
+  // У них есть две конвенции: либо просто `studio_id` если форма передавала
+  // `?_param_studio_id=...`, либо вложенно `custom_field[studio_id]`.
+  // Парсер выше делает оба варианта плоскими (custom_field остаётся объектом).
   const orderId = String(payload.order_id || payload.order_num || payload.id || '').trim();
   const sumStr = String(payload.sum || payload.amount || '0').replace(',', '.');
-  const sum = Number(sumStr); // в рублях
+  const sum = Number(sumStr);
   const currency = String(payload.currency || 'RUB').toUpperCase();
   const status = mapStatus(payload.payment_status || payload.status);
-  const customFields = payload.custom_field || {};
-  const studioId = payload.studio_id || customFields.studio_id || null;
-  const plan = payload.plan || customFields.plan || null;
+
+  // studio_id и plan ищем в трёх местах: top-level, custom_field, вложенный объект
+  const customFields = (payload.custom_field && typeof payload.custom_field === 'object')
+    ? payload.custom_field
+    : {};
+  const studioId = (payload.studio_id || customFields.studio_id || '').toString().trim() || null;
+  const planId   = (payload.plan      || customFields.plan      || '').toString().trim() || null;
 
   if (!orderId) {
     await logWebhook({
-      source: 'prodamus',
-      ip,
-      signatureValid: true,
-      rawBody: rawStr,
-      status: 400,
-      errorMessage: 'missing_order_id',
+      source: 'prodamus', ip, signatureValid: true, rawBody: rawStr,
+      status: 400, errorMessage: 'missing_order_id',
     });
     return res.status(400).send('missing order_id');
   }
 
   if (!Number.isFinite(sum) || sum < 0) {
     await logWebhook({
-      source: 'prodamus',
-      ip,
-      signatureValid: true,
-      rawBody: rawStr,
-      status: 400,
-      errorMessage: 'bad_sum',
+      source: 'prodamus', ip, signatureValid: true, rawBody: rawStr,
+      status: 400, errorMessage: 'bad_sum',
     });
     return res.status(400).send('bad sum');
   }
 
   const amountKop = Math.round(sum * 100);
+  const { dbPlan, durationDays } = resolvePlan(planId);
 
   // ──────────────────────────────────────────────────────────────────
-  // Идемпотентность: INSERT ... ON CONFLICT DO NOTHING.
-  // Если RETURNING пуст — этот order_id уже обработан, выходим с 200.
-  // Если новый — продолжаем в транзакции до апдейта studios.
+  // Идемпотентная транзакция
   // ──────────────────────────────────────────────────────────────────
   try {
     const result = await withTx(async (client) => {
@@ -230,32 +283,28 @@ router.post('/prodamus', rawParser, async (req, res) => {
           amountKop,
           currency,
           status,
-          plan,
+          planId, // храним как пришло — solo_month/solo_year/etc — для аудита
           JSON.stringify(payload),
         ]
       );
 
-      if (ins.rowCount === 0) {
-        return { duplicate: true };
-      }
+      if (ins.rowCount === 0) return { duplicate: true };
 
-      // Только при status=paid и наличии studio_id двигаем подписку.
       if (status === 'paid' && studioId) {
-        const days = planDurationDays(plan);
+        // Двигаем access_until: max(текущий, now()) + длительность
+        // → если оплата пришла до окончания текущего периода, продлеваем поверх,
+        //   а не «срезаем» до now()+30. Это безопасно для overlap-биллинга.
         await client.query(
           `UPDATE saas_meta.studios
-              SET access_until = GREATEST(access_until, now()) + ($1 || ' days')::interval,
-                  plan         = COALESCE($2, plan),
-                  is_active    = TRUE,
-                  updated_at   = now()
+              SET access_until   = GREATEST(access_until, now()) + ($1 || ' days')::interval,
+                  plan           = COALESCE($2, plan),
+                  is_active      = TRUE,
+                  cancel_pending = FALSE,
+                  updated_at     = now()
             WHERE id = $3`,
-          [String(days), plan, studioId]
+          [String(durationDays), dbPlan, studioId]
         );
       } else if (status === 'refunded' && studioId) {
-        // Возврат — отрубаем доступ. Сессии не трогаем здесь, чтобы юзер
-        // увидел сообщение «подписка отменена» при следующем запросе через
-        // requireActiveStudio. Если нужна жёсткая инвалидация — отдельным
-        // вызовом в админке.
         await client.query(
           `UPDATE saas_meta.studios
               SET access_until = now(),
@@ -276,26 +325,17 @@ router.post('/prodamus', rawParser, async (req, res) => {
     });
 
     await logWebhook({
-      source: 'prodamus',
-      ip,
-      signatureValid: true,
-      rawBody: rawStr,
-      status: 200,
-      errorMessage: result.duplicate ? 'duplicate_idempotent' : null,
+      source: 'prodamus', ip, signatureValid: true, rawBody: rawStr,
+      status: 200, errorMessage: result.duplicate ? 'duplicate_idempotent' : null,
     });
 
     return res.status(200).send('ok');
   } catch (err) {
     console.error('[webhooks] prodamus processing failed:', err);
     await logWebhook({
-      source: 'prodamus',
-      ip,
-      signatureValid: true,
-      rawBody: rawStr,
-      status: 500,
-      errorMessage: err.message,
+      source: 'prodamus', ip, signatureValid: true, rawBody: rawStr,
+      status: 500, errorMessage: err.message,
     });
-    // 500 → Продамус ретраит. Это правильное поведение при транзиентной ошибке.
     return res.status(500).send('processing error');
   }
 });
