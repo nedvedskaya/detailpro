@@ -181,7 +181,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                         >
                             <span
                                 className={`text-xs font-black w-6 h-6 flex items-center justify-center rounded-full ${
-                                    date === getDateStr(0) ? 'bg-black text-white' : 'text-zinc-600'
+                                    date === getDateStr(0) ? 'bg-orange-500 text-white' : 'text-zinc-600'
                                 }`}
                             >
                                 {d}

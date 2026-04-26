@@ -11,7 +11,7 @@
  */
 
 import { logout } from './auth';
-import type { ProfileResponse, Studio, StudioUser } from './types';
+import type { ProfileResponse, Studio, StudioUser, ActivityLogEntry } from './types';
 
 const API_BASE = '/api';
 
@@ -135,22 +135,58 @@ export const api = {
 
   // ────── админка студии (role=owner) ──────
   getAdminUsers(params?: { search?: string; role?: string; is_active?: string }) {
-    return get<any[]>(`/admin/users${qs(params)}`);
+    return get<StudioUser[]>(`/admin/users${qs(params)}`);
   },
-  createAdminUser(user: { email: string; password: string; name: string; role: string }) {
-    return send<any>('POST', '/admin/users', user);
+  // На создании сотрудника owner может (опционально) сразу выставить
+  // can_view_finance — для master это поле игнорируется бэком (всегда false).
+  createAdminUser(user: {
+    email: string;
+    password: string;
+    name: string;
+    role: string;
+    can_view_finance?: boolean;
+  }) {
+    return send<StudioUser>('POST', '/admin/users', user);
   },
-  updateAdminUser(id: string, patch: { email?: string; name?: string; role?: string; is_active?: boolean }) {
-    return send<any>('PUT', `/admin/users/${id}`, patch);
+  // Расширенный patch: помимо имени/роли/активности теперь поддерживается
+  // can_view_finance (для роли manager). Бэк защищает: для master флаг
+  // принудительно false, последний owner не может быть демоутнут.
+  updateAdminUser(id: string, patch: {
+    email?: string;
+    name?: string;
+    role?: string;
+    is_active?: boolean;
+    can_view_finance?: boolean;
+  }) {
+    return send<StudioUser>('PUT', `/admin/users/${id}`, patch);
   },
   deleteUser(id: string) {
     return send<void>('DELETE', `/admin/users/${id}`);
   },
   blockUser(id: string, isActive: boolean) {
-    return send<any>('PUT', `/admin/users/${id}/block`, { is_active: isActive });
+    return send<StudioUser>('PUT', `/admin/users/${id}/block`, { is_active: isActive });
   },
-  getActivityLogs(params?: { limit?: number; offset?: number; user_id?: string; action?: string }) {
-    return get<any[]>(`/activity-logs${qs(params)}`);
+  // Сброс пароля сотрудника. Бэк генерирует временный пароль (~12 символов
+  // base64url) и возвращает его ОДИН РАЗ — UI показывает его в модалке
+  // с кнопкой «Скопировать». При следующем запросе пароль уже не получить.
+  // Все активные сессии сотрудника инвалидируются.
+  resetUserPassword(id: string) {
+    return send<{ ok: true; tempPassword: string }>('POST', `/admin/users/${id}/reset-password`);
+  },
+  // Активити-лог. Параметры:
+  //   limit/offset — пагинация (UI грузит по 50)
+  //   user_id      — фильтр по сотруднику
+  //   action       — фильтр по типу события (см. ACTION_LABELS)
+  //   from/to      — ISO-границы по created_at, включительно
+  getActivityLogs(params?: {
+    limit?: number;
+    offset?: number;
+    user_id?: string;
+    action?: string;
+    from?: string;
+    to?: string;
+  }) {
+    return get<ActivityLogEntry[]>(`/activity-logs${qs(params)}`);
   },
 
   // ────── список членов студии (для дропдаунов «мастер») ──────

@@ -26,9 +26,13 @@ interface FinanceViewProps {
     tags: any[];
     onAddTag: (tag: any) => void;
     onDeleteTag: (id: string) => void;
+    // canEdit=false → manager без can_view_finance сюда не попадёт вовсе (App.tsx
+    // проверяет viewerCanViewFinance перед рендером). Прокидывается на случай,
+    // если в будущем разрешим финансы менеджеру в read-only.
+    canEdit?: boolean;
 }
 
-export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction, onDeleteTransaction, categories, onAddCategory, onEditCategory, onDeleteCategory, tags, onAddTag, onDeleteTag }: FinanceViewProps) => {
+export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction, onDeleteTransaction, categories, onAddCategory, onEditCategory, onDeleteCategory, tags, onAddTag, onDeleteTag, canEdit = true }: FinanceViewProps) => {
     const [activeSection, setActiveSection] = useState<'operations' | 'analytics'>('operations');
     const [isAdding, setIsAdding] = useState(false);
     const [editingTransaction, setEditingTransaction] = useState(null);
@@ -362,7 +366,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                 value={newTransaction.title} 
                                 onChange={(e) => setNewTransaction({...newTransaction, title: e.target.value})}
                                 placeholder="Например: Зарплата, Аренда..." 
-                                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-black transition-all" 
+                                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-orange-500 transition-all" 
                             />
                         </div>
                         <div>
@@ -372,7 +376,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                 value={newTransaction.amount} 
                                 onChange={(e) => setNewTransaction({...newTransaction, amount: e.target.value})}
                                 placeholder="0" 
-                                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-2xl font-black outline-none focus:border-black transition-all" 
+                                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-2xl font-black outline-none focus:border-orange-500 transition-all" 
                             />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
@@ -382,7 +386,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                     type="date" 
                                     value={newTransaction.date} 
                                     onChange={(e) => setNewTransaction({...newTransaction, date: e.target.value})}
-                                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-black transition-all" 
+                                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-orange-500 transition-all" 
                                 />
                             </div>
                             <div>
@@ -391,7 +395,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                     type="time" 
                                     value={newTransaction.time || ''} 
                                     onChange={(e) => setNewTransaction({...newTransaction, time: e.target.value})}
-                                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-black transition-all" 
+                                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-sm font-bold outline-none focus:border-orange-500 transition-all" 
                                 />
                             </div>
                         </div>
@@ -435,7 +439,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                 isEditingCategories
                                                 ? 'bg-red-50 border border-red-200 text-red-700 animate-pulse-subtle'
                                                 : matchId(selectedCategory, cat.id) 
-                                                    ? 'bg-black text-white shadow-md' 
+                                                    ? 'bg-orange-500 text-white shadow-md' 
                                                     : 'bg-white border border-zinc-200 text-zinc-700 hover:border-zinc-300'
                                             }`}
                                             onClick={() => {
@@ -492,7 +496,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                 isEditingTags
                                                 ? 'bg-red-50 border border-red-200 text-red-700 animate-pulse-subtle'
                                                 : selectedTags.some(id => matchId(id, tag.id))
-                                                    ? 'bg-black text-white shadow-md' 
+                                                    ? 'bg-orange-500 text-white shadow-md' 
                                                     : 'bg-white border border-zinc-200 text-zinc-700 hover:border-zinc-300'
                                             }`}
                                             onClick={() => {
@@ -629,10 +633,10 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
             </div>
         </Modal>
         
-        <Header 
-            title="Финансы" 
-            actionIcon={activeSection === 'operations' ? Plus : null} 
-            onAction={activeSection === 'operations' ? () => setIsAdding(true) : null} 
+        <Header
+            title="Финансы"
+            actionIcon={canEdit && activeSection === 'operations' ? Plus : null}
+            onAction={canEdit && activeSection === 'operations' ? () => setIsAdding(true) : null}
             secondaryIcon={Download}
             onSecondaryAction={handleExportToExcel}
             showSecondaryAction={activeSection === 'operations' && transactions.length > 0}
@@ -702,7 +706,9 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                   transaction={t}
                                                   category={category}
                                                   tags={transactionTags}
-                                                  onEdit={(transaction) => {
+                                                  // В read-only прячем меню Edit/Delete: TransactionItem
+                                                  // не рендерит экшены, если onEdit/onDelete = undefined.
+                                                  onEdit={!canEdit ? undefined : (transaction) => {
                                                       setEditingTransaction(transaction);
                                                       const transactionTitle = transaction.title || transaction.description || '';
                                                       const dateStr = toDateStr(transaction.date || transaction.createdDate);
@@ -721,7 +727,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                       setSelectedTags(Array.isArray(transaction.tags) ? transaction.tags : []);
                                                       setIsAdding(true);
                                                   }}
-                                                  onDelete={onDeleteTransaction}
+                                                  onDelete={canEdit ? onDeleteTransaction : undefined}
                                               />
                                           );
                                       })}

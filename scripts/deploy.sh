@@ -91,14 +91,14 @@ npm ci --omit=dev
 
 # Применяем 000_saas_meta.sql (идемпотентно, IF NOT EXISTS)
 npm run init
-
-# Рестарт через systemd (sudoers NOPASSWD)
-sudo systemctl restart saas-crm
-
-# Лог последних 20 строк юнита для быстрой диагностики
-sleep 2
-sudo systemctl status saas-crm --no-pager --lines=20 || true
 EOF
+
+# Рестарт делаем ОТДЕЛЬНОЙ ssh-сессией с -t (PTY): на VPS sudoers содержит
+# Defaults use_pty, поэтому без TTY sudo откажет даже с NOPASSWD. Отдельная
+# сессия гарантирует, что PTY не конфликтует с heredoc-stdin предыдущей.
+ssh -tt "${REMOTE}" "sudo -n /bin/systemctl restart saas-crm" </dev/null
+sleep 2
+ssh -tt "${REMOTE}" "sudo -n /bin/systemctl status saas-crm --no-pager --lines=10 || true" </dev/null
 
 # ── 5. Health check ────────────────────────────────────────────────────
 log "health: ${DEPLOY_HEALTH_URL}"

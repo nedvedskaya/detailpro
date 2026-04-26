@@ -28,18 +28,34 @@ export interface UserData {
   phone?: string | null;
   avatarPath?: string | null; // URL для <img>, обычно `/avatars/<uuid>.webp`
   createdAt?: string | null;
+
+  // canViewFinance: true — у пользователя видна вкладка «Финансы».
+  // Для master ВСЕГДА false (хардкод бэка).
+  // Для owner ВСЕГДА true.
+  // Для manager — по флагу users.can_view_finance, который собственник
+  // переключает в админ-панели. Старые БД без миграции 003 → undefined,
+  // тогда трактуем как true (см. canViewFinance() в utils/permissions.ts).
+  canViewFinance?: boolean;
+
+  // ISO; null если ни разу не логинился (новый сотрудник).
+  lastLoginAt?: string | null;
 }
 
 // Studio — отдельный объект из /api/auth/me. Хранит подписочные данные;
-// фронт показывает access_until в шапке/профиле для предупреждения о просрочке.
+// фронт показывает accessUntil в шапке/профиле для предупреждения о просрочке.
+//
+// ВАЖНО: поля camelCase, чтобы матчить /api/auth/me и /api/profile (оба
+// возвращают именно так — см. server/routes/auth.cjs:392-400). Раньше тип
+// был snake_case → App.tsx читал undefined и подписочный гейт ложно
+// срабатывал.
 export interface Studio {
   id: string;            // UUID
-  name: string;          // display_name из saas_meta.studios
+  name?: string;         // legacy alias displayName (оставлен для совместимости)
+  displayName?: string;  // display_name из saas_meta.studios
   plan: string;          // 'trial' | 'solo' | 'studio' | 'cancelled'
-  access_until: string;  // ISO timestamp; null/прошлое → подписка истекла
-  is_active: boolean;
+  accessUntil: string;   // ISO timestamp; null/прошлое → подписка истекла
+  isActive: boolean;
 
-  // Опциональные поля из /api/auth/me и /api/profile (после wiring-а).
   createdAt?: string | null;
   schemaName?: string;
 }
@@ -58,6 +74,9 @@ export interface ProfileResponse {
     avatarPath: string | null;
     isActive: boolean;
     createdAt: string;
+    // см. UserData.canViewFinance — те же правила.
+    canViewFinance?: boolean;
+    lastLoginAt?: string | null;
   };
   studio: {
     id: string;
@@ -170,4 +189,38 @@ export interface StudioUser {
   email: string;
   role: Role;
   is_active: boolean;
+  // Поля, которые отдаёт расширенный /api/admin/users (для админ-панели).
+  // На дропдауне «мастер» эти поля не используются, но тип общий — отметим
+  // как опциональные.
+  can_view_finance?: boolean;
+  last_login_at?: string | null;
+  avatar_path?: string | null;
+  phone?: string | null;
+  created_at?: string | null;
+  // Расширенные профильные поля (миграция 001). Бэк /api/admin/users отдаёт их,
+  // чтобы owner видел в карточках актуальные данные после изменений сотрудником
+  // в /profile (имя, фамилия, аватар) без перезагрузки.
+  first_name?: string | null;
+  last_name?: string | null;
+}
+
+/**
+ * Запись активити-лога. Приходит из GET /api/activity-logs.
+ * action и entity_type — короткие строки в нижнем регистре, словарь см. в
+ * utils/constants.ts (ACTION_LABELS, ENTITY_LABELS).
+ *
+ * entity_id хранится как TEXT (миграция 003) — поддерживает и SERIAL CRM-айди,
+ * и UUID пользователей.
+ */
+export interface ActivityLogEntry {
+  id: number;
+  user_id: string | null;
+  user_name: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  entity_name: string | null;
+  details: string | null;
+  ip_address: string | null;
+  created_at: string;       // ISO timestamp
 }

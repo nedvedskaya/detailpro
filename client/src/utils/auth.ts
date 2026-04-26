@@ -36,6 +36,9 @@ interface MeResponse {
     phone?: string | null;
     avatarPath?: string | null;
     createdAt?: string | null;
+    // Поля админ-блока (после миграции 003).
+    canViewFinance?: boolean;
+    lastLoginAt?: string | null;
   };
   studio: Studio;
 }
@@ -57,6 +60,12 @@ function normalizeUser(raw: MeResponse['user']): UserData {
     phone: raw.phone ?? null,
     avatarPath: raw.avatarPath ?? null,
     createdAt: raw.createdAt ?? null,
+    // canViewFinance: бэк уже учитывает роль (master → false всегда,
+    // owner → true всегда, manager → по флагу). Если миграция 003 ещё не
+    // накатилась — поле undefined, и canViewFinance() в permissions.ts
+    // фолбекнет на true.
+    canViewFinance: raw.canViewFinance,
+    lastLoginAt: raw.lastLoginAt ?? null,
   };
 }
 

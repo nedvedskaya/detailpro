@@ -95,7 +95,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                 value={String(data.service || '')} 
                 onChange={onChange} 
                 placeholder="Услуга / Деталь" 
-                className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-base font-medium text-black outline-none focus:border-black shadow-sm" 
+                className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-base font-medium text-black outline-none focus:border-orange-500 shadow-sm" 
             />
             
             <div className="flex gap-3">
@@ -106,7 +106,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                         name="date" 
                         value={String(data.date || '')} 
                         onChange={handleDateChange} 
-                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-black shadow-sm"
+                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-orange-500 shadow-sm"
                     />
                 </div>
                 <div className="w-28">
@@ -116,7 +116,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                         name="time" 
                         value={String(data.time || '')} 
                         onChange={onChange} 
-                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-black shadow-sm text-center"
+                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-orange-500 shadow-sm text-center"
                     />
                 </div>
             </div>
@@ -130,7 +130,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                     value={String(data.endDate || '')} 
                     min={data.date || ''}
                     onChange={handleEndDateChange} 
-                    className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-black shadow-sm"
+                    className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-orange-500 shadow-sm"
                 />
             </div>
             
@@ -196,7 +196,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                         name="master_id"
                         value={data.master_id ?? ''}
                         onChange={(e) => onChange({ target: { name: 'master_id', value: e.target.value } })}
-                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-black shadow-sm"
+                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-orange-500 shadow-sm"
                     >
                         <option value="">Не назначен</option>
                         {masters
@@ -216,7 +216,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                     value={String(data.amount || '')} 
                     onChange={onChange} 
                     placeholder="0 ₽" 
-                    className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-lg font-bold text-black outline-none focus:border-black shadow-sm" 
+                    className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-lg font-bold text-black outline-none focus:border-orange-500 shadow-sm" 
                 />
             </div>
             
@@ -229,7 +229,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                         value={data.advance ? String(data.advance) : ''} 
                         onChange={handleAdvanceChange} 
                         placeholder="0 ₽" 
-                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold text-black outline-none focus:border-black shadow-sm" 
+                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold text-black outline-none focus:border-orange-500 shadow-sm" 
                     />
                 </div>
                 <div className="flex-1">
@@ -239,7 +239,7 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                         name="advanceDate" 
                         value={String(data.advanceDate || '')} 
                         onChange={onChange} 
-                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-black shadow-sm" 
+                        className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium text-black outline-none focus:border-orange-500 shadow-sm" 
                     />
                 </div>
             </div>

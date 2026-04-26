@@ -19,6 +19,9 @@ interface ClientsViewProps {
   tags?: any[];
   users?: any[];
   isOnline?: boolean;
+  // canEdit=false → master-режим: скрываем «+», «Редактировать», «Удалить».
+  // Тап по карточке всё равно открывает ClientDetails в режиме просмотра.
+  canEdit?: boolean;
 }
 
 const sortOptions: { value: SortMode; label: string }[] = [
@@ -37,7 +40,8 @@ export const ClientsView = ({
   categories = [],
   tags = [],
   users = [],
-  isOnline = true
+  isOnline = true,
+  canEdit = true,
 }: ClientsViewProps) => {
   const [isAdding, setIsAdding] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('date');
@@ -112,7 +116,7 @@ export const ClientsView = ({
                 onClick={() => setShowSortMenu(!showSortMenu)}
                 className={`w-8 h-8 rounded-full flex items-center justify-center transition-all active:scale-95 ${
                   isSortNonDefault
-                    ? 'bg-black text-white'
+                    ? 'bg-orange-500 text-white'
                     : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600'
                 }`}
                 title="Сортировка"
@@ -149,18 +153,20 @@ export const ClientsView = ({
               )}
             </div>
           </div>
-          <button
-            onClick={() => isOnline && setIsAdding(true)}
-            disabled={!isOnline}
-            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 ${
-              isOnline 
-                ? 'bg-black hover:scale-110' 
-                : 'bg-zinc-300 cursor-not-allowed'
-            }`}
-            title={isOnline ? 'Добавить клиента' : 'Нет подключения к сети'}
-          >
-            <Plus size={24} className="text-white" />
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => isOnline && setIsAdding(true)}
+              disabled={!isOnline}
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all active:scale-95 ${
+                isOnline
+                  ? 'bg-orange-500 hover:scale-110'
+                  : 'bg-zinc-300 cursor-not-allowed'
+              }`}
+              title={isOnline ? 'Добавить клиента' : 'Нет подключения к сети'}
+            >
+              <Plus size={24} className="text-white" />
+            </button>
+          )}
         </div>
         
         <div className="px-6 pb-3 pt-3 relative">
@@ -170,7 +176,7 @@ export const ClientsView = ({
             placeholder="Поиск по базе..." 
             value={search} 
             onChange={(e) => setSearch(e.target.value)} 
-            className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-12 pr-4 text-sm font-medium outline-none focus:border-black transition-all" 
+            className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-12 pr-4 text-sm font-medium outline-none focus:border-orange-500 transition-all" 
           />
         </div>
 
@@ -217,12 +223,14 @@ export const ClientsView = ({
           />
         ) : (
           sortedItems.map(client => (
-            <ClientListCard 
-              key={client.id} 
-              client={client} 
-              onOpen={() => onOpenClient(client)} 
-              onEdit={() => onEditClient({ client, mode: 'base' })} 
-              onDelete={() => onDeleteClient(client.id)} 
+            <ClientListCard
+              key={client.id}
+              client={client}
+              onOpen={() => onOpenClient(client)}
+              // master не имеет права редактировать/удалять — передаём undefined,
+              // ClientListCard в этом случае не рендерит swipe-actions/контекстное меню.
+              onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
+              onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
             />
           ))
         )}

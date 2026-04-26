@@ -69,6 +69,14 @@ function buildDisplayName(row) {
   return combined || row.name || '';
 }
 
+function computeCanViewFinance(role, flag) {
+  // master никогда не видит финансы (хардкод; toggle для master в админке скрыт);
+  // owner всегда видит; manager — по флагу (default true для не-мигрированных БД).
+  if (role === 'master') return false;
+  if (role === 'owner') return true;
+  return flag !== false;
+}
+
 function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
   const meta = planMeta(studioRow.plan);
   const maxUsers = maxUsersForPlan(studioRow.plan);
@@ -85,6 +93,8 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       avatarPath: userRow.avatar_path,
       isActive: userRow.is_active,
       createdAt: userRow.created_at,
+      canViewFinance: computeCanViewFinance(userRow.role, userRow.can_view_finance),
+      lastLoginAt: userRow.last_login_at || null,
     },
     studio: {
       id: studioRow.id,
@@ -112,42 +122,40 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
 // GET /api/profile
 // ──────────────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT
-          u.id, u.email, u.role, u.name,
-          u.first_name, u.last_name, u.phone, u.avatar_path,
-          u.is_active, u.created_at,
-          s.id AS studio_id, s.display_name, s.plan,
-          s.is_active AS studio_active, s.access_until,
-          s.created_at AS studio_created_at,
-          s.cancel_pending AS studio_cancel_pending,
-          (SELECT count(*)::int FROM saas_meta.users
-            WHERE studio_id = s.id AND is_active = true) AS current_users
-         FROM saas_meta.users u
-         JOIN saas_meta.studios s ON s.id = u.studio_id
-        WHERE u.id = $1`,
-      [req.session.userId]
-    );
-    const row = rows[0];
-    if (!row) return res.status(404).json({ error: 'user_not_found' });
+  const { rows } = await pool.query(
+    `SELECT
+        u.id, u.email, u.role, u.name,
+        u.first_name, u.last_name, u.phone, u.avatar_path,
+        u.is_active, u.created_at, u.can_view_finance, u.last_login_at,
+        s.id AS studio_id, s.display_name, s.plan,
+        s.is_active AS studio_active, s.access_until,
+        s.created_at AS studio_created_at,
+        s.cancel_pending AS studio_cancel_pending,
+        (SELECT count(*)::int FROM saas_meta.users
+          WHERE studio_id = s.id AND is_active = true) AS current_users
+       FROM saas_meta.users u
+       JOIN saas_meta.studios s ON s.id = u.studio_id
+      WHERE u.id = $1`,
+    [req.session.userId]
+  );
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: 'user_not_found' });
 
-    const userRow = {
-      id: row.id, email: row.email, role: row.role, name: row.name,
-      first_name: row.first_name, last_name: row.last_name, phone: row.phone,
-      avatar_path: row.avatar_path, is_active: row.is_active, created_at: row.created_at,
-    };
-    const studioRow = {
-      id: row.studio_id, display_name: row.display_name, plan: row.plan,
-      is_active: row.studio_active, access_until: row.access_until,
-      created_at: row.studio_created_at,
-      cancel_pending: row.studio_cancel_pending,
-    };
+  const userRow = {
+    id: row.id, email: row.email, role: row.role, name: row.name,
+    first_name: row.first_name, last_name: row.last_name, phone: row.phone,
+    avatar_path: row.avatar_path, is_active: row.is_active, created_at: row.created_at,
+  };
+  const studioRow = {
+    id: row.studio_id, display_name: row.display_name, plan: row.plan,
+    is_active: row.studio_active, access_until: row.access_until,
+    created_at: row.studio_created_at,
+    cancel_pending: row.studio_cancel_pending,
+  };
 
-    res.json(shapeProfileResponse({
-      userRow, studioRow, currentUsers: row.current_users,
-    }));
-  } catch (err) { next(err); }
+  res.json(shapeProfileResponse({
+    userRow, studioRow, currentUsers: row.current_users,
+  }));
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -198,8 +206,13 @@ router.patch('/', requireAuth, async (req, res, next) => {
 
     // Если меняем имя/фамилию — пересоберём `name` в БД (для совместимости
     // с местами кода, где ещё читают users.name напрямую).
+    //
+    // ВАЖНО: если после апдейта обе части окажутся пустыми (пользователь
+    // очистил оба поля), оставляем СТАРОЕ значение users.name, чтобы UserMenu/
+    // /me не свалились на «N» из email-а. Это решает баг «после правки имени
+    // в шапке остался один инициал». COALESCE(NULLIF(..., ''), name) делает
+    // именно это: пустая строка → fallback на текущее значение колонки.
     if ('first_name' in fields || 'last_name' in fields) {
-      // подзапрос: COALESCE с уже обновлёнными значениями
       const fnSql = ('first_name' in fields)
         ? `$${keys.indexOf('first_name') + 1}`
         : 'first_name';
@@ -207,7 +220,7 @@ router.patch('/', requireAuth, async (req, res, next) => {
         ? `$${keys.indexOf('last_name') + 1}`
         : 'last_name';
       setClauses.push(
-        `name = NULLIF(TRIM(COALESCE(${fnSql}, '') || ' ' || COALESCE(${lnSql}, '')), '')`
+        `name = COALESCE(NULLIF(TRIM(COALESCE(${fnSql}, '') || ' ' || COALESCE(${lnSql}, '')), ''), name)`
       );
     }
 
@@ -294,22 +307,20 @@ router.post('/avatar', requireAuth, (req, res, next) => {
 // DELETE /api/profile/avatar
 // ──────────────────────────────────────────────────────────────────────
 router.delete('/avatar', requireAuth, async (req, res, next) => {
-  try {
-    const userId = req.session.userId;
-    const fullPath = path.join(AVATARS_DIR, `${userId}.webp`);
+  const userId = req.session.userId;
+  const fullPath = path.join(AVATARS_DIR, `${userId}.webp`);
 
-    await fs.unlink(fullPath).catch((e) => {
-      // нет файла — ok, всё равно почистим БД
-      if (e.code !== 'ENOENT') throw e;
-    });
+  await fs.unlink(fullPath).catch((e) => {
+    // нет файла — ok, всё равно почистим БД
+    if (e.code !== 'ENOENT') throw e;
+  });
 
-    await pool.query(
-      `UPDATE saas_meta.users SET avatar_path = NULL WHERE id = $1`,
-      [userId]
-    );
+  await pool.query(
+    `UPDATE saas_meta.users SET avatar_path = NULL WHERE id = $1`,
+    [userId]
+  );
 
-    res.json({ ok: true });
-  } catch (err) { next(err); }
+  res.json({ ok: true });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -323,36 +334,34 @@ router.delete('/avatar', requireAuth, async (req, res, next) => {
 // контракт нашего UI и подсказка webhook-у не продлевать access_until.
 // ──────────────────────────────────────────────────────────────────────
 router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
-  try {
-    const userId = req.session.userId;
+  const userId = req.session.userId;
 
-    // Проверяем, что пользователь — owner своей студии
-    const u = await pool.query(
-      `SELECT u.role, u.studio_id, s.plan, s.cancel_pending
-         FROM saas_meta.users u
-         JOIN saas_meta.studios s ON s.id = u.studio_id
-        WHERE u.id = $1`,
-      [userId]
-    );
-    const row = u.rows[0];
-    if (!row) return res.status(404).json({ error: 'user_not_found' });
-    if (row.role !== 'owner') {
-      return res.status(403).json({ error: 'only_owner_can_cancel' });
-    }
-    if (row.plan !== 'solo' && row.plan !== 'studio') {
-      // на trial/cancelled отменять нечего
-      return res.status(400).json({ error: 'no_active_subscription' });
-    }
-    if (row.cancel_pending === true) {
-      return res.json({ ok: true, alreadyCancelled: true });
-    }
+  // Проверяем, что пользователь — owner своей студии
+  const u = await pool.query(
+    `SELECT u.role, u.studio_id, s.plan, s.cancel_pending
+       FROM saas_meta.users u
+       JOIN saas_meta.studios s ON s.id = u.studio_id
+      WHERE u.id = $1`,
+    [userId]
+  );
+  const row = u.rows[0];
+  if (!row) return res.status(404).json({ error: 'user_not_found' });
+  if (row.role !== 'owner') {
+    return res.status(403).json({ error: 'only_owner_can_cancel' });
+  }
+  if (row.plan !== 'solo' && row.plan !== 'studio') {
+    // на trial/cancelled отменять нечего
+    return res.status(400).json({ error: 'no_active_subscription' });
+  }
+  if (row.cancel_pending === true) {
+    return res.json({ ok: true, alreadyCancelled: true });
+  }
 
-    await pool.query(
-      `UPDATE saas_meta.studios SET cancel_pending = true WHERE id = $1`,
-      [row.studio_id]
-    );
-    res.json({ ok: true });
-  } catch (err) { next(err); }
+  await pool.query(
+    `UPDATE saas_meta.studios SET cancel_pending = true WHERE id = $1`,
+    [row.studio_id]
+  );
+  res.json({ ok: true });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -360,27 +369,25 @@ router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
 // «Передумал отменять» — снимаем флаг. Бесплатно, доступно владельцу.
 // ──────────────────────────────────────────────────────────────────────
 router.post('/subscription/resume', requireAuth, async (req, res, next) => {
-  try {
-    const userId = req.session.userId;
+  const userId = req.session.userId;
 
-    const u = await pool.query(
-      `SELECT u.role, u.studio_id
-         FROM saas_meta.users u
-        WHERE u.id = $1`,
-      [userId]
-    );
-    const row = u.rows[0];
-    if (!row) return res.status(404).json({ error: 'user_not_found' });
-    if (row.role !== 'owner') {
-      return res.status(403).json({ error: 'only_owner_can_resume' });
-    }
+  const u = await pool.query(
+    `SELECT u.role, u.studio_id
+       FROM saas_meta.users u
+      WHERE u.id = $1`,
+    [userId]
+  );
+  const row = u.rows[0];
+  if (!row) return res.status(404).json({ error: 'user_not_found' });
+  if (row.role !== 'owner') {
+    return res.status(403).json({ error: 'only_owner_can_resume' });
+  }
 
-    await pool.query(
-      `UPDATE saas_meta.studios SET cancel_pending = false WHERE id = $1`,
-      [row.studio_id]
-    );
-    res.json({ ok: true });
-  } catch (err) { next(err); }
+  await pool.query(
+    `UPDATE saas_meta.studios SET cancel_pending = false WHERE id = $1`,
+    [row.studio_id]
+  );
+  res.json({ ok: true });
 });
 
 module.exports = router;

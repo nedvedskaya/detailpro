@@ -19,6 +19,9 @@ interface CalendarViewProps {
     categories: any[];
     tags: any[];
     users?: any[];
+    // canEdit=false → master-режим: скрываем «+» в шапке. Тап по дню/событию
+    // открывает детали клиента в просмотре через onOpenClient.
+    canEdit?: boolean;
 }
 
 export const CalendarView = ({
@@ -28,7 +31,8 @@ export const CalendarView = ({
     onOpenClient,
     categories,
     tags,
-    users = []
+    users = [],
+    canEdit = true,
 }: CalendarViewProps) => {
     const [currentDate, setCurrentDate] = useState(new Date()); 
     const [isAdding, setIsAdding] = useState(false);
@@ -48,8 +52,8 @@ export const CalendarView = ({
 
     return (
         <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
-             <Header title="Календарь" actionIcon={Plus} onAction={() => setIsAdding(true)} />
-             {isAdding && (
+             <Header title="Календарь" actionIcon={canEdit ? Plus : undefined} onAction={canEdit ? () => setIsAdding(true) : undefined} />
+             {isAdding && canEdit && (
                  <div className={LAYOUT_CLASSES.modal}>
                     <div className={LAYOUT_CLASSES.modalContent}>
                         <div className="flex justify-between items-center">

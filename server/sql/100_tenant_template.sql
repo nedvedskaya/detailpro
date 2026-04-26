@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.activity_logs (
     user_name    VARCHAR(255),                -- денормализация на момент действия
     action       VARCHAR(100) NOT NULL,
     entity_type  VARCHAR(100),
-    entity_id    INTEGER,
+    entity_id    TEXT,                        -- TEXT, чтобы вмещало UUID и SERIAL
     entity_name  VARCHAR(255),
     details      TEXT,
     ip_address   INET,

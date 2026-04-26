@@ -44,7 +44,7 @@ export const ClientAvatar = ({ name, avatar, size = 'md', editable = false, expa
         </div>
 
         {isSaving && (
-          <div className={`absolute inset-0 rounded-full bg-black/50 flex items-center justify-center`}>
+          <div className={`absolute inset-0 rounded-full bg-orange-500/50 flex items-center justify-center`}>
             <Loader2 size={size === 'lg' ? 22 : size === 'md' ? 16 : 12} className="text-white animate-spin" />
           </div>
         )}
@@ -92,7 +92,7 @@ export const ClientAvatar = ({ name, avatar, size = 'md', editable = false, expa
 
       {isOpen && showImage && (
         <div
-          className="fixed inset-0 z-[1000] bg-black/90 flex items-center justify-center"
+          className="fixed inset-0 z-[1000] bg-orange-500/90 flex items-center justify-center"
           onClick={() => setIsOpen(false)}
         >
           <button

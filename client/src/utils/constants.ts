@@ -104,3 +104,81 @@ export const COLORS = [
 export const INITIAL_CLIENTS = [];
 export const INITIAL_TASKS = [];
 export const INITIAL_TRANSACTIONS = [];
+
+// === АКТИВИТИ-ЛОГ ===
+// Словарь action → русская подпись для AdminPanel→Активность.
+// Сами строки action приходят с бэка как короткие глаголы:
+//   create | update | delete | login | logout | block | unblock | password_reset
+// Чтобы UI показывал «Сотрудник заблокирован» вместо "user.block",
+// строим лейбл через комбинацию entity_type + action в getActionLabel().
+export const ACTION_LABELS: Record<string, string> = {
+  // session: вход/выход
+  'session.login':           'Вход в систему',
+  'session.logout':          'Выход',
+
+  // user: админские действия с сотрудниками
+  'user.create':             'Сотрудник добавлен',
+  'user.update':             'Сотрудник изменён',
+  'user.delete':             'Сотрудник удалён',
+  'user.block':              'Сотрудник заблокирован',
+  'user.unblock':            'Сотрудник разблокирован',
+  'user.password_reset':     'Сброшен пароль',
+
+  // CRM-сущности
+  'client.create':           'Клиент добавлен',
+  'client.update':           'Клиент изменён',
+  'client.delete':           'Клиент удалён',
+
+  'vehicle.create':          'Авто добавлено',
+  'vehicle.update':          'Авто изменено',
+  'vehicle.delete':          'Авто удалено',
+
+  'booking.create':          'Запись создана',
+  'booking.update':          'Запись изменена',
+  'booking.delete':          'Запись удалена',
+
+  'task.create':             'Задача создана',
+  'task.update':             'Задача изменена',
+  'task.delete':             'Задача удалена',
+
+  'transaction.create':      'Финоперация добавлена',
+  'transaction.update':      'Финоперация изменена',
+  'transaction.delete':      'Финоперация удалена',
+
+  'client_record.create':    'История: запись добавлена',
+  'client_record.update':    'История: запись изменена',
+  'client_record.delete':    'История: запись удалена',
+};
+
+// Цветовая группировка для AdminPanel→Активность.
+// Чисто визуальная подсказка: создание зелёным, изменение — синим, удаление —
+// красным, всё остальное — нейтрально-серым.
+export const ACTION_TONES: Record<string, 'green' | 'blue' | 'red' | 'gray'> = {
+  create: 'green',
+  update: 'blue',
+  delete: 'red',
+  login: 'gray',
+  logout: 'gray',
+  block: 'red',
+  unblock: 'green',
+  password_reset: 'blue',
+};
+
+/**
+ * Подбирает русскую подпись для строки активити-лога.
+ * Сначала пытается матчить по `${entity_type}.${action}` (наиболее точно);
+ * если такой ключ не найден — фолбек на сам action и затем на капитализацию.
+ */
+export function getActionLabel(action: string, entityType?: string | null): string {
+  if (entityType) {
+    const composite = `${entityType}.${action}`;
+    if (ACTION_LABELS[composite]) return ACTION_LABELS[composite];
+  }
+  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
+  return action.charAt(0).toUpperCase() + action.slice(1);
+}
+
+/** Цвет для action — см. ACTION_TONES. По умолчанию gray. */
+export function getActionTone(action: string): 'green' | 'blue' | 'red' | 'gray' {
+  return ACTION_TONES[action] || 'gray';
+}

@@ -31,7 +31,7 @@ export const ActionButton = ({
     default: "bg-white border border-zinc-300 text-zinc-800 hover:bg-zinc-100",
     metal: BTN_METAL,
     urgent: "bg-gradient-to-r from-red-500 to-orange-500 border-red-500 text-white shadow-xl hover:shadow-2xl",
-    primary: "bg-black text-white hover:bg-zinc-800",
+    primary: "bg-orange-500 text-white hover:bg-orange-600",
     secondary: "bg-zinc-100 text-zinc-800 hover:bg-zinc-200"
   };
 

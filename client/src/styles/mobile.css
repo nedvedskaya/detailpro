@@ -9,27 +9,46 @@
     /* Отключаем автоматическое увеличение текста в landscape на iOS */
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
-    
+
     /* Улучшаем производительность скролла на iOS */
     -webkit-overflow-scrolling: touch;
-    
+
     /* Отключаем выделение текста при долгом нажатии */
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
-    
+
     /* Высота для iOS с учетом safe area */
     height: 100%;
     height: -webkit-fill-available;
+    /* Раньше overflow:hidden на html/body/#root жил в inline-<style> в App.tsx,
+       и при early-return на AdminPanel этот блок не рендерился — высота h-full
+       у вьюх «съезжала», внутренний overflow-y-auto не работал, мышиное колесо
+       не находило прокручиваемого предка. Перенесли сюда, чтобы правила
+       применялись всегда, независимо от того, что вернул App. */
+    overflow: hidden;
   }
 
   body {
     /* Фиксируем высоту для iOS */
     min-height: 100vh;
     min-height: -webkit-fill-available;
-    
+    height: 100%;
+    height: -webkit-fill-available;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+
     /* Отключаем bounce эффект на iOS */
     overscroll-behavior: none;
     -webkit-overflow-scrolling: touch;
+  }
+
+  #root {
+    height: 100%;
+    height: -webkit-fill-available;
+    width: 100%;
+    overflow: hidden;
   }
 
   /* Оптимизация для notch (Dynamic Island) на iPhone */
@@ -96,6 +115,40 @@
     min-height: -webkit-fill-available;
   }
 }
+
+/* Скроллбары:
+   - На тач-устройствах (телефоны/планшеты) прячем — нативный
+     инерционный скролл и так работает, лишние полоски только засоряют UI.
+   - На устройствах с точным указателем (десктоп с мышью/трекпадом) —
+     показываем тонкий zinc-скроллбар, иначе пользователь не понимает,
+     что область прокручивается, и не может потащить ползунок мышью.
+   Перенесено сюда из inline-<style> в App.tsx, чтобы применялось всегда
+   (в т.ч. при early-return App для AdminPanel/ProfilePage). */
+@media (pointer: coarse) {
+  ::-webkit-scrollbar { display: none; }
+  * { scrollbar-width: none; }
+}
+@media (pointer: fine) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: #d4d4d8;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a1a1aa;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  * { scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+}
+
+/* На любом устройстве, где нативный input/textarea/select — фикс размера шрифта,
+   чтобы iOS не зумил при focus. Дублируется тут, потому что app-контекст
+   может не оборачивать форму в свой стилевой блок. */
+input, textarea, select { font-size: 16px !important; }
 
 /* Компактные отступы для мобильных устройств */
 @media (max-width: 640px) {

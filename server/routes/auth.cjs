@@ -37,6 +37,7 @@ const {
   suggestSchemaName,
 } = require('../lib/tenant_provisioning.cjs');
 const { validateSchemaName } = require('../lib/tenant.cjs');
+const { logAction } = require('../lib/audit.cjs');
 
 const router = express.Router();
 
@@ -315,6 +316,27 @@ router.post('/login', async (req, res, next) => {
 
     recordLoginSuccess(emailKey);
 
+    // last_login_at — для отображения в админке «когда заходил». Не блокируем
+    // логин если запись не удалась (это лишь дата для UI).
+    pool.query(
+      `UPDATE saas_meta.users SET last_login_at = now() WHERE id = $1`,
+      [user.id]
+    ).catch((err) => console.error('[auth] last_login_at:', err.message));
+
+    // Аудит-лог входа (для admin-панели «Активность»). Имя берём из БД, чтобы
+    // в логе осталось денормализованное имя на момент действия.
+    const userNameRow = await pool.query(
+      `SELECT name FROM saas_meta.users WHERE id = $1`, [user.id]
+    );
+    logAction({
+      schemaName: user.schema_name,
+      userId:     user.id,
+      userName:   userNameRow.rows[0]?.name || null,
+      action:     'login',
+      entityType: 'session',
+      ip:         clientIp(req),
+    });
+
     const session = await createSession({
       userId: user.id,
       studioId: user.studio_id,
@@ -344,7 +366,29 @@ router.post('/logout', async (req, res, next) => {
     const cookies = req.headers.cookie || '';
     const m = cookies.match(new RegExp('(?:^|;\\s*)' + SESSION_COOKIE_NAME + '=([^;]+)'));
     if (m) {
-      try { await invalidateSession(decodeURIComponent(m[1])); } catch (_) {}
+      const token = decodeURIComponent(m[1]);
+      // До инвалидации — достаём контекст для аудит-лога.
+      try {
+        const r = await pool.query(
+          `SELECT s.user_id, s.schema_name, u.name
+             FROM saas_meta.sessions s
+             JOIN saas_meta.users u ON u.id = s.user_id
+            WHERE s.token = $1`,
+          [token]
+        );
+        const ctx = r.rows[0];
+        if (ctx) {
+          logAction({
+            schemaName: ctx.schema_name,
+            userId:     ctx.user_id,
+            userName:   ctx.name,
+            action:     'logout',
+            entityType: 'session',
+            ip:         clientIp(req),
+          });
+        }
+      } catch (_) { /* лог не должен мешать выходу */ }
+      try { await invalidateSession(token); } catch (_) {}
     }
     clearSessionCookie(res);
     res.json({ ok: true });
@@ -361,7 +405,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT u.id, u.email, u.role, u.name,
               u.first_name, u.last_name, u.phone, u.avatar_path, u.created_at,
-              u.is_active,
+              u.is_active, u.can_view_finance, u.last_login_at,
               s.id AS studio_id, s.schema_name, s.display_name, s.plan, s.is_active AS studio_active,
               s.access_until, s.created_at AS studio_created_at
          FROM saas_meta.users u
@@ -376,6 +420,14 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const composed = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
     const displayName = composed || row.name || '';
 
+    // canViewFinance: для master хардкодом false (мастер никогда не видит финансы),
+    // для owner всегда true, для manager — по флагу из БД (по умолчанию true,
+    // чтобы не сломать студии на которых миграция 003 ещё не накатилась).
+    let canViewFinance;
+    if (row.role === 'master') canViewFinance = false;
+    else if (row.role === 'owner') canViewFinance = true;
+    else canViewFinance = row.can_view_finance !== false;
+
     res.json({
       user: {
         id: row.id,
@@ -388,6 +440,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
         avatarPath: row.avatar_path,
         createdAt: row.created_at,
         isActive: row.is_active,
+        canViewFinance,
+        lastLoginAt: row.last_login_at,
       },
       studio: {
         id: row.studio_id,

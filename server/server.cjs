@@ -16,12 +16,16 @@ require('dotenv').config();
 
 const app = require('./app.cjs');
 const { close: closePool } = require('./lib/db.cjs');
+const cron = require('./lib/cron.cjs');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`[saas-crm] listening on http://${HOST}:${PORT}`);
+  // Фоновые job'ы (90-дневная чистка activity_logs, expired sessions).
+  // start() идемпотентен и сам unref-ает таймер — не мешает graceful shutdown.
+  cron.start();
 });
 
 server.on('error', (err) => {
@@ -41,6 +45,7 @@ async function shutdown(signal) {
   }, 15_000);
   forceTimer.unref();
 
+  cron.stop();
   server.close(async () => {
     try {
       await closePool();

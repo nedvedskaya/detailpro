@@ -37,13 +37,17 @@ interface ClientDetailsProps {
   tags?: any[];
   users?: any[];
   userRole?: string;
+  // canEdit=false → master видит карточку клиента в режиме просмотра:
+  // скрываются кнопки «Редактировать» / «Удалить» в шапке, форма
+  // добавления задач/брони не показывается, поля профиля недоступны для правки.
+  canEdit?: boolean;
 }
 
 export const ClientDetails = ({
   client, onBack, tasks, onEdit, onAddTask, onDelete, onToggleTask,
   onAddRecord, onEditRecord, onCompleteRecord, onRestoreRecord, onDeleteRecord,
   onDeleteTask, onEditTask, onUpdateAvatar, avatarSavingId,
-  categories, tags = [], users = [], userRole = 'owner'
+  categories, tags = [], users = [], userRole = 'owner', canEdit = true,
 }: ClientDetailsProps) => {
   const clientTasks = tasks.filter(t => t.clientId && client.id && String(t.clientId) === String(client.id));
   const activeTasks = clientTasks.filter(t => !t.completed);
@@ -119,7 +123,7 @@ export const ClientDetails = ({
     <div className="fixed top-0 left-0 right-0 z-[120] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-right duration-300" style={{bottom: 'calc(64px + env(safe-area-inset-bottom, 0px))'}}>
       <div className="px-5 pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
         <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold"><ChevronLeft size={24} /> {editingRecordId ? 'Назад к карточке' : 'Назад'}</button>
-        {!editingRecordId && <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>}
+        {!editingRecordId && canEdit && <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>}
       </div>
       <div className="flex-1 overflow-y-auto p-6 space-y-8 overscroll-contain" style={{paddingBottom: '40px', WebkitOverflowScrolling: 'touch'} as any}>
         {!editingRecordId && (
@@ -168,7 +172,7 @@ export const ClientDetails = ({
           </div>
         </div>
         <div className={`rounded-2xl p-5 ${CARD_METAL} space-y-4 shadow-sm`}>
-          <div className="flex justify-between border-b border-zinc-100 pb-3 text-sm font-medium"><span className="text-zinc-500">Автомобиль</span><div className="flex gap-2 font-bold"><span className="bg-black text-white px-2 py-0.5 rounded text-xs uppercase tracking-tighter">{String(client.carBrand || '')}</span><span className="text-zinc-800 tracking-tight">{String(client.carModel || '')}</span></div></div>
+          <div className="flex justify-between border-b border-zinc-100 pb-3 text-sm font-medium"><span className="text-zinc-500">Автомобиль</span><div className="flex gap-2 font-bold"><span className="bg-orange-500 text-white px-2 py-0.5 rounded text-xs uppercase tracking-tighter">{String(client.carBrand || '')}</span><span className="text-zinc-800 tracking-tight">{String(client.carModel || '')}</span></div></div>
           <div className="flex justify-between border-b border-zinc-100 pb-3 text-sm font-medium"><span className="text-zinc-500">Город</span><span className="font-bold text-zinc-800">{String(client.city || '')}</span></div>
           <div className="flex justify-between border-b border-zinc-100 pb-3 text-sm font-medium"><span className="text-zinc-500">Дата рождения</span><span className="font-bold text-zinc-800">{client.birthDate ? formatDate(client.birthDate) : '-'}</span></div>
           <div className="flex justify-between text-sm font-medium"><span className="text-zinc-500">В базе с</span><span className="font-bold text-zinc-800">{client.createdAt ? formatDate(client.createdAt) : formatDate(getDateStr(0))}</span></div>

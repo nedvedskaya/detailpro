@@ -44,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
         {ActionIcon && onAction && (
           <button 
             onClick={onAction} 
-            className="bg-black text-white p-2.5 rounded-full shadow-lg active:scale-95 transition-all"
+            className="bg-orange-500 text-white p-2.5 rounded-full shadow-lg active:scale-95 transition-all"
           >
             <ActionIcon size={20} />
           </button>
@@ -70,7 +70,7 @@ export const Header: React.FC<HeaderProps> = ({
           {ActionIcon && onAction && (
             <button 
               onClick={onAction} 
-              className="w-9 h-9 rounded-full flex items-center justify-center bg-black text-white shadow-md active:scale-95 transition-all"
+              className="w-9 h-9 rounded-full flex items-center justify-center bg-orange-500 text-white shadow-md active:scale-95 transition-all"
             >
               <ActionIcon size={18} />
             </button>

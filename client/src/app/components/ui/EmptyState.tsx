@@ -55,7 +55,7 @@ export const EmptyState = ({
       {action && (
         <button
           onClick={action.onClick}
-          className="mt-4 px-6 py-2 bg-black text-white rounded-full font-bold text-sm active:scale-95 transition-all flex items-center gap-2"
+          className="mt-4 px-6 py-2 bg-orange-500 text-white rounded-full font-bold text-sm active:scale-95 transition-all flex items-center gap-2"
         >
           {action.icon && <action.icon size={16} />}
           {action.label}

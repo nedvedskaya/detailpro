@@ -16,7 +16,7 @@ export const TabButton = ({
   className = ''
 }: TabButtonProps) => {
   const activeClass = isActive 
-    ? 'bg-black text-white' 
+    ? 'bg-orange-500 text-white' 
     : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200';
 
   return (

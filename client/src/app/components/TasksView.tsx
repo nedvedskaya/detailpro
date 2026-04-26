@@ -18,9 +18,18 @@ interface TasksViewProps {
     onEditTask: (task: Task) => void;
     clients: Client[];
     onOpenClient?: (client: any) => void;
+    // canEdit=false → master-режим: скрываем «+» в шапке и удаление/редактирование
+    // в TaskItem; чекбокс «выполнено» тоже отключается (master не должен менять
+    // статус задач других сотрудников).
+    canEdit?: boolean;
 }
 
-const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, onDeleteTask, onEditTask, clients, onOpenClient }) => {
+const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, onDeleteTask, onEditTask, clients, onOpenClient, canEdit = true }) => {
+    // No-op обработчики для read-only режима (master). Передаём функции, а не
+    // undefined, потому что TaskItem не помечает onToggle/onEdit/onDelete как
+    // опциональные. Реальные «безопасные» хендлеры собираем после объявления
+    // handleEditTask (TDZ — нельзя ссылаться выше).
+    const noop = () => {};
     const [isAdding, setIsAdding] = useState(false);
     const [showArchive, setShowArchive] = useState(false);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -121,7 +130,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
 
     return (
         <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
-            <Header title="Задачи" actionIcon={Plus} onAction={() => setIsAdding(true)} />
+            <Header title="Задачи" actionIcon={canEdit ? Plus : undefined} onAction={canEdit ? () => setIsAdding(true) : undefined} />
             
             <div className="sticky top-0 z-20 bg-white px-6 pt-2 pb-2 border-b border-zinc-200">
                 <div className="flex gap-1.5">
@@ -129,7 +138,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                         onClick={() => setTaskFilter('today')}
                         className={`flex-1 py-2 px-2 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${
                             taskFilter === 'today' 
-                                ? 'bg-black text-white shadow-lg' 
+                                ? 'bg-orange-500 text-white shadow-lg' 
                                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
                         }`}
                     >
@@ -139,7 +148,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                         onClick={() => setTaskFilter('all')}
                         className={`flex-1 py-2 px-2 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${
                             taskFilter === 'all' 
-                                ? 'bg-black text-white shadow-lg' 
+                                ? 'bg-orange-500 text-white shadow-lg' 
                                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
                         }`}
                     >
@@ -149,7 +158,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                         onClick={() => setTaskFilter('bookings')}
                         className={`flex-1 py-2 px-2 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${
                             taskFilter === 'bookings' 
-                                ? 'bg-black text-white shadow-lg' 
+                                ? 'bg-orange-500 text-white shadow-lg' 
                                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
                         }`}
                     >
@@ -294,7 +303,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 </div>
                                 {todayTasks.map(t => {
                                     const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                    return <TaskItem key={t.id} task={t} onToggle={onToggleTask} onDelete={onDeleteTask} onEdit={handleEditTask} client={client} onOpenClient={onOpenClient} />;
+                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
                                 })}
                             </div>
                         )}
@@ -307,7 +316,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 </div>
                                 {futureTasks.map(t => {
                                     const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                    return <TaskItem key={t.id} task={t} onToggle={onToggleTask} onDelete={onDeleteTask} onEdit={handleEditTask} client={client} onOpenClient={onOpenClient} />;
+                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
                                 })}
                             </div>
                         )}
@@ -331,7 +340,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                         ) : (
                             displayTasks.map(t => {
                                 const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                return <TaskItem key={t.id} task={t} onToggle={onToggleTask} onDelete={onDeleteTask} onEdit={handleEditTask} client={client} onOpenClient={onOpenClient} />;
+                                return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
                             })
                         )}
                     </div>
@@ -351,7 +360,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                             <div className="space-y-2.5 opacity-60 animate-in fade-in">
                                 {archivedTasks.map(t => {
                                     const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                    return <TaskItem key={t.id} task={t} onToggle={onToggleTask} onDelete={onDeleteTask} onEdit={handleEditTask} client={client} onOpenClient={onOpenClient} />;
+                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
                                 })}
                             </div>
                         )}

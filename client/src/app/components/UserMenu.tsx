@@ -31,7 +31,7 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
 
   if (!user) return null;
 
-  const subscription = formatAccessUntil(studio?.access_until);
+  const subscription = formatAccessUntil((studio as any)?.accessUntil ?? (studio as any)?.access_until);
   const subscriptionToneClass =
     subscription?.tone === 'danger'
       ? 'bg-red-50 text-red-700 border-red-200'
@@ -55,10 +55,13 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
           onClick={() => setIsMenuOpen(!isMenuOpen)}
           className="flex items-center gap-2 hover:bg-zinc-50 px-2 py-1.5 rounded-lg transition-all"
         >
-          {/* Маленький аватар. Если файла нет — кружок-инициал. nginx /avatars/ кеширует 1д. */}
+          {/* Маленький аватар. Если файла нет — кружок-инициал. nginx /avatars/
+              кеширует 1д, поэтому добавляем ?v=lastLoginAt|createdAt для обхода
+              кэша при смене аватара (после нового входа /me возвращает свежий
+              avatar_path; ?v= меняется и браузер запрашивает заново). */}
           {user.avatarPath ? (
             <img
-              src={user.avatarPath}
+              src={`${user.avatarPath}?v=${user.lastLoginAt || user.createdAt || ''}`}
               alt=""
               className="w-6 h-6 rounded-full object-cover bg-zinc-100"
             />
@@ -67,7 +70,9 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
               {(user.name || user.email || '?').charAt(0).toUpperCase()}
             </div>
           )}
-          <div className="text-xs font-bold text-zinc-900">{user.name}</div>
+          <div className="text-xs font-bold text-zinc-900 truncate max-w-[140px]">
+            {user.name || user.email}
+          </div>
           <ChevronDown
             size={14}
             className={`text-zinc-400 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`}
@@ -87,7 +92,7 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
             {studio && (
               <div className="px-4 py-3 border-b border-zinc-100">
                 <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Студия</div>
-                <div className="text-sm font-semibold text-zinc-900 truncate">{studio.name}</div>
+                <div className="text-sm font-semibold text-zinc-900 truncate">{studio.displayName || studio.name}</div>
                 {subscription && (
                   <div className={`mt-1.5 inline-block px-2 py-0.5 rounded-md text-[11px] font-medium border ${subscriptionToneClass}`}>
                     {subscription.label}

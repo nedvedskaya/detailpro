@@ -41,6 +41,7 @@ import {
   INITIAL_CLIENTS, INITIAL_TASKS, INITIAL_TRANSACTIONS
 } from '@/utils/constants';
 import { formatMoney, formatDate, getDateStr, toDateStr, safeCategoryId, buildRecordPayload, buildClientPayload, buildTaskPayload, normalizeRecord, normalizeTask, normalizeClient, normalizeTransaction, matchId } from '@/utils/helpers';
+import { isTempId, isRealId, updateById, removeById, replaceById, handleApiError } from '@/utils/stateHelpers';
 import { safeLocalStorage } from '@/utils/safeStorage';
 import { sanitizePhone, sanitizeWhatsAppUrl, sanitizeTelUrl, safeOpenLink } from '@/utils/sanitize';
 import { 
@@ -50,7 +51,7 @@ import {
 import { Header } from '@/app/components/ui/Header';
 import { bootstrap as authBootstrap, getUser, getStudio, setSession, logout, isAuthenticated } from '@/utils/auth';
 import type { Studio, UserData, Role } from '@/utils/types';
-import { hasPermission, canAccessTab, getAvailableTabs, isAdmin } from '@/utils/permissions';
+import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canEditEntities, canViewFinance } from '@/utils/permissions';
 import { api } from '@/utils/api';
 
 // --- HELPER COMPONENTS ---
@@ -60,19 +61,19 @@ import { api } from '@/utils/api';
 // AutocompleteInput вынесен в отдельный файл: /src/app/components/ui/AutocompleteInput.tsx
 // AppointmentInputs вынесен в отдельный файл: /src/app/components/forms/AppointmentInputs.tsx
 
-const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', onTabChange = null }) => {
+const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, onTabChange = null }) => {
   const allTabs = [
     { id: 'clients', icon: Users, label: 'Клиенты' },
     { id: 'tasks', icon: CheckSquare, label: 'Задачи' },
     { id: 'calendar', icon: CalendarIcon, label: 'Календарь' },
     { id: 'finance', icon: PieChart, label: 'Финансы' },
   ];
-  
-  // Фильтруем вкладки по правам доступа.
-  // userRole сюда приходит как string (из props), но canAccessTab типизирован Role —
-  // в рантайме это безопасно: canAccessTab делает rolePermissions[role]?.includes(...),
-  // и неизвестная роль вернёт false.
-  const tabs = allTabs.filter(tab => canAccessTab(userRole as Role, tab.id));
+
+  // Фильтруем вкладки по правам.
+  // financeFlag — users.can_view_finance (или undefined для не-мигрированных БД).
+  // canAccessTab возвращает false для master на 'finance' и для manager без флага,
+  // см. permissions.ts.
+  const tabs = allTabs.filter(tab => canAccessTab(userRole as Role, tab.id, financeFlag));
   
   const handleTabClick = (tabId) => {
     setActiveTab(tabId);
@@ -194,7 +195,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                     />
                 </div>
                 <div className="space-y-3">
-                    <input type="text" name="name" value={String(formData.name || '')} onChange={handleChange} placeholder="Имя Фамилия" className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-lg font-bold outline-none focus:border-black" disabled={readOnlyIdentity} />
+                    <input type="text" name="name" value={String(formData.name || '')} onChange={handleChange} placeholder="Имя Фамилия" className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-lg font-bold outline-none focus:border-orange-500" disabled={readOnlyIdentity} />
                     <div className="flex gap-3">
                         <input type="tel" name="phone" value={String(formData.phone || '')} onChange={handleChange} placeholder="Телефон" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" disabled={readOnlyIdentity} />
                         <input type="text" name="birthDate" value={String(formData.birthDate || '')} onChange={handleChange} placeholder="ДД.ММ.ГГГГ" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" />
@@ -208,7 +209,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                         <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
                     </div>
                 </div>
-                <textarea name="comment" value={String(formData.comment || '')} onChange={handleChange} placeholder="Комментарий..." rows={3} className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium outline-none focus:border-black resize-none shadow-sm"/>
+                <textarea name="comment" value={String(formData.comment || '')} onChange={handleChange} placeholder="Комментарий..." rows={3} className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium outline-none focus:border-orange-500 resize-none shadow-sm"/>
             </div>
             <div className="space-y-4">
                 <div className="flex items-center justify-between"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</h3><ActionButton variant="metal" size="md" onClick={() => setIsTaskFormOpen(!isTaskFormOpen)}>+ Задача</ActionButton></div>
@@ -294,7 +295,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 <button 
                     onClick={handleSave}
                     disabled={isSaving || !formData.name || !formData.name.trim()}
-                    className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${isSaving ? 'bg-zinc-300 text-zinc-500 cursor-wait' : formData.name && formData.name.trim() ? 'bg-black text-white hover:bg-zinc-800 active:scale-[0.98]' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'}`}
+                    className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${isSaving ? 'bg-zinc-300 text-zinc-500 cursor-wait' : formData.name && formData.name.trim() ? 'bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98]' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'}`}
                 >
                     {isSaving ? 'Сохранение...' : 'Сохранить клиента'}
                 </button>
@@ -542,8 +543,96 @@ const App = () => {
     return <ProfilePage onBack={() => setShowProfile(false)} />;
   }
 
+  // ── Subscription gate ──────────────────────────────────────────────
+  // Логика:
+  //   • Собственник студии (role=owner) — НИКОГДА не блокируется. Он должен
+  //     иметь возможность зайти в любые блоки, чтобы посмотреть данные и
+  //     решить, оплачивать ли. /profile показывает ему тарифы и countdown.
+  //   • Менеджер/мастер — если у студии истёк access_until или is_active=false,
+  //     показываем lock-окно «Оплатите подписку». Им платить нечем — пусть
+  //     дождутся, пока owner оплатит.
+  //
+  // Парсинг даты устойчив к Postgres-формату («YYYY-MM-DD HH:MM:SS+00»),
+  // ISO с T и null. Если дата невалидна — считаем подписку просроченной.
+  const isSubscriptionExpired = (() => {
+    if (!studio) return false;          // студия ещё не подгружена
+    if (!user) return false;            // пользователь ещё не подгружен
+    if (user.role === 'owner') return false; // owner всегда проходит
+    // Сервер шлёт camelCase (accessUntil/isActive). На случай stale-кэша
+    // читаем оба варианта.
+    const s: any = studio;
+    const accessUntil = s.accessUntil ?? s.access_until;
+    const isActive = s.isActive ?? s.is_active;
+    if (isActive === false) return true;
+    if (!accessUntil) return true;
+    let target: Date;
+    if (typeof accessUntil === 'string'
+        && /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(accessUntil)) {
+      target = new Date(accessUntil.replace(' ', 'T'));
+    } else {
+      target = new Date(accessUntil);
+    }
+    if (isNaN(target.getTime())) return true;
+    return target.getTime() <= Date.now();
+  })();
+
+  if (isSubscriptionExpired) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-orange-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-orange-100 p-8 text-center">
+          <div className="mx-auto w-14 h-14 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center mb-4">
+            <Lock size={28} strokeWidth={2.5} />
+          </div>
+          <h1 className="text-xl font-bold text-zinc-900">Оплатите подписку</h1>
+          <p className="mt-3 text-sm text-zinc-600 leading-relaxed">
+            Чтобы продолжить пользоваться <span className="font-semibold text-orange-600">ДЕТЕЙЛ&nbsp;ПРО CRM</span>,
+            оформите тариф «Соло» или «Студия».
+            Все ваши данные сохранены и появятся снова сразу после оплаты.
+          </p>
+          <button
+            onClick={() => setShowProfile(true)}
+            className="mt-6 inline-flex items-center justify-center w-full px-5 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold transition-colors"
+          >
+            Перейти к оплате
+          </button>
+          <button
+            onClick={handleLogout}
+            className="mt-3 inline-flex items-center justify-center w-full px-5 py-2 rounded-xl border border-zinc-200 text-zinc-500 hover:bg-zinc-50 text-sm transition-colors"
+          >
+            Выйти
+          </button>
+          <p className="mt-5 text-[11px] text-zinc-400">
+            Возникли вопросы — напишите на{' '}
+            <a className="underline" href="mailto:nedwedskaya@yandex.ru">nedwedskaya@yandex.ru</a>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (showAdmin) {
     return <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyAdminPanel onBack={() => setShowAdmin(false)} /></React.Suspense>;
+  }
+
+  // ── Permissions для CRM-views ────────────────────────────────────────
+  // canEdit: master видит CRM в режиме просмотра. Owner/manager — могут писать.
+  //          Бэкенд защищён независимо (server/routes/tenant.cjs#canWrite),
+  //          этот флаг — только для UI: скрыть кнопки «Добавить», «Удалить»,
+  //          и открыть модалки в read-only.
+  // viewerCanViewFinance: учитывает роль + per-user флаг. Используется для
+  //          фильтрации вкладок в TabBar и для рендера FinanceView.
+  const userRole = (user?.role || 'owner') as Role;
+  const canEdit = canEditEntities(userRole);
+  const viewerCanViewFinance = canViewFinance(userRole, user?.canViewFinance);
+
+  // Если активная вкладка — finance, но текущий пользователь её не видит
+  // (master или manager со снятым флагом), молча переключаемся на clients.
+  // Происходит, например, если owner снял у менеджера can_view_finance,
+  // и тот переоткрыл /me — в кэше ещё стояла финансовая вкладка.
+  if (activeTab === 'finance' && !viewerCanViewFinance) {
+    // Используем setTimeout (микро-deferred), чтобы не делать setState прямо
+    // в render-фазе. На следующем тике activeTab уйдёт на 'clients'.
+    setTimeout(() => setActiveTab('clients'), 0);
   }
 
   const createAndSaveTransaction = async (data: {
@@ -580,11 +669,10 @@ const App = () => {
 
       try {
           const saved = await api.createTransaction(payload);
-          setTransactions(prev => prev.map(t => t.id === tempId ? normalizeTransaction(saved) : t));
+          setTransactions(prev => replaceById(prev, tempId, normalizeTransaction(saved)));
       } catch (error) {
-          console.error('Error saving transaction:', error);
-          setTransactions(prev => prev.filter(t => t.id !== tempId));
-          showToast('Ошибка сохранения транзакции', 'error');
+          setTransactions(prev => removeById(prev, tempId));
+          handleApiError(error, 'Ошибка сохранения транзакции', 'createTransaction');
       }
   };
 
@@ -683,7 +771,9 @@ const App = () => {
         const savedClient = await api.createClient(buildClientPayload(data));
         const realId = savedClient.id;
 
-        setClients(prev => prev.map(c => c.id === tempId ? { ...c, id: realId } : c));
+        setClients(prev => updateById(prev, tempId, { id: realId }));
+        // Tasks ссылаются на клиента через clientId (не первичный ключ),
+        // поэтому здесь ручной map — updateById смотрит только на item.id.
         setTasks(prev => prev.map(t => t.clientId === tempId ? { ...t, clientId: realId } : t));
 
         for (const rec of recordsWithIds) {
@@ -692,33 +782,32 @@ const App = () => {
 
             const savedRecord = await api.createClientRecord(recordData);
             const oldRecId = rec.id;
-            setClients(prev => prev.map(cl => cl.id === realId ? {
-              ...cl,
-              records: (cl.records || []).map(r => r.id === oldRecId ? { ...r, id: savedRecord.id } : r)
-            } : cl));
+            setClients(prev => updateById(prev, realId, {
+              records: ((prev.find(cl => cl.id === realId)?.records) || [])
+                .map(r => r.id === oldRecId ? { ...r, id: savedRecord.id } : r)
+            } as any));
 
             await createRecordTransactions(rec, data, savedRecord.id);
           } catch (e) {
-            console.error('Error creating record:', e);
-            setClients(prev => prev.map(cl => cl.id === realId ? {
-              ...cl,
-              records: (cl.records || []).map(r => r.id === rec.id ? { ...r, saveError: true } : r)
-            } : cl));
-            showToast(`Ошибка сохранения записи "${rec.service}". Попробуйте сохранить позже.`, 'error');
+            handleApiError(e, `Ошибка сохранения записи "${rec.service}". Попробуйте сохранить позже.`, 'createRecord');
+            setClients(prev => updateById(prev, realId, {
+              records: ((prev.find(cl => cl.id === realId)?.records) || [])
+                .map(r => r.id === rec.id ? { ...r, saveError: true } : r)
+            } as any));
           }
         }
 
         for (const task of tasksWithIds) {
           try {
             const savedTask = await api.createTask(buildTaskPayload(task, { client_id: realId }));
-            setTasks(prev => prev.map(t => t.id === task.id ? { ...t, id: savedTask.id, clientId: realId } : t));
+            setTasks(prev => updateById(prev, task.id, { id: savedTask.id, clientId: realId } as any));
           } catch (e) {
-            console.error('Error creating task:', e);
-            setTasks(prev => prev.map(t => t.id === task.id ? { ...t, saveError: true } : t));
+            console.error('[createTask]', e);
+            setTasks(prev => updateById(prev, task.id, { saveError: true } as any));
           }
         }
       } catch (error) {
-        console.error('Error saving client to server:', error);
+        console.error('[createClient]', error);
         showToast('Нет связи с сервером. Данные клиента сохранены локально.', 'offline');
       }
   };
@@ -729,31 +818,28 @@ const App = () => {
       
       const tempRecordId = `temp_rec_${Date.now()}`;
       const newRecord = { ...rec, id: tempRecordId };
-      const isClientNew = typeof clientId === 'string' && clientId.startsWith('temp_');
-      
-      setClients(prev => prev.map(cl => cl.id === clientId ? { ...cl, records: [...(cl.records || []), newRecord] } : cl));
-      
+      const isClientNew = isTempId(clientId);
+
+      setClients(prev => updateById(prev, clientId, {
+        records: [...((prev.find(cl => cl.id === clientId)?.records) || []), newRecord]
+      } as any));
+
       // Если клиент ещё не сохранён в БД - запись и транзакции создадутся после сохранения клиента
-      if (isClientNew) {
-        console.log('Client is new, record will be saved after client is saved');
-        return;
-      }
-      
+      if (isClientNew) return;
+
       try {
         const recordData = buildRecordPayload(rec, clientId);
-        
         const saved = await api.createClientRecord(recordData);
-        
-        setClients(prev => prev.map(cl => cl.id === clientId ? { 
-          ...cl, 
-          records: (cl.records || []).map(r => r.id === tempRecordId ? { ...r, id: saved.id } : r) 
-        } : cl));
-        
+
+        setClients(prev => updateById(prev, clientId, {
+          records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+            .map(r => r.id === tempRecordId ? { ...r, id: saved.id } : r)
+        } as any));
+
         await createRecordTransactions(rec, c, saved.id);
         return true;
       } catch (error) {
-        console.error('Error saving record:', error);
-        showToast('Ошибка сохранения брони', 'error');
+        handleApiError(error, 'Ошибка сохранения брони', 'createClientRecord');
         return false;
       }
   };
@@ -766,35 +852,34 @@ const App = () => {
       const newAdvance = parseFloat(rec.advance) || 0;
       const newAmount = parseFloat(rec.amount) || 0;
       
-      setClients(prev => prev.map(cl => cl.id === clientId ? { 
-          ...cl, 
-          records: (cl.records || []).map(r => r.id === recordId ? { ...rec, id: recordId } : r) 
-      } : cl));
-      
-      const isTempRecord = typeof recordId === 'string' && String(recordId).startsWith('temp_');
-      const isClientTemp = typeof clientId === 'string' && String(clientId).startsWith('temp_');
-      
+      setClients(prev => updateById(prev, clientId, {
+        records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+          .map(r => r.id === recordId ? { ...rec, id: recordId } : r)
+      } as any));
+
+      const isTempRecord = isTempId(recordId);
+      const isClientTemp = isTempId(clientId);
+
       try {
         let savedRecordId = recordId;
-        
+
         if (isTempRecord && !isClientTemp) {
           const saved = await api.createClientRecord(buildRecordPayload(rec, clientId, { amount: newAmount, advance: newAdvance }));
           savedRecordId = saved.id;
-          setClients(prev => prev.map(cl => cl.id === clientId ? {
-            ...cl,
-            records: (cl.records || []).map(r => r.id === recordId ? { ...r, id: saved.id } : r)
-          } : cl));
+          setClients(prev => updateById(prev, clientId, {
+            records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+              .map(r => r.id === recordId ? { ...r, id: saved.id } : r)
+          } as any));
         } else if (!isTempRecord) {
           const payload = buildRecordPayload(rec, clientId, { amount: newAmount, advance: newAdvance });
           delete payload.client_id;
           await api.updateClientRecord(recordId, payload);
         }
-        
+
         await createEditRecordTransactions(rec, oldRecord, c, savedRecordId);
         return true;
       } catch (error) {
-        console.error('Error updating record:', error);
-        showToast('Ошибка обновления брони', 'error');
+        handleApiError(error, 'Ошибка обновления брони', 'updateClientRecord');
         return false;
       }
   };
@@ -817,21 +902,21 @@ const App = () => {
       setProcessingRecords(prev => new Set(prev).add(recordId));
       
       // СНАЧАЛА обновляем статус локально
-      setClients(prev => prev.map(cl => cl.id === clientId ? { 
-          ...cl, 
-          records: (cl.records || []).map(r => r.id === recordId ? { ...r, isPaid: true, isCompleted: true, paymentStatus: 'paid' } : r) 
-      } : cl));
-      
+      setClients(prev => updateById(prev, clientId, {
+        records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+          .map(r => r.id === recordId ? { ...r, isPaid: true, isCompleted: true, paymentStatus: 'paid' } : r)
+      } as any));
+
       const totalAmount = parseFloat(record.amount) || 0;
       const advanceAmount = parseFloat(record.advance) || 0;
       const remainingAmount = totalAmount - advanceAmount;
-      
-      const isTempRecord = typeof recordId === 'string' && String(recordId).startsWith('temp_');
-      const isClientTemp = typeof clientId === 'string' && String(clientId).startsWith('temp_');
-      
+
+      const isTempRecord = isTempId(recordId);
+      const isClientTemp = isTempId(clientId);
+
       try {
         let realRecordId = recordId;
-        
+
         if (isTempRecord && !isClientTemp) {
           const saved = await api.createClientRecord(buildRecordPayload(record, clientId, {
             amount: totalAmount,
@@ -841,10 +926,10 @@ const App = () => {
             is_completed: true
           }));
           realRecordId = saved.id;
-          setClients(prev => prev.map(cl => cl.id === clientId ? {
-            ...cl,
-            records: (cl.records || []).map(r => r.id === recordId ? { ...r, id: saved.id } : r)
-          } : cl));
+          setClients(prev => updateById(prev, clientId, {
+            records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+              .map(r => r.id === recordId ? { ...r, id: saved.id } : r)
+          } as any));
         } else if (!isClientTemp) {
           await api.updateClientRecord(recordId, {
             is_paid: true,
@@ -852,32 +937,31 @@ const App = () => {
             payment_status: 'paid'
           });
         }
-        
+
         if (!alreadyPaid && remainingAmount > 0 && !isClientTemp) {
             try {
               await addTransaction(
-                  remainingAmount, 
-                  `Оплата: ${record.service || 'Услуга'}`, 
-                  `${c.carBrand} ${c.carModel}`, 
-                  'income', 
-                  c.name, 
+                  remainingAmount,
+                  `Оплата: ${record.service || 'Услуга'}`,
+                  `${c.carBrand} ${c.carModel}`,
+                  'income',
+                  c.name,
                   record.category || '',
                   null,
                   realRecordId,
                   record.tags || []
               );
             } catch (txError) {
-              console.error('Error creating transaction:', txError);
-              showToast('Запись отмечена как оплаченная, но транзакция не создана. Добавьте вручную.', 'warning');
+              handleApiError(txError, 'Запись отмечена как оплаченная, но транзакция не создана. Добавьте вручную.', 'createLinkedTransaction', 'warning');
             }
         }
       } catch (error) {
-        console.error('Error completing record:', error);
-        setClients(prev => prev.map(cl => cl.id === clientId ? { 
-            ...cl, 
-            records: (cl.records || []).map(r => r.id === recordId ? { ...r, isPaid: false, isCompleted: false, paymentStatus: record.paymentStatus || 'none' } : r) 
-        } : cl));
-        showToast('Ошибка при сохранении. Попробуйте снова.', 'error');
+        // Откат: возвращаем флаги оплаты к исходным.
+        setClients(prev => updateById(prev, clientId, {
+          records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+            .map(r => r.id === recordId ? { ...r, isPaid: false, isCompleted: false, paymentStatus: record.paymentStatus || 'none' } : r)
+        } as any));
+        handleApiError(error, 'Ошибка при сохранении. Попробуйте снова.', 'completeRecord');
       } finally {
         setProcessingRecords(prev => {
           const newSet = new Set(prev);
@@ -892,9 +976,9 @@ const App = () => {
       for (const tx of linked) {
           try {
               await api.deleteTransaction(tx.id);
-              setTransactions(prev => prev.filter(t => t.id !== tx.id));
+              setTransactions(prev => removeById(prev, tx.id));
           } catch (error) {
-              console.error('Error deleting linked transaction:', error);
+              console.error('[deleteLinkedTransaction]', error);
           }
       }
   };
@@ -907,18 +991,12 @@ const App = () => {
       
       await deleteLinkedTransactions(recordId);
       
-      setClients(prev => prev.map(cl => cl.id === clientId ? { 
-          ...cl, 
-          records: (cl.records || []).map(r => r.id === recordId ? { 
-              ...r, 
-              isPaid: false, 
-              isCompleted: false,
-              paymentStatus: 'none'
-          } : r) 
-      } : cl));
-      
-      const isTempRec = typeof recordId === 'string' && String(recordId).startsWith('temp_');
-      if (!isTempRec) {
+      setClients(prev => updateById(prev, clientId, {
+        records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+          .map(r => r.id === recordId ? { ...r, isPaid: false, isCompleted: false, paymentStatus: 'none' } : r)
+      } as any));
+
+      if (!isTempId(recordId)) {
         try {
           await api.updateClientRecord(recordId, {
             is_paid: false,
@@ -926,7 +1004,7 @@ const App = () => {
             payment_status: 'none'
           });
         } catch (error) {
-          console.error('Error restoring record:', error);
+          console.error('[restoreRecord]', error);
         }
       }
   };
@@ -942,23 +1020,20 @@ const App = () => {
 
       const linkedTxIds = transactions.filter(t => t.client_record_id === recordId).map(t => t.id);
       setTransactions(prev => prev.filter(t => !linkedTxIds.includes(t.id)));
-      setClients(prev => prev.map(cl => cl.id === clientId ? {
-          ...cl,
-          records: (cl.records || []).filter(r => r.id !== recordId)
-      } : cl));
+      setClients(prev => updateById(prev, clientId, {
+        records: ((prev.find(cl => cl.id === clientId)?.records) || []).filter(r => r.id !== recordId)
+      } as any));
 
-      const isTempRec = typeof recordId === 'string' && String(recordId).startsWith('temp_');
-      if (!isTempRec) {
+      if (!isTempId(recordId)) {
           try {
               await api.deleteClientRecord(recordId);
               for (const txId of linkedTxIds) {
                   try { await api.deleteTransaction(txId); } catch {}
               }
           } catch (error) {
-              console.error('Error deleting record:', error);
               setClients(prevClients);
               setTransactions(prevTransactions);
-              showToast('Не удалось удалить запись — нет связи с сервером', 'error');
+              handleApiError(error, 'Не удалось удалить запись — нет связи с сервером', 'deleteClientRecord');
           }
       }
   };
@@ -967,15 +1042,14 @@ const App = () => {
 
   const handleUpdateClientAvatar = async (clientId, avatar) => {
       const prevAvatar = clients.find(cl => cl.id === clientId)?.avatar || null;
-      setClients(prev => prev.map(cl => cl.id === clientId ? { ...cl, avatar } : cl));
+      setClients(prev => updateById(prev, clientId, { avatar } as any));
       setAvatarSavingId(clientId);
       try {
         await api.updateClientAvatar(clientId, avatar);
         showToast('Фото сохранено', 'success');
       } catch (error) {
-        console.error('Avatar save failed:', error?.message || error);
-        setClients(prev => prev.map(cl => cl.id === clientId ? { ...cl, avatar: prevAvatar } : cl));
-        showToast('Не удалось сохранить фото — нет связи с сервером', 'error');
+        setClients(prev => updateById(prev, clientId, { avatar: prevAvatar } as any));
+        handleApiError(error, 'Не удалось сохранить фото — нет связи с сервером', 'updateClientAvatar');
       } finally {
         setAvatarSavingId(null);
       }
@@ -985,108 +1059,93 @@ const App = () => {
       const prevClients = [...clients];
       const prevTasks = [...tasks];
       
-      setClients(clients.filter(cl => cl.id !== id));
+      setClients(removeById(clients, id));
       setTasks(tasks.filter(t => t.clientId !== id));
-      
-      const isTempClient = typeof id === 'string' && String(id).startsWith('temp_');
-      if (isTempClient) return;
-      
+
+      if (isTempId(id)) return;
+
       try {
         await api.deleteClient(id);
       } catch (error) {
-        console.error('Error deleting client:', error);
         setClients(prevClients);
         setTasks(prevTasks);
-        showToast('Не удалось удалить клиента — нет связи с сервером', 'error');
+        handleApiError(error, 'Не удалось удалить клиента — нет связи с сервером', 'deleteClient');
       }
   };
 
   const handleToggleTask = async (id) => {
       const task = tasks.find(t => t.id === id);
       if (!task) return;
-      
+
       const updatedTask = { ...task, completed: !task.completed };
-      setTasks(tasks.map(t => t.id === id ? updatedTask : t));
-      
-      const isRealId = typeof id === 'number' && id < 2147483647;
-      if (isRealId) {
+      setTasks(prev => updateById(prev, id, { completed: updatedTask.completed } as any));
+
+      if (isRealId(id)) {
         try {
           await api.updateTask(id, buildTaskPayload(updatedTask));
         } catch (error) {
-          console.error('Error toggling task:', error);
+          console.error('[toggleTask]', error);
         }
       }
   };
 
   const handleDeleteTask = async (id) => {
       const deletedTask = tasks.find(t => t.id === id);
-      setTasks(tasks.filter(t => t.id !== id));
-      
-      const isRealId = typeof id === 'number' && id < 2147483647;
-      
-      if (isRealId) {
+      setTasks(removeById(tasks, id));
+
+      if (isRealId(id)) {
         try {
           await api.deleteTask(id);
         } catch (error) {
-          console.error('Error deleting task:', error);
           if (deletedTask) {
             setTasks(prev => [...prev, deletedTask]);
-            showToast('Не удалось удалить задачу — нет связи с сервером', 'error');
+            handleApiError(error, 'Не удалось удалить задачу — нет связи с сервером', 'deleteTask');
           }
         }
       }
   };
-  
+
   const handleEditTask = async (updatedTask) => {
-      setTasks(tasks.map(t => t.id === updatedTask.id ? updatedTask : t));
-      
-      const isRealId = typeof updatedTask.id === 'number' && updatedTask.id < 2147483647;
-      if (!isRealId) {
-        return;
-      }
-      
+      setTasks(prev => updateById(prev, updatedTask.id, updatedTask));
+
+      if (!isRealId(updatedTask.id)) return;
+
       try {
         await api.updateTask(updatedTask.id, buildTaskPayload(updatedTask));
       } catch (error) {
-        console.error('Error updating task:', error);
+        console.error('[updateTask]', error);
       }
   };
-  
+
   const handleAddTask = async (task) => {
       const tempId = `temp_task_${Date.now()}`;
       const newTask = { ...task, id: tempId };
-      
+
       // Добавляем в локальное состояние сразу (оптимистичное обновление)
       setTasks(prev => [newTask, ...prev]);
-      
-      // Проверяем, не временный ли клиент
-      const isClientTemp = task.clientId && typeof task.clientId === 'string' && String(task.clientId).startsWith('temp_');
-      
-      // Если клиент ещё не сохранён - задача сохранится вместе с клиентом
-      if (isClientTemp) {
-        console.log('Client is new, task will be saved after client is saved');
-        return;
-      }
-      
+
+      // Если клиент ещё не сохранён - задача сохранится вместе с клиентом.
+      if (task.clientId && isTempId(task.clientId)) return;
+
       try {
         const saved = await api.createTask(buildTaskPayload(task));
-        
-        // Обновляем ID задачи на реальный из БД, сохраняя clientId
-        setTasks(prev => prev.map(t => t.id === tempId ? { ...t, id: saved.id, clientId: task.clientId || null } : t));
+        setTasks(prev => updateById(prev, tempId, { id: saved.id, clientId: task.clientId || null } as any));
       } catch (error) {
-        console.error('Error saving task:', error);
+        console.error('[createTask]', error);
       }
   };
-  
+
   const handleSaveClient = async (updatedClient) => {
       const previousClients = [...clients];
-      setClients(clients.map(cl => cl.id === updatedClient.id ? {...cl, ...updatedClient, records: cl.records || updatedClient.records || []} : cl));
+      setClients(prev => updateById(prev, updatedClient.id, {
+        ...updatedClient,
+        records: prev.find(cl => cl.id === updatedClient.id)?.records || updatedClient.records || []
+      } as any));
       try {
         await api.updateClient(updatedClient.id, buildClientPayload(updatedClient));
       } catch (error) {
-        console.error('Error updating client:', error);
         setClients(previousClients);
-        showToast('Нет связи с сервером. Изменения не сохранены.', 'offline');
+        handleApiError(error, 'Нет связи с сервером. Изменения не сохранены.', 'updateClient', 'warning');
       }
   };
   
@@ -1097,71 +1156,69 @@ const App = () => {
       
       try {
         const saved = await api.createCategory({ name: category.name, type: category.type, color: category.color });
-        setCategories(prev => prev.map(c => c.id === tempId ? { ...c, id: saved.id } : c));
+        setCategories(prev => updateById(prev, tempId, { id: saved.id } as any));
       } catch (error) {
-        console.error('Error creating category:', error);
-        setCategories(prev => prev.filter(c => c.id !== tempId));
+        console.error('[createCategory]', error);
+        setCategories(prev => removeById(prev, tempId));
       }
   };
-  
+
   const handleEditCategory = async (id, updates) => {
       const previousCategories = [...categories];
-      setCategories(prev => prev.map(c => c.id === id ? {...c, ...updates} : c));
-      
+      setCategories(prev => updateById(prev, id, updates));
+
       try {
         await api.updateCategory(id, updates);
       } catch (error) {
-        console.error('Error updating category:', error);
+        console.error('[updateCategory]', error);
         setCategories(previousCategories);
       }
   };
-  
+
   const handleDeleteCategory = async (id) => {
       const previousCategories = [...categories];
       const previousTransactions = [...transactions];
-      setCategories(prev => prev.filter(c => c.id !== id));
+      setCategories(prev => removeById(prev, id));
       setTransactions(prev => prev.map(t => matchId(t.category, id) ? {...t, category: ''} : t));
-      
+
       try {
         await api.deleteCategory(id);
       } catch (error) {
-        console.error('Error deleting category:', error);
         setCategories(previousCategories);
         setTransactions(previousTransactions);
-        showToast('Не удалось удалить категорию — нет связи с сервером', 'error');
+        handleApiError(error, 'Не удалось удалить категорию — нет связи с сервером', 'deleteCategory');
       }
   };
-  
+
   const handleAddTag = async (tag) => {
       const tempId = `temp_tag_${Date.now()}`;
       const newTag = { ...tag, id: tempId };
       setTags(prev => [...prev, newTag]);
-      
+
       try {
         const saved = await api.createTag({ name: tag.name, color: tag.color });
-        setTags(prev => prev.map(t => t.id === tempId ? { ...t, id: saved.id } : t));
+        setTags(prev => updateById(prev, tempId, { id: saved.id } as any));
       } catch (error) {
-        console.error('Error creating tag:', error);
-        setTags(prev => prev.filter(t => t.id !== tempId));
+        console.error('[createTag]', error);
+        setTags(prev => removeById(prev, tempId));
       }
   };
-  
+
   const handleDeleteTag = async (id) => {
       const previousTags = [...tags];
       const previousTransactions = [...transactions];
-      setTags(prev => prev.filter(t => t.id !== id));
+      setTags(prev => removeById(prev, id));
       setTransactions(prev => prev.map(t => ({
           ...t,
           tags: t.tags ? t.tags.filter(tagId => !matchId(tagId, id)) : []
       })));
-      
+
       try {
         await api.deleteTag(id);
       } catch (error) {
-        console.error('Error deleting tag:', error);
         setTags(previousTags);
         setTransactions(previousTransactions);
-        showToast('Не удалось удалить тег — нет связи с сервером', 'error');
+        handleApiError(error, 'Не удалось удалить тег — нет связи с сервером', 'deleteTag');
       }
   };
   
@@ -1179,10 +1236,10 @@ const App = () => {
   };
   
   const handleEditTransaction = async (updatedTransaction) => {
-      const previousTransactions = [...transactions];
+      const previousTransactions = transactions;
       const description = [updatedTransaction.title, updatedTransaction.sub].filter(Boolean).join(' — ') || updatedTransaction.description || '';
       const normalized = { ...updatedTransaction, description };
-      setTransactions(transactions.map(t => t.id === normalized.id ? normalized : t));
+      setTransactions(prev => replaceById(prev, normalized.id, normalized));
       try {
         await api.updateTransaction(normalized.id, {
           description,
@@ -1194,20 +1251,19 @@ const App = () => {
           tags: normalized.tags || []
         });
       } catch (error) {
-        console.error('Error updating transaction:', error);
         setTransactions(previousTransactions);
+        handleApiError(error, 'Не удалось обновить операцию — нет связи с сервером', 'editTransaction');
       }
   };
-  
+
   const handleDeleteTransaction = async (id) => {
-      const previousTransactions = [...transactions];
-      setTransactions(transactions.filter(t => t.id !== id));
+      const previousTransactions = transactions;
+      setTransactions(prev => removeById(prev, id));
       try {
         await api.deleteTransaction(id);
       } catch (error) {
-        console.error('Error deleting transaction:', error);
         setTransactions(previousTransactions);
-        showToast('Не удалось удалить операцию — нет связи с сервером', 'error');
+        handleApiError(error, 'Не удалось удалить операцию — нет связи с сервером', 'deleteTransaction');
       }
   };
 
@@ -1217,15 +1273,20 @@ const App = () => {
       <UserMenu onLogout={handleLogout} onShowProfile={() => setShowProfile(true)} onShowAdmin={() => setShowAdmin(true)} networkIndicator={<NetworkIndicator isOnline={isOnline} />} />
       
       <div className="flex-1 relative overflow-hidden bg-zinc-50">
-          {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} isOnline={isOnline} />}
-          {activeTab === 'tasks' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyTasksView tasks={tasks} onToggleTask={handleToggleTask} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} clients={clients} onOpenClient={setSelectedClient} /></React.Suspense>}
-          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} /></React.Suspense>}
-          {activeTab === 'finance' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} /></React.Suspense>}
+          {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} isOnline={isOnline} canEdit={canEdit} />}
+          {activeTab === 'tasks' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyTasksView tasks={tasks} onToggleTask={handleToggleTask} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} clients={clients} onOpenClient={setSelectedClient} canEdit={canEdit} /></React.Suspense>}
+          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} canEdit={canEdit} /></React.Suspense>}
+          {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEdit} /></React.Suspense>}
 
-          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} userRole={user?.role || 'owner'} />}
-          {editingClient && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} />}
+          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} userRole={userRole} canEdit={canEdit} />}
+          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} />}
       </div>
-      <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={user?.role || 'owner'} onTabChange={() => setSelectedClient(null)} />
+      <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
+      {/* Глобальные правила (html/body/#root height + overflow + scrollbar)
+          перенесены в client/src/styles/mobile.css, чтобы применяться ВСЕГДА —
+          в т.ч. при early-return App для AdminPanel/ProfilePage. Раньше они
+          жили здесь и пропадали из DOM при переключении на админку, ломая
+          h-full и внутренний overflow-y-auto. */}
       <style>{`
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
         :root {
@@ -1233,29 +1294,11 @@ const App = () => {
           --safe-bottom: env(safe-area-inset-bottom, 0px);
           --safe-top: env(safe-area-inset-top, 0px);
         }
-        html { 
-          height: 100%; 
-          overflow: hidden;
-        }
-        body { 
-          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; 
-          background-color: #ffffff; 
-          margin: 0; 
-          padding: 0; 
-          height: 100%;
-          height: -webkit-fill-available;
-          width: 100%; 
-          overflow: hidden;
-          overscroll-behavior: none;
-          -webkit-overflow-scrolling: touch;
+        body {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+          background-color: #ffffff;
           padding-top: var(--safe-top);
           padding-bottom: var(--safe-bottom);
-        }
-        #root {
-          height: 100%;
-          height: -webkit-fill-available;
-          width: 100%;
-          overflow: hidden;
         }
         .app-container {
           height: 100%;
@@ -1267,9 +1310,7 @@ const App = () => {
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
         .animate-slide-down { animation: slideDown 0.3s ease-out forwards; }
-        ::-webkit-scrollbar { display: none; }
-        input, textarea, select { font-size: 16px !important; }
-        
+
         @supports (height: 100dvh) {
           :root { --app-height: 100dvh; }
           body, #root, .app-container { height: 100dvh; min-height: 100dvh; }

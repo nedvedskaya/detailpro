@@ -70,7 +70,7 @@ export const TaskFormFields = ({
             name="assigned_to"
             value={taskData.assigned_to ?? ''}
             onChange={onChange}
-            className="w-full bg-white border border-zinc-300 rounded-xl p-3 text-sm font-medium text-black outline-none focus:border-black shadow-sm"
+            className="w-full bg-white border border-zinc-300 rounded-xl p-3 text-sm font-medium text-black outline-none focus:border-orange-500 shadow-sm"
           >
             <option value="">Не назначен</option>
             {users

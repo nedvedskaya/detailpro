@@ -311,7 +311,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
             onClick={handleSubmit}
             disabled={isLoading}
             className={`w-full bg-zinc-900 text-white text-base font-medium py-3.5 rounded-xl transition-all ${
-              isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-zinc-800 active:scale-[0.98]'
+              isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-orange-600 active:scale-[0.98]'
             }`}
           >
             {isLoading ? (

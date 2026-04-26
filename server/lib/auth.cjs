@@ -130,14 +130,17 @@ async function createSession({ userId, studioId, schemaName, userAgent, ip }) {
  * Проверяет сессию. Если живая — возвращает контекст и обновляет last_used_at.
  * Если истекла — удаляет и возвращает null.
  * @param {string} token
- * @returns {Promise<null | { userId, studioId, schemaName, role }>}
+ * @returns {Promise<null | { userId, studioId, schemaName, role, userName, canViewFinance }>}
  */
 async function verifySession(token) {
   if (typeof token !== 'string' || !token) return null;
 
-  // JOIN с users, чтобы взять role одной поездкой в БД.
+  // JOIN с users, чтобы взять role/name/can_view_finance одной поездкой в БД.
+  // userName и canViewFinance пробрасываем дальше: первое — в audit-лог
+  // (entity user_name), второе — в гейт «manager без финансов» в tenant.cjs.
   const { rows } = await pool.query(
-    `SELECT s.user_id, s.studio_id, s.schema_name, s.expires_at, u.role, u.is_active
+    `SELECT s.user_id, s.studio_id, s.schema_name, s.expires_at,
+            u.role, u.is_active, u.name, u.can_view_finance
        FROM saas_meta.sessions s
        JOIN saas_meta.users u ON u.id = s.user_id
       WHERE s.token = $1`,
@@ -168,6 +171,10 @@ async function verifySession(token) {
     studioId: row.studio_id,
     schemaName: row.schema_name,
     role: row.role,
+    userName: row.name || null,
+    // Если миграция 003 ещё не накатилась — поле undefined: тогда трактуем
+    // как «по умолчанию видит» (true), чтобы не блокнуть существующих юзеров.
+    canViewFinance: row.can_view_finance !== false,
   };
 }
 

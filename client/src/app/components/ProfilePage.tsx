@@ -8,7 +8,9 @@
  *   1. Шапка: аватар (клик — загрузить фото из галереи), ФИО крупно, role-chip
  *   2. Личные данные: имя, фамилия, телефон, email (read-only)
  *   3. Студия: название, дата регистрации
- *   4. Тариф: текущий план + слот-каунтер + 4 карточки (Соло мес/год, Студия мес/год)
+ *   4. Тариф: текущий план + слот-каунтер + 2 карточки (Соло, Студия) с двумя
+ *      кнопками оплаты в каждой (за 1 месяц / за 12 месяцев со скидкой). Студия
+ *      выделяется как «Популярный». Триал-баннер сверху со счётчиком дней.
  *   5. Подписка: countdown до access_until, кнопка «Отменить подписку» (auto)
  *   6. Реферальная программа — заглушка «Скоро»
  *
@@ -23,10 +25,16 @@
  *   ?v=<timestamp> для cache-bust. Удаление — мелкая ссылка «Удалить» под именем,
  *   видна только если фото уже загружено.
  *
- * Тариф (4 карточки):
- *   Линки на оплату — Prodamus payform.ru. Ценники должны соответствовать тому,
- *   что настроено на стороне Prodamus, иначе пользователь увидит на чекауте
- *   другую сумму. Если меняется на стороне Prodamus — правим TARIFF_PLANS.
+ * Тариф (2 карточки):
+ *   Каждая карточка — Соло и Студия — содержит две кнопки оплаты: за 1 месяц и
+ *   за 12 месяцев со скидкой (~15% Соло, ~16% Студия). Линки — Prodamus
+ *   payform.ru. Ценники должны соответствовать тому, что настроено на стороне
+ *   Prodamus, иначе пользователь увидит на чекауте другую сумму. Если меняется
+ *   на стороне Prodamus — правим TARIFF_GROUPS.
+ *
+ *   Solo → Studio upgrade: специальной кнопки нет. Если пользователь на «Соло»
+ *   оплачивает «Студия», бэк (server/routes/webhooks.cjs) делает GREATEST на
+ *   access_until — оставшиеся дни не теряются, новый период добавляется сверху.
  *
  * Отмена подписки:
  *   Кнопка → POST /api/profile/subscription/cancel → выставляет cancel_pending=true
@@ -49,98 +57,91 @@ interface ProfilePageProps {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Тарифы для карточек выбора. Цены — что настроено на Prodamus payform.
-// Если меняешь там — синхронизируй здесь.
+// Тарифы. Структура: 2 группы (Соло, Студия), у каждой — месячный и годовой
+// варианты. На карточку рисуем по две кнопки оплаты (мес/год). Цены должны
+// совпадать с тем, что настроено в Prodamus payform.ru.
 // ──────────────────────────────────────────────────────────────────────
+type TariffGroupId = 'solo' | 'studio';
 type TariffId = 'solo_month' | 'solo_year' | 'studio_month' | 'studio_year';
 
-interface TariffCard {
+interface TariffOption {
   id: TariffId;
-  group: 'solo' | 'studio';
   period: 'month' | 'year';
-  title: string;
-  badge?: string;            // подпись типа «−17%» или «ВЫГОДНЕЕ»
-  priceRub: number;          // что снимут на чекауте
-  perMonthRub?: number;      // эквивалент в месяц для годовых
-  saveRub?: number;          // экономия за год (для годовых)
-  features: string[];
+  priceRub: number;          // итоговая сумма на чекауте
   payformUrl: string;
-  highlight?: boolean;       // выделить рамкой как «лучшее предложение»
+  // Для годового — сколько экономия и сколько в пересчёте на месяц
+  perMonthRub?: number;
+  saveRub?: number;
+  savePct?: number;          // подпись для бейджа: «−15%»
 }
 
-const TARIFF_PLANS: TariffCard[] = [
+interface TariffGroup {
+  id: TariffGroupId;
+  title: string;
+  tagline: string;
+  features: string[];
+  monthly: TariffOption;
+  yearly: TariffOption;
+  popular?: boolean;         // визуально выделяем как «самый популярный»
+}
+
+// Solo·год = 49 900 ₽: экономия 4900*12 − 49900 = 8900 (≈15%)
+// Studio·год = 89 900 ₽: экономия 8900*12 − 89900 = 16900 (≈16%)
+const TARIFF_GROUPS: TariffGroup[] = [
   {
-    id: 'solo_month',
-    group: 'solo',
-    period: 'month',
-    title: 'Соло · месяц',
-    priceRub: 4900,
+    id: 'solo',
+    title: 'Соло',
+    tagline: 'Для одного мастера, который ведёт студию сам',
     features: [
       '1 пользователь (только собственник)',
-      'Клиенты, задачи, календарь, финансы',
-      'Аналитика и отчёты',
+      'Клиенты, задачи, календарь',
+      'Финансовый учёт и аналитика',
+      'Загрузка фото детейлинга',
     ],
-    payformUrl: 'https://payform.ru/dablmR1/',
+    monthly: {
+      id: 'solo_month',
+      period: 'month',
+      priceRub: 4900,
+      payformUrl: 'https://payform.ru/dablmR1/',
+    },
+    yearly: {
+      id: 'solo_year',
+      period: 'year',
+      priceRub: 49900,
+      perMonthRub: 4158,
+      saveRub: 8900,
+      savePct: 15,
+      payformUrl: 'https://payform.ru/goblmSQ/',
+    },
   },
   {
-    id: 'solo_year',
-    group: 'solo',
-    period: 'year',
-    title: 'Соло · год',
-    badge: '−17%',
-    priceRub: 49000,
-    perMonthRub: 4083,
-    saveRub: 9800,
-    features: [
-      '1 пользователь (только собственник)',
-      'Всё из «Соло · месяц»',
-      'Экономия 9 800 ₽ за год',
-    ],
-    payformUrl: 'https://payform.ru/goblmSQ/',
-    highlight: true,
-  },
-  {
-    id: 'studio_month',
-    group: 'studio',
-    period: 'month',
-    title: 'Студия · месяц',
-    priceRub: 8900,
+    id: 'studio',
+    title: 'Студия',
+    tagline: 'Для команды: собственник + менеджер + мастер',
     features: [
       'До 3 пользователей (собственник + 2)',
       'Роли «Менеджер» и «Мастер»',
-      'Всё из «Соло»',
+      'Всё из тарифа «Соло»',
+      'Приоритетная поддержка',
     ],
-    payformUrl: 'https://payform.ru/jqblmUt/',
-  },
-  {
-    id: 'studio_year',
-    group: 'studio',
-    period: 'year',
-    title: 'Студия · год',
-    badge: '−17%',
-    priceRub: 89000,
-    perMonthRub: 7417,
-    saveRub: 17800,
-    features: [
-      'До 3 пользователей (собственник + 2)',
-      'Всё из «Студия · месяц»',
-      'Экономия 17 800 ₽ за год',
-    ],
-    payformUrl: 'https://payform.ru/moblmW2/',
-    highlight: true,
+    monthly: {
+      id: 'studio_month',
+      period: 'month',
+      priceRub: 8900,
+      payformUrl: 'https://payform.ru/jqblmUt/',
+    },
+    yearly: {
+      id: 'studio_year',
+      period: 'year',
+      priceRub: 89900,
+      perMonthRub: 7492,
+      saveRub: 16900,
+      savePct: 16,
+      payformUrl: 'https://payform.ru/moblmW2/',
+    },
+    popular: true,
   },
 ];
-
-// Какая карточка считается «текущей» для подсветки «ваш план».
-// На trial/cancelled — ничего не подсвечиваем (нет активной).
-function currentTariffId(plan: string): TariffId | null {
-  // У нас в БД хранится только базовый план (solo/studio), без period.
-  // Период пока знаем только косвенно — через access_until vs created_at,
-  // но для простоты UX подсвечиваем оба варианта группы (solo_month + solo_year).
-  // Здесь возвращаем null, а highlight «ваш план» делаем по `group`.
-  if (plan === 'solo' || plan === 'studio') return null;
-  return null;
-}
 
 // ──────────────────────────────────────────────────────────────────────
 // Иконки (без зависимостей — inline SVG, как в остальном UI)
@@ -175,8 +176,8 @@ const CheckIcon = () => (
 // Цвет role-chip — owner чёрный (главный), manager синий, master серый
 // ──────────────────────────────────────────────────────────────────────
 const ROLE_CHIP_STYLES: Record<Role, string> = {
-  owner: 'bg-zinc-900 text-white',
-  manager: 'bg-blue-100 text-blue-800',
+  owner: 'bg-orange-500 text-white',
+  manager: 'bg-orange-100 text-orange-800',
   master: 'bg-zinc-100 text-zinc-700',
 };
 
@@ -350,81 +351,108 @@ const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: 
 //   _param_plan      — то же, как поле plan ('solo_month' | ...)
 //   customer_email   — Prodamus подставит на чекауте, чтобы клиенту не вводить
 // ──────────────────────────────────────────────────────────────────────
-function buildPayformUrl(card: TariffCard, studioId: string, email: string): string {
-  const u = new URL(card.payformUrl);
+function buildPayformUrl(option: TariffOption, studioId: string, email: string): string {
+  const u = new URL(option.payformUrl);
   u.searchParams.set('_param_studio_id', studioId);
-  u.searchParams.set('_param_plan', card.id);
+  u.searchParams.set('_param_plan', option.id);
   if (email) u.searchParams.set('customer_email', email);
   return u.toString();
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Карточка тарифа (используется внутри сетки 2×2)
+// Карточка тарифа: 2 кнопки (мес / год). Студия выделена как «популярная».
 // ──────────────────────────────────────────────────────────────────────
 interface TariffCardViewProps {
-  card: TariffCard;
+  group: TariffGroup;
   isCurrent: boolean;
-  payUrl: string;
+  studioId: string;
+  email: string;
 }
 
-const TariffCardView = ({ card, isCurrent, payUrl }: TariffCardViewProps) => {
-  // Подсветка: highlight=год → зелёная рамка-«рекомендуем», isCurrent → чёрная.
-  const borderClass = isCurrent
-    ? 'border-zinc-900 shadow-md'
-    : card.highlight
-    ? 'border-emerald-300 shadow-sm'
-    : 'border-zinc-200';
+const TariffCardView = ({ group, isCurrent, studioId, email }: TariffCardViewProps) => {
+  const monthlyUrl = buildPayformUrl(group.monthly, studioId, email);
+  const yearlyUrl  = buildPayformUrl(group.yearly,  studioId, email);
+
+  // Студия: оранжевая рамка + лёгкий tint, бейдж «ПОПУЛЯРНО».
+  // Соло: нейтральная рамка.
+  const wrapperClass = group.popular
+    ? 'border-orange-400 shadow-lg ring-1 ring-orange-200 bg-gradient-to-br from-orange-50/60 to-white'
+    : 'border-zinc-200 bg-white';
 
   return (
-    <div className={`relative bg-white rounded-xl border ${borderClass} p-5 flex flex-col`}>
-      {card.badge && !isCurrent && (
-        <span className="absolute -top-2 right-4 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[11px] font-semibold tracking-wide">
-          {card.badge}
+    <div className={`relative rounded-2xl border ${wrapperClass} p-6 flex flex-col`}>
+      {group.popular && (
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-orange-500 text-white text-[11px] font-bold tracking-wide uppercase shadow-sm">
+          Популярный
         </span>
       )}
       {isCurrent && (
-        <span className="absolute -top-2 right-4 px-2 py-0.5 rounded-full bg-zinc-900 text-white text-[11px] font-semibold tracking-wide">
+        <span className="absolute -top-3 right-4 px-3 py-0.5 rounded-full bg-zinc-900 text-white text-[11px] font-semibold tracking-wide">
           ваш план
         </span>
       )}
 
-      <div className="text-sm font-semibold text-zinc-900">{card.title}</div>
+      <div className="text-lg font-bold text-zinc-900">{group.title}</div>
+      <div className="mt-1 text-xs text-zinc-500">{group.tagline}</div>
 
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-2xl font-bold text-zinc-900">{formatRub(card.priceRub)}</span>
-        <span className="text-xs text-zinc-500">
-          {card.period === 'year' ? 'за год' : 'в месяц'}
-        </span>
-      </div>
-
-      {card.period === 'year' && card.perMonthRub && (
-        <div className="mt-1 text-xs text-zinc-500">
-          ≈ {formatRub(card.perMonthRub)}/мес · списание раз в год
-        </div>
-      )}
-
-      <ul className="mt-4 space-y-1.5 flex-1">
-        {card.features.map((f, idx) => (
-          <li key={idx} className="flex items-start gap-2 text-xs text-zinc-600">
-            <span className="mt-0.5 text-emerald-500 shrink-0"><CheckIcon /></span>
+      <ul className="mt-4 space-y-2">
+        {group.features.map((f, idx) => (
+          <li key={idx} className="flex items-start gap-2 text-sm text-zinc-700">
+            <span className="mt-0.5 text-orange-500 shrink-0"><CheckIcon /></span>
             <span>{f}</span>
           </li>
         ))}
       </ul>
 
+      <div className="mt-5 flex-1" />
+
+      {/*
+        Кнопки оплаты. Mobile-first: label сверху мелким, цена снизу крупной —
+        одна и та же раскладка на всех брейкпойнтах, не зависит от ширины
+        экрана. Бейдж скидки вынесен наружу (absolute -top-2 -right-2),
+        чтобы не перегружать саму кнопку.
+        Цветовая логика — единая для Соло и Студии:
+          • месячная кнопка = «outline» (белая, оранжевая обводка/текст)
+          • годовая кнопка  = «filled»  (оранжевый фон, белый текст)
+        Различение Соло/Студия — на уровне обёртки карточки (ring + бейдж
+        «Популярный»), а не цветом кнопок.
+      */}
+
+      {/* Кнопка «Оплатить на 1 месяц» */}
       <a
-        href={payUrl}
+        href={monthlyUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className={
-          'mt-4 inline-flex items-center justify-center w-full px-4 py-2 rounded-lg text-sm font-medium transition-colors ' +
-          (card.highlight
-            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-            : 'bg-zinc-900 text-white hover:bg-zinc-800')
-        }
+        className="mt-2 flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-white border border-orange-300 text-orange-700 hover:bg-orange-50 active:bg-orange-100 transition-colors"
       >
-        Оформить
+        <span className="text-xs">Оплатить на 1 месяц</span>
+        <span className="mt-0.5 text-lg font-bold">{formatRub(group.monthly.priceRub)}</span>
       </a>
+
+      {/* Кнопка «Оплатить на 12 месяцев» с ribbon-бейджем скидки сбоку */}
+      <a
+        href={yearlyUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 relative flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm"
+      >
+        {group.yearly.savePct && (
+          <span
+            aria-label={`Скидка ${group.yearly.savePct}%`}
+            className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold tracking-wide shadow-md ring-2 ring-white"
+          >
+            −{group.yearly.savePct}%
+          </span>
+        )}
+        <span className="text-xs opacity-90">Оплатить на 12 месяцев</span>
+        <span className="mt-0.5 text-lg font-bold">{formatRub(group.yearly.priceRub)}</span>
+      </a>
+
+      {group.yearly.perMonthRub && (
+        <p className="mt-2 text-[11px] text-zinc-500 text-center">
+          ≈ {formatRub(group.yearly.perMonthRub)}/мес · экономия {formatRub(group.yearly.saveRub || 0)} за год
+        </p>
+      )}
     </div>
   );
 };
@@ -581,20 +609,38 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
 
   const access = describeAccessUntil(studio.accessUntil);
 
-  // Подсветка «ваш план» в карточках. Для активного solo/studio подсвечиваем
-  // оба варианта группы (period мы пока не различаем в БД).
-  const currentTariff = currentTariffId(studio.plan); // null — нет точной карточки
-  const currentGroup: 'solo' | 'studio' | null =
+  // Подсветка «ваш план» в карточках. period (мес/год) в БД мы пока не храним —
+  // различить можно по разнице (access_until − created_at), но ради простоты
+  // сейчас подсвечиваем всю группу (Соло или Студия).
+  const currentGroup: TariffGroupId | null =
     studio.plan === 'solo' ? 'solo'
     : studio.plan === 'studio' ? 'studio'
     : null;
+
+  // Триал — сколько осталось дней (для шапки-баннера)
+  const isTrial = studio.plan === 'trial';
+  const trialDaysLeft = isTrial ? (() => {
+    const target = (() => {
+      if (!studio.accessUntil) return null;
+      if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(studio.accessUntil)) {
+        return new Date(studio.accessUntil.replace(' ', 'T'));
+      }
+      return new Date(studio.accessUntil);
+    })();
+    if (!target || isNaN(target.getTime())) return 0;
+    const ms = target.getTime() - Date.now();
+    return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+  })() : 0;
 
   // Можно ли отменить подписку: только owner на платном тарифе
   const canCancel = role === 'owner' && (studio.plan === 'solo' || studio.plan === 'studio');
 
   return (
-    <div className="min-h-screen bg-zinc-50">
-      <div className="max-w-3xl mx-auto p-4 sm:p-6">
+    // h-full + overflow-y-auto — корневой #root в App.tsx имеет overflow:hidden,
+    // поэтому min-h-screen режет нижнюю часть страницы. Делаем внутренний
+    // скролл с overscroll-contain, чтобы скролл не «пробивал» наружу.
+    <div className="h-full bg-zinc-50 overflow-y-auto overscroll-contain">
+      <div className="max-w-3xl mx-auto p-4 sm:p-6 pb-20">
         {/* Верхняя кнопка «Назад» */}
         <button
           onClick={onBack}
@@ -626,7 +672,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                 type="button"
                 onClick={handleAvatarPick}
                 disabled={avatarBusy}
-                className="absolute bottom-0 right-0 bg-zinc-900 text-white rounded-full p-2 shadow-md hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                className="absolute bottom-0 right-0 bg-zinc-900 text-white rounded-full p-2 shadow-md hover:bg-orange-600 transition-colors disabled:opacity-50"
                 title={avatarSrc ? 'Заменить фото' : 'Загрузить фото'}
               >
                 <CameraIcon />
@@ -712,7 +758,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           </div>
         </div>
 
-        {/* ── 4. Тариф: текущий план + слоты + сетка предложений ── */}
+        {/* ── 4. Тариф: текущий план + слоты + 2 карточки (Соло, Студия) ──
+            Видна ТОЛЬКО собственнику. Менеджер/мастер — это сотрудники студии,
+            биллинг к ним не относится. */}
+        {role === 'owner' && (
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4">
           <div className="px-6 pt-5 pb-3 flex items-center justify-between">
             <span className="text-sm font-medium text-zinc-700">Тариф</span>
@@ -720,6 +769,36 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
               сейчас: {studio.planLabel}
             </span>
           </div>
+
+          {/* Триал-баннер: сколько дней осталось. Если триал ещё активен — */}
+          {/* оранжевый градиент с большой цифрой; если завершился — алый      */}
+          {/* «истёк» без цифры, чтобы не выглядеть нелепо «0».                */}
+          {isTrial && trialDaysLeft > 0 && (
+            <div className="mx-4 sm:mx-6 mb-4 p-4 rounded-xl bg-gradient-to-r from-orange-500 to-orange-400 text-white">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Пробный период</p>
+                  <p className="mt-0.5 text-xs opacity-90">
+                    Осталось {trialDaysLeft} {pluralizeDays(trialDaysLeft)} бесплатного доступа
+                  </p>
+                </div>
+                <div className="shrink-0 text-3xl font-bold tabular-nums">
+                  {trialDaysLeft}
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] opacity-90">
+                Оформите тариф ниже, чтобы не потерять доступ к CRM.
+              </p>
+            </div>
+          )}
+          {isTrial && trialDaysLeft === 0 && (
+            <div className="mx-4 sm:mx-6 mb-4 p-4 rounded-xl bg-red-50 border border-red-200">
+              <p className="text-sm font-semibold text-red-700">Пробный период завершён</p>
+              <p className="mt-1 text-xs text-red-600">
+                Чтобы вернуть доступ к CRM, оформите тариф ниже.
+              </p>
+            </div>
+          )}
 
           {/* Слот-каунтер «Сотрудников: N из M» */}
           <div className="px-6 pb-4">
@@ -729,40 +808,60 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             </div>
             <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
               <div
-                className="h-full bg-zinc-900 transition-[width] duration-500"
+                className="h-full bg-orange-500 transition-[width] duration-500"
                 style={{ width: `${slotsPct}%` }}
               />
             </div>
             {!limits.canAddUsers && limits.maxUsers > 0 && (
               <p className="mt-2 text-xs text-amber-600">
-                Лимит достигнут. Чтобы добавить ещё сотрудника — повысьте тариф.
+                Лимит достигнут. Чтобы добавить ещё сотрудника — повысьте тариф до «Студия».
               </p>
             )}
           </div>
 
-          {/* Сетка 2×2 (на мобиле — стек) */}
-          <div className="px-6 pb-5">
-            <p className="text-xs text-zinc-500 mb-3">
-              Выберите подходящий тариф. Оплата — через Prodamus, чек придёт автоматически на email.
-              Годовые тарифы — выгоднее на&nbsp;17%.
+          {/* 2 карточки: Соло и Студия. Каждая — с двумя кнопками (мес/год). */}
+          <div className="px-6 pb-2">
+            <p className="text-xs text-zinc-500 mb-4">
+              Выберите подходящий тариф. Оплата — через Prodamus, чек придёт на email автоматически.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {TARIFF_PLANS.map((card) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+              {TARIFF_GROUPS.map((group) => (
                 <TariffCardView
-                  key={card.id}
-                  card={card}
-                  isCurrent={
-                    currentTariff === card.id
-                    || (currentGroup !== null && currentGroup === card.group)
-                  }
-                  payUrl={buildPayformUrl(card, studio.id, user.email)}
+                  key={group.id}
+                  group={group}
+                  isCurrent={currentGroup === group.id}
+                  studioId={studio.id}
+                  email={user.email}
                 />
               ))}
             </div>
           </div>
-        </div>
 
-        {/* ── 5. Подписка ────────────────────────────────────────── */}
+          {/* Подсказка про апгрейд Соло → Студия */}
+          {currentGroup === 'solo' && (
+            <div className="mx-6 mt-4 mb-5 p-3 rounded-lg bg-orange-50 border border-orange-200">
+              <p className="text-xs text-orange-900">
+                <span className="font-semibold">Хотите перейти с «Соло» на «Студия»?</span>{' '}
+                Просто оплатите тариф «Студия» — оставшиеся дни от «Соло» сохранятся,
+                новый период добавится сверху. Платите только за продление, ничего не теряется.
+              </p>
+            </div>
+          )}
+          {!currentGroup && !isTrial && (
+            <div className="mx-6 mt-4 mb-5 p-3 rounded-lg bg-zinc-50 border border-zinc-200">
+              <p className="text-xs text-zinc-600">
+                Подписка не активна. Оформите любой тариф, чтобы вернуть доступ к CRM.
+              </p>
+            </div>
+          )}
+          {!currentGroup && isTrial && <div className="pb-3" />}
+          {currentGroup === 'studio' && <div className="pb-3" />}
+        </div>
+        )}
+
+        {/* ── 5. Подписка ──────────────────────────────────────────
+            Видна ТОЛЬКО собственнику. */}
+        {role === 'owner' && (
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4">
           <div className="px-6 pt-5 pb-2 text-sm font-medium text-zinc-700">Подписка</div>
           <div className="px-6 pb-5">
@@ -830,8 +929,11 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             )}
           </div>
         </div>
+        )}
 
-        {/* ── 6. Реферальная программа — заглушка ────────────────── */}
+        {/* ── 6. Реферальная программа — заглушка ──────────────────
+            Видна ТОЛЬКО собственнику. */}
+        {role === 'owner' && (
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4 opacity-70">
           <div className="px-6 py-5">
             <div className="flex items-center justify-between">
@@ -843,6 +945,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             </p>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

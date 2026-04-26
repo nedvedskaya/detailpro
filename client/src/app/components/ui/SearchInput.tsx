@@ -42,7 +42,7 @@ export const SearchInput = ({
       {showButton && onSearch && (
         <button
           onClick={onSearch}
-          className="px-4 py-2.5 bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors shrink-0"
+          className="px-4 py-2.5 bg-zinc-900 text-white rounded-lg hover:bg-orange-600 transition-colors shrink-0"
         >
           {buttonText}
         </button>
