@@ -96,6 +96,9 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       accessUntil: studioRow.access_until,
       isActive: studioRow.is_active,
       createdAt: studioRow.created_at,
+      // cancel_pending=true → пользователь нажал «Отменить подписку».
+      // UI показывает badge «Подписка отменена, доступ до …» и кнопку «Восстановить».
+      cancelPending: studioRow.cancel_pending === true,
     },
     limits: {
       currentUsers,
@@ -118,6 +121,7 @@ router.get('/', requireAuth, async (req, res, next) => {
           s.id AS studio_id, s.display_name, s.plan,
           s.is_active AS studio_active, s.access_until,
           s.created_at AS studio_created_at,
+          s.cancel_pending AS studio_cancel_pending,
           (SELECT count(*)::int FROM saas_meta.users
             WHERE studio_id = s.id AND is_active = true) AS current_users
          FROM saas_meta.users u
@@ -137,6 +141,7 @@ router.get('/', requireAuth, async (req, res, next) => {
       id: row.studio_id, display_name: row.display_name, plan: row.plan,
       is_active: row.studio_active, access_until: row.access_until,
       created_at: row.studio_created_at,
+      cancel_pending: row.studio_cancel_pending,
     };
 
     res.json(shapeProfileResponse({
@@ -303,6 +308,77 @@ router.delete('/avatar', requireAuth, async (req, res, next) => {
       [userId]
     );
 
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/subscription/cancel
+// Помечаем подписку как отменённую: автопродления НЕ будет, доступ
+// сохраняется до access_until. Доступно только владельцу студии и только
+// для платных тарифов (solo/studio) — на пробном отменять нечего.
+//
+// ВАЖНО: фактическое отключение списаний на стороне Prodamus делается
+// отдельно (через их API в Phase 5 либо вручную через кабинет). Этот флаг —
+// контракт нашего UI и подсказка webhook-у не продлевать access_until.
+// ──────────────────────────────────────────────────────────────────────
+router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.session.userId;
+
+    // Проверяем, что пользователь — owner своей студии
+    const u = await pool.query(
+      `SELECT u.role, u.studio_id, s.plan, s.cancel_pending
+         FROM saas_meta.users u
+         JOIN saas_meta.studios s ON s.id = u.studio_id
+        WHERE u.id = $1`,
+      [userId]
+    );
+    const row = u.rows[0];
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_cancel' });
+    }
+    if (row.plan !== 'solo' && row.plan !== 'studio') {
+      // на trial/cancelled отменять нечего
+      return res.status(400).json({ error: 'no_active_subscription' });
+    }
+    if (row.cancel_pending === true) {
+      return res.json({ ok: true, alreadyCancelled: true });
+    }
+
+    await pool.query(
+      `UPDATE saas_meta.studios SET cancel_pending = true WHERE id = $1`,
+      [row.studio_id]
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/subscription/resume
+// «Передумал отменять» — снимаем флаг. Бесплатно, доступно владельцу.
+// ──────────────────────────────────────────────────────────────────────
+router.post('/subscription/resume', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.session.userId;
+
+    const u = await pool.query(
+      `SELECT u.role, u.studio_id
+         FROM saas_meta.users u
+        WHERE u.id = $1`,
+      [userId]
+    );
+    const row = u.rows[0];
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_resume' });
+    }
+
+    await pool.query(
+      `UPDATE saas_meta.studios SET cancel_pending = false WHERE id = $1`,
+      [row.studio_id]
+    );
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

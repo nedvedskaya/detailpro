@@ -124,6 +124,14 @@ export const api = {
   deleteAvatar() {
     return send<{ ok: true }>('DELETE', '/profile/avatar');
   },
+  // Отмена подписки (owner only). Не списывает деньги обратно — просто
+  // отключает автопродление, доступ остаётся до accessUntil.
+  cancelSubscription() {
+    return send<{ ok: true; alreadyCancelled?: boolean }>('POST', '/profile/subscription/cancel');
+  },
+  resumeSubscription() {
+    return send<{ ok: true }>('POST', '/profile/subscription/resume');
+  },
 
   // ────── админка студии (role=owner) ──────
   getAdminUsers(params?: { search?: string; role?: string; is_active?: string }) {

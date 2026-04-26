@@ -69,6 +69,9 @@ export interface ProfileResponse {
     accessUntil: string;
     isActive: boolean;
     createdAt: string;
+    // true → пользователь нажал «Отменить подписку».
+    // Доступ сохраняется до accessUntil, но автопродления не будет.
+    cancelPending: boolean;
   };
   limits: {
     currentUsers: number;
