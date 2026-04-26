@@ -1,0 +1,20 @@
+{
+  "name": "saas-crm-foundation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SaaS CRM foundation: critical-path security, billing, backup, legal compliance",
+  "scripts": {
+    "init": "node server/init.cjs",
+    "start": "node server/server.cjs",
+    "dev": "node --watch server/server.cjs",
+    "backup": "bash scripts/backup.sh"
+  },
+  "dependencies": {
+    "dotenv": "^17.0.0",
+    "express": "^5.0.0",
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
