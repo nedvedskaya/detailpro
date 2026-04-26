@@ -1,0 +1,137 @@
+/**
+ * Мобильная оптимизация для iOS устройств (iPhone 12-17)
+ * Обеспечивает корректное отображение на всех современных iPhone
+ */
+
+@layer base {
+  /* iOS-специфичные настройки */
+  html {
+    /* Отключаем автоматическое увеличение текста в landscape на iOS */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    
+    /* Улучшаем производительность скролла на iOS */
+    -webkit-overflow-scrolling: touch;
+    
+    /* Отключаем выделение текста при долгом нажатии */
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    
+    /* Высота для iOS с учетом safe area */
+    height: 100%;
+    height: -webkit-fill-available;
+  }
+
+  body {
+    /* Фиксируем высоту для iOS */
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    
+    /* Отключаем bounce эффект на iOS */
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Оптимизация для notch (Dynamic Island) на iPhone */
+  @supports (padding-top: env(safe-area-inset-top)) {
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
+    }
+  }
+
+  /* Улучшаем плавность анимаций на iOS */
+  * {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+
+  /* Оптимизация кнопок для touch на iOS */
+  button,
+  a,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+
+  /* Убираем системные стили для input на iOS */
+  input,
+  textarea,
+  select {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    border-radius: 0;
+  }
+
+  /* Предотвращаем zoom на focus для input на iOS */
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="password"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  
+  /* Фикс для iOS Safari address bar */
+  .ios-device {
+    height: 100vh;
+    height: -webkit-fill-available;
+  }
+}
+
+/* Оптимизация высоты viewport для iOS Safari */
+@supports (-webkit-touch-callout: none) {
+  .h-screen,
+  .h-full,
+  [class*="h-screen"],
+  [class*="h-full"] {
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* Компактные отступы для мобильных устройств */
+@media (max-width: 640px) {
+  /* Уменьшаем вертикальные отступы заголовков */
+  .mobile-compact-header {
+    padding-top: 0.75rem !important;
+    padding-bottom: 0.5rem !important;
+  }
+
+  /* Компактные карточки */
+  .mobile-compact-card {
+    padding: 0.75rem !important;
+  }
+
+  /* Уменьшаем отступы между элементами */
+  .mobile-compact-spacing {
+    gap: 0.5rem !important;
+  }
+}
+
+/* Оптимизация для iPhone 16 Pro Max и больших экранов */
+@media (min-width: 430px) and (max-width: 932px) {
+  .container {
+    max-width: 100%;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* Оптимизация для малых iPhone (iPhone 13 mini, SE) */
+@media (max-width: 375px) {
+  html {
+    font-size: 15px;
+  }
+  
+  .mobile-text-compact {
+    font-size: 0.875rem !important;
+  }
+}

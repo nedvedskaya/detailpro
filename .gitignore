@@ -8,3 +8,7 @@ ca.crt
 *.dump
 .idea/
 .vscode/
+
+# Build output
+dist/
+*.tsbuildinfo

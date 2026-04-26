@@ -113,7 +113,9 @@ app.use('/api', requireAuth, requireActiveStudio, tenantRouter);
 // ──────────────────────────────────────────────────────────────────────
 // 7. Static frontend  (Vite-build, если есть; в dev проксирует Vite сам)
 // ──────────────────────────────────────────────────────────────────────
-const STATIC_DIR = process.env.STATIC_DIR || path.join(__dirname, '..', 'dist');
+// По умолчанию ищем сборку фронта в client/dist (Vite собирает туда).
+// В деплое можно переопределить через STATIC_DIR.
+const STATIC_DIR = process.env.STATIC_DIR || path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(STATIC_DIR, { maxAge: '1h', index: false }));
 
 // SPA fallback: всё, что НЕ /api/* — отдаём index.html (фронт сам разрулит).
