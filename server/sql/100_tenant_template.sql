@@ -39,12 +39,32 @@ CREATE TABLE IF NOT EXISTS {{schema}}.categories (
 );
 
 -- ─── Теги (общий пул для clients, vehicles, bookings, …) ───
+-- type: 'all' — общий тег (виден везде), 'income' — только в доходных
+-- финансовых операциях, 'expense' — только в расходных. Колонка добавлена
+-- задним числом — для существующих студий миграция через ALTER ниже.
 CREATE TABLE IF NOT EXISTS {{schema}}.tags (
     id           SERIAL PRIMARY KEY,
     name         VARCHAR(255) NOT NULL,
     color        VARCHAR(20),
+    type         VARCHAR(20) NOT NULL DEFAULT 'all'
+                 CHECK (type IN ('all', 'income', 'expense')),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Идемпотентная миграция для уже созданных студий.
+ALTER TABLE {{schema}}.tags
+  ADD COLUMN IF NOT EXISTS type VARCHAR(20) NOT NULL DEFAULT 'all';
+-- ADD CONSTRAINT не имеет IF NOT EXISTS до PG 16; ловим duplicate_object,
+-- чтобы повторный запуск миграции не падал. Имя схемы внутри SQL-литерала
+-- не сравниваем — safeIdent заворачивает его в кавычки, и строка не
+-- совпала бы с pg_namespace.nspname.
+DO $$
+BEGIN
+  ALTER TABLE {{schema}}.tags
+    ADD CONSTRAINT tags_type_check
+    CHECK (type IN ('all', 'income', 'expense'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END
+$$;
 
 -- ─── Клиенты ───
 CREATE TABLE IF NOT EXISTS {{schema}}.clients (
@@ -138,7 +158,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.client_records (
     end_date        DATE,
     time            TIME,
     payment_status  VARCHAR(20) NOT NULL DEFAULT 'none'
-                    CHECK (payment_status IN ('none', 'partial', 'paid', 'refunded')),
+                    CHECK (payment_status IN ('none', 'advance', 'paid')),
     is_paid         BOOLEAN NOT NULL DEFAULT false,
     is_completed    BOOLEAN NOT NULL DEFAULT false,
     tags            JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -214,6 +234,112 @@ CREATE TABLE IF NOT EXISTS {{schema}}.app_data (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ════════════════════════════════════════════════════════════════════════
+-- Документы по броням: акт приёмки и заказ-наряд.
+--
+-- Привязка 1:1 к bookings.id (UNIQUE(booking_id)) — на одну запись один
+-- акт и один наряд. Удаление брони → CASCADE: документы и фото уезжают
+-- вместе с ней.
+--
+-- ID-тип SERIAL/INTEGER (как и остальные per-tenant). Номер документа —
+-- сам id (изолирован per-tenant SERIAL → автоинкремент внутри студии).
+--
+-- Подпись хранится как base64 PNG в `signature_data` (TEXT). Это упрощает
+-- генерацию PDF (вшиваем data:image/png;base64,... напрямую) и не требует
+-- отдельного хранилища. Размер обычно ≤30 KB на подпись.
+--
+-- pdf_path — путь к сгенерированному PDF на диске (var/documents/...). Может
+-- быть NULL, пока документ не создан или подпись не получена.
+-- ════════════════════════════════════════════════════════════════════════
+
+-- ─── Заказ-наряд ───
+-- ВАЖНО: документы (акт/наряд/фото) привязаны к client_records, а НЕ к bookings.
+-- bookings — это слот в календаре (для master, может и не быть для записи извне).
+-- client_records — первичная сущность учёта работ. Документ нужен на каждую
+-- запись клиента, независимо от того, была ли календарная бронь.
+CREATE TABLE IF NOT EXISTS {{schema}}.work_orders (
+    id                SERIAL PRIMARY KEY,
+    booking_id        INTEGER NOT NULL UNIQUE
+                       REFERENCES {{schema}}.client_records(id) ON DELETE CASCADE,
+    master_id         UUID REFERENCES saas_meta.users(id) ON DELETE SET NULL,
+    delivery_date     DATE,
+    delivery_time     TIME,
+    payment_method    VARCHAR(20)
+                      CHECK (payment_method IN ('cash', 'card', 'transfer') OR payment_method IS NULL),
+    discount          DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total             DECIMAL(10,2) NOT NULL DEFAULT 0,
+    -- items: [{name, quantity, price}]; денормализуем в JSON, потому что услуги
+    -- в наряде — это снимок на момент оформления (мастер мог изменить цену).
+    items             JSONB NOT NULL DEFAULT '[]'::jsonb,
+    guarantee_text    TEXT,
+    notes             TEXT,
+    -- Snapshot данных клиента и авто на момент оформления документа.
+    -- Позволяет вписать данные вручную, если в карточке клиента/авто их нет
+    -- (например, разовая запись без vehicles-row), и не «забывает» данные,
+    -- если карточка позже отредактирована.
+    --   client_snapshot:  { name, phone, email }
+    --   vehicle_snapshot: { brand, model, year, color, license_plate, vin }
+    -- Поля на стороне приложения мерджатся ПОВЕРХ vehicle/client из БД.
+    client_snapshot   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    vehicle_snapshot  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    signature_data    TEXT,                     -- base64 PNG с canvas-подписи клиента
+    is_signed         BOOLEAN NOT NULL DEFAULT false,
+    pdf_path          TEXT,                     -- /var/documents/work_orders/<id>.pdf
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by        UUID REFERENCES saas_meta.users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_work_orders_booking ON {{schema}}.work_orders(booking_id);
+CREATE INDEX IF NOT EXISTS idx_work_orders_created ON {{schema}}.work_orders(created_at DESC);
+
+-- ─── Акт приёмки ───
+CREATE TABLE IF NOT EXISTS {{schema}}.acceptance_acts (
+    id                  SERIAL PRIMARY KEY,
+    booking_id          INTEGER NOT NULL UNIQUE
+                         REFERENCES {{schema}}.client_records(id) ON DELETE CASCADE,
+    master_id           UUID REFERENCES saas_meta.users(id) ON DELETE SET NULL,
+    mileage             INTEGER,
+    -- zones: [{zone_name, scratches, dents, condition: 'ok'|'damaged'|'minor', *_label}]
+    -- 16 зон по умолчанию (см. seed в коде); поле всегда полный массив.
+    zones               JSONB NOT NULL DEFAULT '[]'::jsonb,
+    damage_description  TEXT,
+    valuables           TEXT,                   -- ценные вещи в салоне
+    -- См. комментарий у work_orders.client_snapshot/vehicle_snapshot —
+    -- те же поля для акта приёмки.
+    client_snapshot     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    vehicle_snapshot    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- денормализованный счётчик: real source — order_photos. Кешируем
+    -- для быстрого вывода в шапке PDF (без подзапроса).
+    photos_count        INTEGER NOT NULL DEFAULT 0,
+    signature_data      TEXT,                   -- base64 PNG
+    is_signed           BOOLEAN NOT NULL DEFAULT false,
+    pdf_path            TEXT,                   -- /var/documents/acceptance_acts/<id>.pdf
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by          UUID REFERENCES saas_meta.users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_acceptance_acts_booking ON {{schema}}.acceptance_acts(booking_id);
+CREATE INDEX IF NOT EXISTS idx_acceptance_acts_created ON {{schema}}.acceptance_acts(created_at DESC);
+
+-- ─── Фото к броням (общий пул для акта/наряда) ───
+-- photo_type разделяет фото приёмки (документально-важные) и
+-- результата/прогресса (для портфолио). Хранятся на диске, file_path —
+-- путь относительно var/uploads.
+CREATE TABLE IF NOT EXISTS {{schema}}.order_photos (
+    id              SERIAL PRIMARY KEY,
+    booking_id      INTEGER NOT NULL REFERENCES {{schema}}.client_records(id) ON DELETE CASCADE,
+    file_path       TEXT NOT NULL,
+    thumbnail_path  TEXT,
+    photo_type      VARCHAR(20) NOT NULL DEFAULT 'acceptance'
+                    CHECK (photo_type IN ('acceptance', 'progress', 'result')),
+    file_size       INTEGER,                    -- байты, для отчётов о хранилище
+    mime_type       VARCHAR(50),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by      UUID REFERENCES saas_meta.users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_order_photos_booking ON {{schema}}.order_photos(booking_id);
+CREATE INDEX IF NOT EXISTS idx_order_photos_type    ON {{schema}}.order_photos(photo_type);
+
 -- ─── Лог действий (audit) ───
 -- user_id UUID на saas_meta.users; ON DELETE SET NULL чтобы не терять историю.
 CREATE TABLE IF NOT EXISTS {{schema}}.activity_logs (
@@ -231,3 +357,78 @@ CREATE TABLE IF NOT EXISTS {{schema}}.activity_logs (
 CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON {{schema}}.activity_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_user    ON {{schema}}.activity_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_entity  ON {{schema}}.activity_logs(entity_type, entity_id);
+
+-- ──────────────────────────────────────────────────────────────────────
+-- Cross-tenant guard на FK-колонки на saas_meta.users.
+--
+-- Зачем: см. server/sql/012_cross_tenant_triggers.sql и
+-- server/lib/tenant_security.cjs. Postgres-FK гарантирует что user
+-- существует, но не что он из ТОЙ ЖЕ студии. Триггер вызывает
+-- saas_meta.check_user_belongs_to_studio('column_name') и кидает
+-- check_violation если user принадлежит чужой студии.
+--
+-- App-level (assertUserInStudio в роутах) даёт чистую 400-ошибку,
+-- БД-уровень — последний рубеж если разработчик добавил новый роут
+-- и забыл вызвать helper. Defense-in-depth.
+--
+-- Идемпотентно: DROP TRIGGER IF EXISTS перед CREATE.
+-- ──────────────────────────────────────────────────────────────────────
+
+-- bookings.master_id
+DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.bookings;
+CREATE TRIGGER check_master_id_in_studio
+  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.bookings
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
+
+-- tasks.assigned_to
+DROP TRIGGER IF EXISTS check_assigned_to_in_studio ON {{schema}}.tasks;
+CREATE TRIGGER check_assigned_to_in_studio
+  BEFORE INSERT OR UPDATE OF assigned_to ON {{schema}}.tasks
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('assigned_to');
+
+-- client_records.master_id
+DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.client_records;
+CREATE TRIGGER check_master_id_in_studio
+  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.client_records
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
+
+-- transactions.created_by — заполняется из req.session.userId, так что
+-- значения всегда корректны на app-уровне. Триггер — страховка.
+DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.transactions;
+CREATE TRIGGER check_created_by_in_studio
+  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.transactions
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
+
+-- work_orders: master_id + created_by
+DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.work_orders;
+CREATE TRIGGER check_master_id_in_studio
+  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.work_orders
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
+
+DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.work_orders;
+CREATE TRIGGER check_created_by_in_studio
+  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.work_orders
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
+
+-- acceptance_acts: master_id + created_by
+DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.acceptance_acts;
+CREATE TRIGGER check_master_id_in_studio
+  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.acceptance_acts
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
+
+DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.acceptance_acts;
+CREATE TRIGGER check_created_by_in_studio
+  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.acceptance_acts
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
+
+-- order_photos.created_by
+DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.order_photos;
+CREATE TRIGGER check_created_by_in_studio
+  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.order_photos
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
+
+-- activity_logs.user_id — лог не должен содержать ссылок на чужих юзеров.
+DROP TRIGGER IF EXISTS check_user_id_in_studio ON {{schema}}.activity_logs;
+CREATE TRIGGER check_user_id_in_studio
+  BEFORE INSERT OR UPDATE OF user_id ON {{schema}}.activity_logs
+  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('user_id');
