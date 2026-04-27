@@ -401,7 +401,10 @@ router.post('/prodamus', rawParser, async (req, res) => {
       // подделка. Логируем и идём дальше — fall through на payload-путь
       // оставляем только для backward-compat. После полного перехода фронта
       // на intent-flow можно вернуть 401 здесь.
-      console.warn('[webhooks] intent invalid:', { intentToken, has: !!intentRow });
+      // НЕ логируем полный intentToken — даже невалидный, он одноразовый и
+      // мог бы быть переиспользован если попадёт в journald, к которому есть
+      // доступ у не-нужных ролей. Префикса 6 символов достаточно для отладки.
+      console.warn('[webhooks] intent invalid:', { tokenPrefix: intentToken.slice(0, 6), has: !!intentRow });
     }
   }
 
@@ -712,7 +715,12 @@ router.post('/prodamus', rawParser, async (req, res) => {
 
     return res.status(200).send('ok');
   } catch (err) {
-    console.error('[webhooks] prodamus processing failed:', err);
+    // Логируем только code + message, не весь err-объект. Stack trace может
+    // содержать значения переменных из закрытых scope'ов (включая
+    // фрагменты payload'а с PII плательщика). raw_payload всё равно
+    // попадает в saas_meta.webhook_log для аудита, дублировать в journald
+    // нет смысла.
+    console.error('[webhooks] prodamus processing failed:', err.code || 'unknown', err.message);
     await logWebhook({
       source: 'prodamus', ip, signatureValid: true, rawBody: rawStr,
       status: 500, errorMessage: err.message,
