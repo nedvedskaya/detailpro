@@ -222,22 +222,44 @@ app.use((err, req, res, next) => {
   // Уже отправили часть ответа? — отдаём дальше Node-у.
   if (res.headersSent) return next(err);
 
-  // pg-ошибки с кодами безопасны логировать как есть (без params).
-  console.error('[error]', req.method, req.originalUrl, err.code || '', err.message);
+  // pg-ошибки логируются полностью с detail/constraint — нужно для дебага.
+  // А ВОТ пользователю detail НЕ возвращаем, иначе через 23505 (unique
+  // violation) утечёт значение колонки. Конкретный сценарий:
+  //   - signup с email='victim@gmail.com'
+  //   - если email существует → 409 + detail: 'Key (email)=(victim@gmail.com)
+  //     already exists' → это email-enumeration вектор (OWASP A05).
+  // Конкретные роуты (auth.cjs#signup, admin.cjs) сами обрабатывают
+  // 23505 раньше с понятным сообщением 'email_already_used' — пользователь
+  // получает осмысленный 409 без leakage.
+  console.error('[error]',
+    req.method, req.originalUrl,
+    err.code || '',
+    err.message,
+    err.detail ? '| detail=' + err.detail : '',
+    err.constraint ? '| constraint=' + err.constraint : ''
+  );
 
-  // schema-name validation ошибки → 400
+  // schema-name validation ошибки → 400. err.message здесь — наш собственный
+  // текст из validateSchemaName, никаких leak'ов.
   if (['SCHEMA_NAME_INVALID', 'SCHEMA_NAME_RESERVED', 'SCHEMA_NAME_REQUIRED'].includes(err.code)) {
     return res.status(400).json({ error: err.code.toLowerCase(), message: err.message });
   }
 
-  // pg unique_violation
-  if (err.code === '23505') return res.status(409).json({ error: 'conflict', detail: err.detail });
-
+  // pg unique_violation — НЕ отдаём detail клиенту. constraint по сути
+  // говорит «есть конфликт, на каком-то UNIQUE-ключе» без значений.
+  if (err.code === '23505') {
+    return res.status(409).json({ error: 'conflict', constraint: err.constraint || null });
+  }
   // pg foreign_key_violation
-  if (err.code === '23503') return res.status(400).json({ error: 'fk_violation', detail: err.detail });
-
-  // pg check_violation
-  if (err.code === '23514') return res.status(400).json({ error: 'check_violation', detail: err.detail });
+  if (err.code === '23503') {
+    return res.status(400).json({ error: 'fk_violation', constraint: err.constraint || null });
+  }
+  // pg check_violation — наш cross-tenant trigger тоже бросает с этим
+  // кодом. Не leak'аем сообщение от триггера (там есть UUID'ы) —
+  // вызывающие роуты сами должны были это поймать assertUserInStudio.
+  if (err.code === '23514') {
+    return res.status(400).json({ error: 'check_violation', constraint: err.constraint || null });
+  }
 
   res.status(500).json({ error: 'internal_error' });
 });
