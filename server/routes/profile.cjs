@@ -36,6 +36,7 @@ const { planMeta, maxUsersForPlan } = require('../lib/plans.cjs');
 const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
 const tgClient = require('../lib/telegram.cjs');
+const payments = require('../lib/payments.cjs');
 
 const router = express.Router();
 
@@ -159,6 +160,13 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
 // GET /api/profile
 // ──────────────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res, next) => {
+  // iOS Safari (особенно in-app браузер Telegram) иногда кэширует JSON-ответы
+  // GET-эндпоинтов даже с cookie. Из-за этого после signup-через-TG юзер
+  // открывал профиль и видел tgLinked=false — реально TG уже привязан в БД,
+  // но Safari отдавал старый ответ. Принудительно запрещаем кэш.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+
   const { rows } = await pool.query(
     `SELECT
         u.id, u.email, u.role, u.name,
@@ -657,78 +665,143 @@ router.post('/subscription/resume', requireAuth, async (req, res, next) => {
 //   • Возможна race: юзер кликает «Оплатить», но не доходит до Prodamus →
 //     intent протухает через час, cron подчистит.
 // ──────────────────────────────────────────────────────────────────────
-const VALID_PLAN_IDS = ['solo_month', 'solo_year', 'studio_month', 'studio_year'];
-
-// Цены в копейках. Должны совпадать с TARIFF_GROUPS на фронте (ProfilePage.tsx).
-// Если разойдутся — webhook увидит discrepancy в expected_amount_kop, залогирует.
-const PLAN_PRICES_KOP = {
-  solo_month:   490000,    // 4 900 ₽
-  solo_year:   4990000,    // 49 900 ₽
-  studio_month: 890000,    // 8 900 ₽
-  studio_year: 8990000,    // 89 900 ₽
-};
-
-const PAYMENT_INTENT_TTL_MS = 60 * 60 * 1000; // 60 минут
-
 router.post('/payment/intent', requireAuth, async (req, res, next) => {
   try {
     const planId = String(req.body?.plan || '').trim();
-    if (!VALID_PLAN_IDS.includes(planId)) {
-      return res.status(400).json({ error: 'plan_invalid' });
-    }
-
-    // Берём бонус-баланс студии — фронт может подставить _param_bonus_kop
-    // не больше, чем юзер реально имеет. Webhook доп. проверит на стороне
-    // обработки (Math.min(used, balance)), но и здесь подскажем UI правильное
-    // значение.
-    const sRes = await pool.query(
-      `SELECT bonus_balance_kop FROM saas_meta.studios WHERE id = $1`,
-      [req.session.studioId]
-    );
-    if (sRes.rowCount === 0) {
-      return res.status(404).json({ error: 'studio_not_found' });
-    }
-    const bonusAvailable = Number(sRes.rows[0].bonus_balance_kop) || 0;
-
-    const expectedKop = PLAN_PRICES_KOP[planId];
-    // Сколько бонусов реально применить = min(balance, price - 1₽).
-    // Правило «оставить минимум 1 рубль» — Prodamus отказывает на нулевой
-    // сумме, и нужен реальный платёж чтобы webhook сработал и зафиксировал
-    // debit. Совпадает с calcBonusUsage() на фронте (ProfilePage.tsx).
-    const maxBonusUse = Math.max(0, expectedKop - 100); // -1 ₽ = 100 коп
-    const bonusKop = Math.min(bonusAvailable, maxBonusUse);
-    const finalAmountKop = expectedKop - bonusKop;
-
-    const token = crypto.randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + PAYMENT_INTENT_TTL_MS);
-
-    await pool.query(
-      `INSERT INTO saas_meta.payment_intents
-         (token, studio_id, user_id, plan_id, expected_amount_kop, bonus_kop,
-          expires_at, created_ip, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        token,
-        req.session.studioId,
-        req.session.userId,
+    let result;
+    try {
+      result = await payments.createPaymentIntent({
+        studioId:  req.session.studioId,
+        userId:    req.session.userId,
         planId,
-        expectedKop,
-        bonusKop,
-        expiresAt,
-        req.ip || null,
-        req.headers['user-agent'] || null,
-      ]
-    );
+        ip:        req.ip || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+    } catch (e) {
+      if (e.code === 'plan_invalid')      return res.status(400).json({ error: 'plan_invalid' });
+      if (e.code === 'studio_not_found')  return res.status(404).json({ error: 'studio_not_found' });
+      throw e;
+    }
 
     res.json({
-      token,
-      expiresAt: expiresAt.toISOString(),
-      expectedAmountKop: expectedKop,
-      bonusKopApplied: bonusKop,
+      token:             result.token,
+      expiresAt:         result.expiresAt.toISOString(),
+      expectedAmountKop: result.expectedKop,
+      bonusKopApplied:   result.bonusKop,
       // finalAmountRub — сколько фронт должен подставить в `customer_price`.
       // Округляем вверх до целого рубля (Prodamus принимает целые ₽).
-      finalAmountRub: Math.ceil(finalAmountKop / 100),
+      finalAmountRub: Math.ceil(result.finalAmountKop / 100),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// GET /api/profile/payment/from-tg
+//
+// Однокликовый переход из Telegram-бота на оплату Prodamus. Bot строит
+// inline-кнопки с подписанной HMAC-ссылкой; этот эндпоинт:
+//   1. Верифицирует HMAC (исключает подделку URL'а атакующим).
+//   2. По tg_user_id находит привязанного owner-а и его studio_id —
+//      это и есть «доверенный» источник studio_id, эквивалент session
+//      в SPA-флоу POST /payment/intent.
+//   3. Создаёт payment_intent (тот же helper, что использует SPA).
+//   4. Делает 302 redirect на payform.ru с готовым URL.
+//
+// SECURITY:
+//   • HMAC-secret — PRODAMUS_SECRET_KEY (уже есть в env, semantic match).
+//   • exp в URL — 7 дней; после — кнопка перестаёт работать (404), пусть
+//     юзер заново откроет /tariffs в боте.
+//   • Если найденный пользователь не owner — 403; платить может только он.
+//   • Никаких body-параметров: всё в URL и подписано → CSRF-устойчиво.
+// ──────────────────────────────────────────────────────────────────────
+function timingSafeEqualStr(a, b) {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+router.get('/payment/from-tg', async (req, res, next) => {
+  try {
+    const plan  = String(req.query.plan || '').trim();
+    const tgRaw = String(req.query.u    || '').trim();
+    const expS  = String(req.query.exp  || '').trim();
+    const sig   = String(req.query.sig  || '').trim();
+
+    if (!payments.VALID_PLAN_IDS.includes(plan) || !tgRaw || !expS || !sig) {
+      return res.status(400).type('text/html; charset=utf-8').send(
+        '<h1>Ссылка не валидна</h1><p>Откройте «Тарифы» в боте ещё раз.</p>'
+      );
+    }
+
+    const exp = Number(expS);
+    if (!Number.isFinite(exp) || exp * 1000 < Date.now()) {
+      return res.status(410).type('text/html; charset=utf-8').send(
+        '<h1>Ссылка устарела</h1><p>Откройте «Тарифы» в боте ещё раз — сделаем свежую.</p>'
+      );
+    }
+
+    const secret = process.env.PRODAMUS_SECRET_KEY || '';
+    if (!secret) {
+      console.error('[profile] from-tg: PRODAMUS_SECRET_KEY missing — refusing');
+      return res.status(500).type('text/html; charset=utf-8').send(
+        '<h1>Ошибка конфигурации</h1><p>Свяжитесь с поддержкой.</p>'
+      );
+    }
+    const expectedSig = crypto
+      .createHmac('sha256', secret)
+      .update(`tgpay:${tgRaw}:${plan}:${exp}`)
+      .digest('hex');
+    if (!timingSafeEqualStr(sig, expectedSig)) {
+      return res.status(401).type('text/html; charset=utf-8').send(
+        '<h1>Подпись ссылки невалидна</h1><p>Откройте «Тарифы» в боте ещё раз.</p>'
+      );
+    }
+
+    const tgUserId = Number(tgRaw);
+    if (!Number.isFinite(tgUserId)) {
+      return res.status(400).type('text/html; charset=utf-8').send(
+        '<h1>Ссылка не валидна</h1>'
+      );
+    }
+
+    const ur = await pool.query(
+      `SELECT u.id, u.email, u.role, u.studio_id
+         FROM saas_meta.users u
+        WHERE u.tg_user_id = $1`,
+      [tgUserId]
+    );
+    const user = ur.rows[0];
+    if (!user) {
+      return res.status(404).type('text/html; charset=utf-8').send(
+        '<h1>Аккаунт не найден</h1><p>Telegram не привязан к СРМ. Привяжите аккаунт в Профиле и попробуйте снова.</p>'
+      );
+    }
+    if (user.role !== 'owner') {
+      return res.status(403).type('text/html; charset=utf-8').send(
+        '<h1>Менять тариф может только владелец студии</h1>'
+      );
+    }
+
+    const intent = await payments.createPaymentIntent({
+      studioId:  user.studio_id,
+      userId:    user.id,
+      planId:    plan,
+      ip:        req.ip || null,
+      userAgent: req.headers['user-agent'] || null,
+    });
+
+    const url = payments.buildPayformUrl({
+      planId:        plan,
+      intentToken:   intent.token,
+      bonusKop:      intent.bonusKop,
+      finalAmountKop: intent.finalAmountKop,
+      customerEmail: user.email,
+    });
+
+    return res.redirect(302, url);
   } catch (err) {
     next(err);
   }

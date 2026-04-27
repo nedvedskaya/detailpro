@@ -154,6 +154,8 @@ const TARIFF_GROUPS: TariffGroup[] = [
       'До 3 пользователей (собственник + 2)',
       'Роли «Менеджер» и «Мастер»',
       'Всё из тарифа «Соло»',
+      'Бот в Telegram: напоминания о записях и задачах каждый день',
+      'Полная аналитика по продажам и клиентам',
       'Приоритетная поддержка',
     ],
     monthly: {
@@ -470,11 +472,13 @@ function calcBonusUsage(priceRub: number, balanceKop: number): { useKop: number;
 //      сервера, не считаем на фронте: сервер источник истины, чтобы
 //      на чекауте сумма совпала с ожиданием webhook'а.
 //
-// Открываем через window.open(url, '_blank'). Может быть заблокировано
-// pop-up-блокером, если вызвано НЕ из синхронного user-gesture
-// контекста — но fetch до open укладывается в 200-300мс, и браузеры
-// обычно пропускают такой sequence (особенно если показать пользователю
-// loading-индикатор, чтобы он не успел переключить вкладку).
+// Раньше открывали `window.open(url, '_blank')`, но iOS Safari (особенно
+// in-app браузер Telegram) блокирует popup, если вызов window.open сделан
+// ПОСЛЕ async-await (теряется user-gesture контекст). Жалоба «кнопки не
+// работают на телефоне» была именно про это.
+// Решение: навигируемся в том же окне через window.location.href. Возврат
+// после оплаты обрабатывает usePaymentReturn хук — Prodamus редиректит
+// обратно на /profile?payment=success, мы парсим query и обновляем UI.
 // ──────────────────────────────────────────────────────────────────────
 async function startPaymentFlow(
   option: TariffOption,
@@ -489,10 +493,9 @@ async function startPaymentFlow(
     u.searchParams.set('_param_bonus_kop', String(intent.bonusKopApplied));
     u.searchParams.set('customer_price', String(intent.finalAmountRub));
   }
-  // _blank: оплата открывается в новой вкладке, текущая остаётся на
-  // профиле — после возврата usePaymentReturn хук подхватит ?payment=success
-  // и обновит UI.
-  window.open(u.toString(), '_blank', 'noopener,noreferrer');
+  // Same-window navigation: надёжно работает на любом мобиле, не зависит
+  // от popup-блокеров. После оплаты Prodamus вернёт на /profile с query.
+  window.location.href = u.toString();
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -504,9 +507,13 @@ interface TariffCardViewProps {
   email: string;
   // Баланс бонусов — для UI-превью скидки и подсказки «будет применено X ₽».
   bonusBalanceKop?: number;
+  // Согласие с офертой — общий стейт на родителе, чекбокс отображается
+  // в каждой карточке (две колонки), но управляет одним и тем же полем.
+  acceptOffer: boolean;
+  setAcceptOffer: (v: boolean) => void;
 }
 
-const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0 }: TariffCardViewProps) => {
+const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOffer, setAcceptOffer }: TariffCardViewProps) => {
   // Состояние «идёт запрос intent'а» — чтобы заблокировать кнопку и
   // не дать создать два intent'а параллельно (каждый одноразовый,
   // второй пропадёт впустую).
@@ -577,14 +584,29 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0 }: Tariff
         «Популярный»), а не цветом кнопок.
       */}
 
-      {/* Кнопка «Оплатить на 1 месяц» */}
+      {/*
+        Кнопка «Оплатить на 1 месяц».
+        Раньше при клике visual-disabled ставился ОБОИМ кнопкам (через
+        `disabled:opacity-50` + `disabled={busy!==null}`) — на телефоне
+        это выглядело как «обе мигают», и пользователь не понимал, какая
+        реально нажалась. Теперь:
+          • тапнутая кнопка получает opacity-60 + cursor-wait + текст
+            «Открываем…» → ясно, что система отрабатывает именно её;
+          • вторая остаётся в исходном виде, но `disabled`-блокировка
+            всё ещё стоит — двойной тап в тот же момент не создаст
+            второй intent.
+      */}
       <button
         type="button"
         onClick={() => handlePay(group.monthly)}
         disabled={busy !== null}
-        className="mt-2 flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-white border border-orange-300 text-orange-700 hover:bg-orange-50 active:bg-orange-100 transition-colors disabled:opacity-50 disabled:cursor-wait"
+        aria-busy={busy === group.monthly.id}
+        className={
+          'mt-2 flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-white border border-orange-300 text-orange-700 hover:bg-orange-50 active:bg-orange-100 transition-colors ' +
+          (busy === group.monthly.id ? 'opacity-60 cursor-wait' : '')
+        }
       >
-        <span className="text-xs">{busy === 'solo_month' || busy === 'studio_month' ? 'Открываем…' : 'Оплатить на 1 месяц'}</span>
+        <span className="text-xs">{busy === group.monthly.id ? 'Открываем…' : 'Оплатить на 1 месяц'}</span>
         {monthlyUse.useKop > 0 ? (
           <span className="mt-0.5 text-lg font-bold">
             <span className="line-through text-zinc-400 text-sm font-normal mr-2">
@@ -597,12 +619,17 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0 }: Tariff
         )}
       </button>
 
-      {/* Кнопка «Оплатить на 12 месяцев» с ribbon-бейджем скидки сбоку */}
+      {/* Кнопка «Оплатить на 12 месяцев» с ribbon-бейджем скидки сбоку.
+          Visual-disabled только на нажатой — см. комментарий к monthly выше. */}
       <button
         type="button"
         onClick={() => handlePay(group.yearly)}
         disabled={busy !== null}
-        className="mt-3 relative flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-wait"
+        aria-busy={busy === group.yearly.id}
+        className={
+          'mt-3 relative flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm ' +
+          (busy === group.yearly.id ? 'opacity-60 cursor-wait' : '')
+        }
       >
         {group.yearly.savePct && (
           <span
@@ -612,7 +639,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0 }: Tariff
             −{group.yearly.savePct}%
           </span>
         )}
-        <span className="text-xs opacity-90">{busy === 'solo_year' || busy === 'studio_year' ? 'Открываем…' : 'Оплатить на 12 месяцев'}</span>
+        <span className="text-xs opacity-90">{busy === group.yearly.id ? 'Открываем…' : 'Оплатить на 12 месяцев'}</span>
         {yearlyUse.useKop > 0 ? (
           <span className="mt-0.5 text-lg font-bold">
             <span className="line-through opacity-70 text-sm font-normal mr-2">
@@ -640,6 +667,61 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0 }: Tariff
           ≈ {formatRub(group.yearly.perMonthRub)}/мес · экономия {formatRub(group.yearly.saveRub || 0)} за год
         </p>
       )}
+
+      {/*
+        Чекбокс согласия с офертой — внутри карточки, под строчкой про
+        экономию. Стейт общий на обе карточки, но рендерим в каждой,
+        чтобы строчка была у юзера прямо перед глазами в момент выбора
+        тарифа.
+        Чекбокс кастомный (div с border + tick-svg), потому что нативный
+        <input type=checkbox> на iOS Safari без accentColor отрисовывается
+        как тонкая рамка, плохо различимая на светлом фоне («белый экран»
+        в жалобе пользователя). Кастомная рамка-2 + явный фон + явная
+        галочка работают одинаково на всех платформах.
+      */}
+      <label className="mt-3 flex items-start gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={acceptOffer}
+          onChange={(e) => setAcceptOffer(e.target.checked)}
+          className="sr-only peer"
+        />
+        <span
+          aria-hidden
+          className={
+            'mt-0.5 h-5 w-5 shrink-0 rounded border-2 flex items-center justify-center transition-colors ' +
+            (acceptOffer
+              ? 'bg-orange-500 border-orange-500 text-white'
+              : 'bg-white border-zinc-400 text-transparent')
+          }
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="5 12 10 17 19 7" />
+          </svg>
+        </span>
+        <span className="text-[11px] text-zinc-600 leading-snug">
+          Оплачивая тариф, я принимаю условия{' '}
+          <a
+            href="/legal/offer.html"
+            target="_blank"
+            rel="noreferrer"
+            className="text-zinc-900 underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            публичной оферты
+          </a>
+          {' '}и{' '}
+          <a
+            href="/legal/privacy-policy"
+            target="_blank"
+            rel="noreferrer"
+            className="text-zinc-900 underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            политики конфиденциальности
+          </a>.
+        </span>
+      </label>
     </div>
   );
 };
@@ -870,6 +952,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
   // Чекбокс согласия с офертой: по дефолту включён (по 437/438 ГК РФ
   // оплата = акцепт оферты, поэтому пользователь видит подтверждённое
   // состояние, но может снять галочку — оплата при этом не блокируется).
+  // Согласие с офертой/политикой. По 437/438 ГК РФ оплата = акцепт оферты,
+  // поэтому юридически чекбокс — формальность; ставим его checked по умолчанию,
+  // не гейтим оплату, пользователь может снять при желании. Видим на странице
+  // выше карточек, чтобы было понятно, что оплата = акцепт.
   const [acceptOffer, setAcceptOffer] = useState(true);
   // Telegram-привязка. tgBusy блокирует обе кнопки (Подключить/Отключить).
   // tgWaiting=true → пользователь нажал «Подключить», deep-link открыт в новой
@@ -878,6 +964,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
   const [tgBusy, setTgBusy] = useState(false);
   const [tgWaiting, setTgWaiting] = useState(false);
   const [tgError, setTgError] = useState('');
+  // Сохраняем сгенерированную ссылку, чтобы показать пользователю реальный
+  // <a target="_blank"> — нативный клик не режется popup-блокером (в отличие
+  // от window.open после await на iOS Safari / in-app Telegram-браузере).
+  const [tgLinkUrl, setTgLinkUrl] = useState<string | null>(null);
   // Модалка импорта клиентов из xlsx — открывается из секции «Студия».
   // Доступна owner+manager (см. canEditEntities); сервер всё равно перепроверяет
   // в /clients/bulk через requireRole('owner','manager').
@@ -886,6 +976,27 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
 
   useEffect(() => {
     void loadProfile();
+  }, []);
+
+  // Рефетч /profile при возврате на вкладку. Сценарий:
+  // регистрация через TG-бота открывается в in-app браузере Telegram, который
+  // кэширует первый GET профиля и/или замораживает страницу при переключении
+  // в основное приложение TG. Юзер возвращается — а tgLinked остаётся false,
+  // хотя в БД уже linked. Слушаем visibilitychange и pageshow (BFCache).
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') {
+        // тихо, без isLoading=true — пользователь уже видит контент,
+        // не хотим мерцать спиннер на ровном месте.
+        api.getProfile().then(setData).catch(() => { /* офлайн — оставим старые данные */ });
+      }
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('pageshow', refresh);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('pageshow', refresh);
+    };
   }, []);
 
   const loadProfile = async () => {
@@ -1010,23 +1121,27 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
 
   // ── Telegram: подключение ────────────────────────────────────────
   // 1) дёргаем POST /profile/telegram/link → одноразовый deep-link
-  // 2) открываем его в новой вкладке (window.open + target=_blank)
+  // 2) сохраняем url в state, чтобы показать пользователю кнопку-якорь
   // 3) переключаем UI в состояние «ждём» с кнопкой «Я подтвердил»
-  // 4) по клику или через 1.5с после возврата — loadProfile().
+  // 4) по клику или после возврата — loadProfile().
+  //
+  // Почему НЕ window.open? На мобильных Safari (особенно iOS, и in-app
+  // браузер Telegram-бота) после `await` теряется user-gesture, и
+  // `window.open(url, '_blank')` блокируется как popup. Раньше выдавали
+  // ошибку «Окно заблокировано браузером», но это тупик для юзера: он
+  // нажал кнопку и упёрся в текст.
+  //
+  // Решение: после API-ответа подставляем URL в реальный <a target="_blank">,
+  // юзер кликает по нему — это нативный click (не popup), браузер открывает
+  // ссылку без блокировки. На телефоне ссылка t.me/... триггерит deep-link
+  // в приложение Telegram. Возврат — через кнопку «Я подтвердил».
   const handleTelegramLink = async () => {
     if (tgBusy) return;
     setTgBusy(true);
     setTgError('');
     try {
       const { url } = await api.linkTelegram();
-      // window.open в click-обработчике → не блокируется браузером.
-      const w = window.open(url, '_blank', 'noopener,noreferrer');
-      if (!w) {
-        // Поп-ап заблокирован — даём пользователю явный фолбек: копируем ссылку
-        // и показываем подсказку.
-        setTgError('Окно заблокировано браузером. Откройте бот по ссылке в новой вкладке.');
-        return;
-      }
+      setTgLinkUrl(url);
       setTgWaiting(true);
     } catch (err) {
       setTgError(translateApiError(err, 'Не удалось создать ссылку для Telegram'));
@@ -1046,6 +1161,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
       setData(res);
       if (res.user.tgLinked) {
         setTgWaiting(false);
+        setTgLinkUrl(null);
       } else {
         setTgError('Пока не вижу привязки. Откройте бот в Telegram и нажмите Start.');
       }
@@ -1068,6 +1184,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
         user: { ...prev.user, tgLinked: false, tgUsername: null, tgLinkedAt: null },
       } : prev);
       setTgWaiting(false);
+      setTgLinkUrl(null);
     } catch (err) {
       setTgError(translateApiError(err, 'Не удалось отключить Telegram'));
     } finally {
@@ -1121,17 +1238,16 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     : studio.plan === 'studio' ? 'studio'
     : null;
 
-  // Триал — сколько осталось дней (для шапки-баннера)
+  // Триал — сколько осталось дней (для шапки-баннера).
+  // Используем parseDbDate (а не голый new Date), чтобы Safari корректно
+  // съел Postgres-формат «2026-04-30 03:00:00.123456+00» (микросекунды +
+  // короткий TZ-сдвиг). Без нормализации Safari возвращал Invalid Date,
+  // trialDaysLeft становился 0 и красный баннер «Пробный период завершён»
+  // показывался даже при живом доступе ещё на 3 дня.
   const isTrial = studio.plan === 'trial';
   const trialDaysLeft = isTrial ? (() => {
-    const target = (() => {
-      if (!studio.accessUntil) return null;
-      if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(studio.accessUntil)) {
-        return new Date(studio.accessUntil.replace(' ', 'T'));
-      }
-      return new Date(studio.accessUntil);
-    })();
-    if (!target || isNaN(target.getTime())) return 0;
+    const target = parseDbDate(studio.accessUntil);
+    if (!target) return 0;
     const ms = target.getTime() - Date.now();
     return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
   })() : 0;
@@ -1309,8 +1425,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                   </p>
                 )}
                 <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
-                  Через бот придёт ссылка для сброса пароля и уведомления об оплатах.
-                  Команды: <span className="font-mono">/help</span>, <span className="font-mono">/referral</span>, <span className="font-mono">/balance</span>.
+                  Через бот будут приходить напоминания о записях и задачах.
                 </p>
                 {tgError && <p className="text-sm text-red-500 mb-3">{tgError}</p>}
                 <button
@@ -1325,13 +1440,31 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             ) : tgWaiting ? (
               <>
                 <p className="text-sm text-zinc-700 mb-2">
-                  Бот открыт в Telegram. Нажмите в нём кнопку <span className="font-medium">Start</span> — и вернитесь сюда.
+                  Откройте бот по кнопке ниже и нажмите в нём <span className="font-medium">Start</span> — затем вернитесь сюда.
                 </p>
-                <p className="text-xs text-zinc-500 mb-4">
+                <p className="text-xs text-zinc-500 mb-2">
                   Ссылка действует 24 часа и одноразовая.
+                </p>
+                <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+                  Если бот не открывается — проверьте, что Telegram запущен. В России Telegram
+                  может требовать VPN; CRM при этом работает и без VPN.
                 </p>
                 {tgError && <p className="text-sm text-amber-600 mb-3">{tgError}</p>}
                 <div className="flex flex-wrap gap-2">
+                  {/* Реальный <a> с target=_blank: на iOS Safari нативный клик
+                      по ссылке не блокируется как popup (в отличие от
+                      window.open после await). На телефоне ссылка t.me/…
+                      триггерит deep-link в приложение Telegram. */}
+                  {tgLinkUrl && (
+                    <a
+                      href={tgLinkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 rounded-xl bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 transition-colors"
+                    >
+                      Открыть бот в Telegram
+                    </a>
+                  )}
                   <button
                     type="button"
                     onClick={handleTelegramRecheck}
@@ -1342,7 +1475,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setTgWaiting(false); setTgError(''); }}
+                    onClick={() => { setTgWaiting(false); setTgError(''); setTgLinkUrl(null); }}
                     disabled={tgBusy}
                     className="px-4 py-2 rounded-xl text-sm text-zinc-600 hover:text-zinc-900 disabled:opacity-50 transition-colors"
                   >
@@ -1627,6 +1760,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             <p className="text-xs text-zinc-500 mb-4">
               Выберите подходящий тариф. Оплата — через Prodamus, чек придёт на email автоматически.
             </p>
+            {/* Чекбокс с офертой теперь живёт ВНУТРИ каждой карточки (под
+                кнопками оплаты), стейт общий через acceptOffer/setAcceptOffer.
+                Раньше один чекбокс над карточками плохо находился глазами
+                на iOS — пользователь думал, что «там белый экран». */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
               {TARIFF_GROUPS.map((group) => (
                 <TariffCardView
@@ -1635,43 +1772,11 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                   isCurrent={currentGroup === group.id}
                   email={user.email}
                   bonusBalanceKop={studio.bonusBalanceKop || 0}
+                  acceptOffer={acceptOffer}
+                  setAcceptOffer={setAcceptOffer}
                 />
               ))}
             </div>
-            {/* Согласие с офертой — обязательная подпись под тарифами по 437/438 ГК РФ.
-                Чекбокс по дефолту включён: оплата = акцепт оферты, флажок отражает это
-                визуально. Пользователь может снять галочку, но это не блокирует оплату
-                (юридически акцепт всё равно фиксируется фактом оплаты). */}
-            <label className="flex items-start gap-2 mt-4 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={acceptOffer}
-                onChange={(e) => setAcceptOffer(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
-              />
-              <span className="text-[11px] text-zinc-500 leading-relaxed">
-                Оплачивая тариф, я принимаю условия{' '}
-                <a
-                  href="/legal/offer.html"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-zinc-900 underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  публичной оферты
-                </a>
-                {' '}и{' '}
-                <a
-                  href="/legal/privacy-policy"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-zinc-900 underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  политики конфиденциальности
-                </a>.
-              </span>
-            </label>
           </div>
 
           {/* Подсказка про апгрейд Соло → Студия */}
