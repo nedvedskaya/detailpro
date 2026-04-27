@@ -49,6 +49,7 @@ const {
   assertPngBase64,
   handleFieldError,
 } = require('../lib/validation.cjs');
+const { assertUserInStudio } = require('../lib/tenant_security.cjs');
 const { streamWorkOrderPdf } = require('../lib/pdf/workOrder.cjs');
 const { streamAcceptanceActPdf } = require('../lib/pdf/acceptanceAct.cjs');
 
@@ -520,7 +521,17 @@ router.put('/work-orders/:bookingId', canWrite, async (req, res, next) => {
     }
 
     // master_id — UUID. Если не передан, наследуем от booking.master_id.
-    const masterId = body.master_id || bk.rows[0].master_id || null;
+    // Если передан в body — проверяем что это master ИЗ ЭТОЙ студии
+    // (booking.master_id уже валиден — он из этой schema). Без этой
+    // проверки атакующий мог бы привязать наряд к мастеру чужой студии.
+    let masterId;
+    if (body.master_id) {
+      try {
+        masterId = await assertUserInStudio(body.master_id, req.session.studioId, 'master_id');
+      } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+    } else {
+      masterId = bk.rows[0].master_id || null;
+    }
 
     const clientSnapshot  = sanitizeClientSnapshot(body.client_snapshot);
     const vehicleSnapshot = sanitizeVehicleSnapshot(body.vehicle_snapshot);
@@ -666,7 +677,15 @@ router.put('/acceptance-acts/:bookingId', canWrite, async (req, res, next) => {
       }
     }
 
-    const masterId = body.master_id || bk.rows[0].master_id || null;
+    // Cross-tenant guard на master_id (см. PUT /work-orders выше).
+    let masterId;
+    if (body.master_id) {
+      try {
+        masterId = await assertUserInStudio(body.master_id, req.session.studioId, 'master_id');
+      } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+    } else {
+      masterId = bk.rows[0].master_id || null;
+    }
     const clientSnapshot  = sanitizeClientSnapshot(body.client_snapshot);
     const vehicleSnapshot = sanitizeVehicleSnapshot(body.vehicle_snapshot);
 

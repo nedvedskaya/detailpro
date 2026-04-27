@@ -29,6 +29,7 @@ const { queryInSchema, query, withTx } = require('../lib/db.cjs');
 const { requireRole } = require('../lib/middleware.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
 const { parseId, assertString, assertOptionalString, assertArrayOfStrings, handleFieldError } = require('../lib/validation.cjs');
+const { assertUserInStudio } = require('../lib/tenant_security.cjs');
 
 const router = express.Router();
 
@@ -441,6 +442,15 @@ router.get('/bookings', async (req, res, next) => {
 router.post('/bookings', canWrite, async (req, res, next) => {
   const { client_id, vehicle_id, service_id, master_id, date, time, end_time, status, payment_status, amount, notes } = req.body || {};
   if (!date || !time) return res.status(400).json({ error: 'date_time_required' });
+
+  // Cross-tenant guard: master_id может быть UUID юзера из ЛЮБОЙ студии
+  // (FK на saas_meta.users общий). Без этой проверки атакующий-owner
+  // через devtools мог бы назначить мастером кого-то из чужой студии.
+  let safeMasterId;
+  try {
+    safeMasterId = await assertUserInStudio(master_id, req.session.studioId, 'master_id');
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.bookings
@@ -448,7 +458,7 @@ router.post('/bookings', canWrite, async (req, res, next) => {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
     [
       badId(client_id), badId(vehicle_id), badId(service_id),
-      master_id || null,                 // UUID на saas_meta.users — передаём как есть
+      safeMasterId,
       date, time, end_time || null,
       status || 'pending',
       payment_status || 'unpaid',
@@ -464,6 +474,10 @@ router.put('/bookings/:id', canWrite, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { client_id, vehicle_id, service_id, master_id, date, time, end_time, status, payment_status, amount, notes } = req.body || {};
+  let safeMasterId;
+  try {
+    safeMasterId = await assertUserInStudio(master_id, req.session.studioId, 'master_id');
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
   const r = await queryInSchema(
     req.session.schemaName,
     `UPDATE {{schema}}.bookings
@@ -472,7 +486,7 @@ router.put('/bookings/:id', canWrite, async (req, res, next) => {
             updated_at=now()
       WHERE id=$12 RETURNING *`,
     [
-      badId(client_id), badId(vehicle_id), badId(service_id), master_id || null,
+      badId(client_id), badId(vehicle_id), badId(service_id), safeMasterId,
       date, time, end_time || null,
       status || 'pending', payment_status || 'unpaid', amount ?? null, notes || null,
       id,
@@ -626,13 +640,17 @@ router.get('/tasks', async (req, res, next) => {
 router.post('/tasks', canWriteTasks, async (req, res, next) => {
   const { title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to } = req.body || {};
   if (!nonEmptyString(title)) return res.status(400).json({ error: 'title_required' });
+  let safeAssignedTo;
+  try {
+    safeAssignedTo = await assertUserInStudio(assigned_to, req.session.studioId, 'assigned_to');
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.tasks
        (title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
     [title.trim(), description || null, status || 'pending', priority || 'medium',
-     due_date || null, due_time || null, badId(client_id), badId(vehicle_id), assigned_to || null]
+     due_date || null, due_time || null, badId(client_id), badId(vehicle_id), safeAssignedTo]
   );
   logAction(req, 'create', 'task', r.rows[0].id, r.rows[0].title);
   res.status(201).json(r.rows[0]);
@@ -642,6 +660,10 @@ router.put('/tasks/:id', canWriteTasks, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to, completed_at } = req.body || {};
+  let safeAssignedTo;
+  try {
+    safeAssignedTo = await assertUserInStudio(assigned_to, req.session.studioId, 'assigned_to');
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
   const r = await queryInSchema(
     req.session.schemaName,
     `UPDATE {{schema}}.tasks
@@ -652,7 +674,7 @@ router.put('/tasks/:id', canWriteTasks, async (req, res, next) => {
       WHERE id=$11 RETURNING *`,
     [title, description || null, status || 'pending', priority || 'medium',
      due_date || null, due_time || null,
-     badId(client_id), badId(vehicle_id), assigned_to || null,
+     badId(client_id), badId(vehicle_id), safeAssignedTo,
      completed_at || (status === 'done' ? new Date() : null),
      id]
   );
@@ -707,9 +729,11 @@ router.post('/client-records', canWrite, async (req, res, next) => {
   if (!nonEmptyString(service_name)) return res.status(400).json({ error: 'service_name_required' });
   if (!date) return res.status(400).json({ error: 'date_required' });
 
-  let normalizedTags;
-  try { normalizedTags = normalizeTags(tags); }
-  catch (err) { if (handleFieldError(err, res)) return; throw err; }
+  let normalizedTags, safeMasterId;
+  try {
+    normalizedTags = normalizeTags(tags);
+    safeMasterId = await assertUserInStudio(master_id, req.session.studioId, 'master_id');
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
 
   const r = await queryInSchema(
     req.session.schemaName,
@@ -722,7 +746,7 @@ router.post('/client-records', canWrite, async (req, res, next) => {
     [
       cid, badId(vehicle_id), badId(booking_id),
       service_name.trim(), description || null, amount || 0,
-      date, time || null, master_id || null,
+      date, time || null, safeMasterId,
       Boolean(is_paid), Boolean(is_completed),
       advance || 0, advance_date || null, end_date || null,
       badId(category_id),
@@ -764,6 +788,10 @@ router.put('/client-records/:id', canWrite, async (req, res, next) => {
     if (key === 'category_id') val = badId(val);
     if (key === 'tags') {
       try { val = JSON.stringify(normalizeTags(val)); }
+      catch (err) { if (handleFieldError(err, res)) return; throw err; }
+    }
+    if (key === 'master_id') {
+      try { val = await assertUserInStudio(val, req.session.studioId, 'master_id'); }
       catch (err) { if (handleFieldError(err, res)) return; throw err; }
     }
     set.push(`${col} = $${pi++}`);
