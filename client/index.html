@@ -60,27 +60,102 @@
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       }
       .app-loader.hidden { opacity: 0; pointer-events: none; }
-      .loader-title { font-size: 28px; font-weight: 900; color: #18181b; letter-spacing: -0.5px; margin: 0; }
+      /* Логотип в стиле LoginScreen: «Детейл Про» крупно + оранжевый бейдж «CRM»
+         в правом верхнем углу. Бейдж абсолютно позиционирован относительно
+         заголовка, чтобы «прилипнуть» к названию как индекс/superscript. */
+      .loader-logo {
+        position: relative;
+        display: inline-block;
+        font-size: 30px;
+        font-weight: 600;
+        color: #18181b;
+        letter-spacing: -0.025em;
+        line-height: 1;
+        margin: 0;
+      }
+      .loader-logo-badge {
+        position: absolute;
+        top: -8px;
+        right: -28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #f97316;
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        line-height: 1;
+        padding: 2px 6px;
+        border-radius: 6px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      }
       .loader-spinner {
-        width: 32px; height: 32px; margin-top: 16px;
+        width: 32px; height: 32px; margin-top: 24px;
         border: 3px solid #e4e4e7;
         border-top-color: #18181b;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
+      /* Диагностический блок: появляется, если бандл не загрузился за 20 сек.
+         Покрывает кейс «сеть тупит без VPN» / «VPN провайдер режет JS-чанки».
+         Юзер видит понятное сообщение, а не вечный спиннер. */
+      .loader-diag {
+        display: none;
+        max-width: 320px;
+        margin-top: 24px;
+        padding: 16px;
+        text-align: center;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #52525b;
+        background: #fff;
+        border: 1px solid #e4e4e7;
+        border-radius: 12px;
+      }
+      .loader-diag.visible { display: block; }
+      .loader-diag-title {
+        margin: 0 0 6px;
+        font-weight: 600;
+        font-size: 14px;
+        color: #18181b;
+      }
+      .loader-diag-btn {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 8px 16px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        background: #18181b;
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .loader-diag-btn:hover { background: #27272a; }
     </style>
   </head>
 
   <body>
     <div id="root">
       <div class="app-loader" id="app-loader">
-        <div class="loader-title">ДЕТЕЙЛ ПРО CRM</div>
-        <div class="loader-spinner"></div>
+        <h1 class="loader-logo">
+          Детейл&nbsp;Про<span class="loader-logo-badge">CRM</span>
+        </h1>
+        <div class="loader-spinner" id="app-loader-spinner"></div>
+        <div class="loader-diag" id="app-loader-diag">
+          <p class="loader-diag-title">Не удаётся загрузить</p>
+          <p>Проверьте интернет-соединение. Если используете VPN — попробуйте отключить, если нет — наоборот, включить (некоторые провайдеры режут трафик).</p>
+          <button type="button" class="loader-diag-btn" onclick="window.location.reload()">Перезагрузить</button>
+        </div>
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
+      // Скрываем лоадер сразу после window.load (после загрузки JS-чанков
+      // и первого рендера React). 100ms задержка — чтобы избежать flash'а
+      // на быстрых соединениях.
       window.addEventListener('load', function() {
         setTimeout(function() {
           var loader = document.getElementById('app-loader');
@@ -88,6 +163,21 @@
           setTimeout(function() { if (loader) loader.remove(); }, 300);
         }, 100);
       });
+      // Таймаут-фолбэк: если за 20 сек ничего не загрузилось (window.load
+      // не сработал, главный бандл не пришёл, JS не запустился) — показываем
+      // диагностику с кнопкой «Перезагрузить». Покрывает кейс «сеть мёртвая
+      // без VPN» / «VPN провайдер режет крупные .js-файлы», когда обычно
+      // юзер видит вечный спиннер и не понимает, что делать.
+      // Если React-приложение успело монтироваться — оно уберёт #app-loader,
+      // и этот код тогда не сработает (querySelector вернёт null).
+      setTimeout(function() {
+        var loader = document.getElementById('app-loader');
+        if (!loader || loader.classList.contains('hidden')) return;
+        var spinner = document.getElementById('app-loader-spinner');
+        var diag    = document.getElementById('app-loader-diag');
+        if (spinner) spinner.style.display = 'none';
+        if (diag)    diag.classList.add('visible');
+      }, 20000);
     </script>
   </body>
 </html>

@@ -82,10 +82,23 @@ export function patchCachedUser(patch: Partial<UserData>): UserData | null {
 /**
  * Подгружаем сессию через /api/auth/me. Cookie прокидывается браузером сам
  * благодаря credentials:'include'.
+ *
+ * Таймаут 15 сек: на проблемной сети (плохой Wi-Fi, VPN-провайдер режет
+ * запросы) дефолтный fetch может «висеть» в pending бесконечно. Таймаут
+ * через AbortController даёт детерминированное поведение: либо ответ за
+ * 15 сек, либо AbortError → App покажет LoginScreen, юзер сам тыкнет
+ * «Войти» и тогда либо успешно залогинится, либо увидит понятную ошибку.
  */
+const BOOTSTRAP_TIMEOUT_MS = 15000;
+
 export async function bootstrap(): Promise<{ user: UserData; studio: Studio } | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), BOOTSTRAP_TIMEOUT_MS);
   try {
-    const response = await fetch('/api/auth/me', { credentials: 'include' });
+    const response = await fetch('/api/auth/me', {
+      credentials: 'include',
+      signal: ctrl.signal,
+    });
     if (response.status === 401) {
       cachedUser = null;
       cachedStudio = null;
@@ -100,8 +113,11 @@ export async function bootstrap(): Promise<{ user: UserData; studio: Studio } | 
     cachedStudio = data.studio;
     return { user: cachedUser, studio: cachedStudio };
   } catch (err) {
-    // сетевые ошибки — пробрасываем, чтобы App показал индикатор offline
+    // сетевые ошибки (включая AbortError по таймауту) — пробрасываем,
+    // чтобы App показал индикатор offline / LoginScreen
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
