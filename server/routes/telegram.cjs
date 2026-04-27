@@ -49,8 +49,19 @@ const STATE_TTL_MS = 15 * 60 * 1000;
 
 // ──────────────────────────────────────────────────────────────────────
 // Постоянное меню для привязанного пользователя.
+//
+// Owner видит полное меню: рефералка + тарифы + помощь + СРМ.
+// Manager/master — урезанное: только «Помощь» и «Открыть СРМ». Биллинг
+// и реферальная программа к ним не относятся (это бизнес-сущности
+// студии, рулит ими собственник), поэтому смысла светить эти кнопки
+// в их боте нет — раньше тап по ним возвращал «доступно только владельцу»,
+// теперь просто не показываем.
+//
+// Бэк-проверки (handleReferral / handleTariffs → role !== 'owner') остаются:
+// если кто-то введёт команду текстом или нажмёт inline-кнопку из старого
+// сообщения — сервер всё равно ответит вежливым отказом.
 // ──────────────────────────────────────────────────────────────────────
-const MENU_KEYBOARD = {
+const OWNER_MENU_KEYBOARD = {
   keyboard: [
     [{ text: 'Реферальная ссылка' }, { text: 'Тарифы' }],
     [{ text: 'Помощь' },              { text: 'Открыть СРМ' }],
@@ -58,6 +69,35 @@ const MENU_KEYBOARD = {
   resize_keyboard: true,
   is_persistent: true,
 };
+
+const STAFF_MENU_KEYBOARD = {
+  keyboard: [
+    [{ text: 'Помощь' }, { text: 'Открыть СРМ' }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+
+/**
+ * Возвращает reply-клавиатуру в зависимости от роли. Owner получает
+ * полное меню, manager/master — урезанное без биллинговых кнопок.
+ *
+ * Принимает либо объект linked (с .role), либо строку 'owner'/'manager'/...
+ * Для совместимости со старыми вызовами, где linked мог быть undefined,
+ * возвращаем пустое OWNER-меню (на практике этот код вызывается только
+ * для linked-юзера).
+ */
+function menuFor(roleOrLinked) {
+  const role = typeof roleOrLinked === 'string'
+    ? roleOrLinked
+    : roleOrLinked?.role;
+  return role === 'owner' ? OWNER_MENU_KEYBOARD : STAFF_MENU_KEYBOARD;
+}
+
+// Алиас на старое имя — оставлен на случай вызовов из других мест,
+// где роль не известна. Считаем такие места owner-only по умолчанию;
+// их обнаружим по логам и поправим точечно.
+const MENU_KEYBOARD = OWNER_MENU_KEYBOARD;
 
 // Текст кнопки → название команды. Без эмодзи.
 const BUTTON_TO_COMMAND = {
@@ -94,10 +134,69 @@ const OPEN_CRM_INLINE = {
   inline_keyboard: [[{ text: 'Открыть СРМ', url: APP_ORIGIN }]],
 };
 
-// Inline-кнопка на страницу тарифов в СРМ (там же кнопки оплаты Prodamus).
-const TARIFFS_INLINE = {
-  inline_keyboard: [[{ text: 'Оплатить в СРМ', url: `${APP_ORIGIN}/profile` }]],
+// TARIFFS_INLINE строится динамически (см. buildTariffsInline ниже): для
+// owner'а возвращаем 4 кнопки с прямыми (HMAC-подписанными) ссылками на
+// payform.ru — один тап и юзер в чекауте, без захода в СРМ. Для гостя/
+// не-owner'а используем простой fallback на /profile.
+const TARIFFS_INLINE_FALLBACK = {
+  inline_keyboard: [[{ text: 'Открыть в СРМ', url: `${APP_ORIGIN}/profile` }]],
 };
+
+// Срок жизни подписанной ссылки в /tariffs-сообщении. 7 дней — достаточно,
+// чтобы юзер успел подумать и оплатить, и в то же время не оставлять
+// «вечные» ссылки в истории чата.
+const TG_PAY_LINK_TTL_SEC = 7 * 24 * 60 * 60;
+
+/**
+ * HMAC-подписанная ссылка на /api/profile/payment/from-tg. Server-side
+ * этот эндпоинт верифицирует подпись, по tg_user_id находит owner'a,
+ * выпускает intent и 302-редиректит на payform.ru.
+ *
+ * Зачем подписываем: без HMAC любой, кто увидел URL, мог бы триггернуть
+ * issue intent'а на чужой студии (атакующий ничего не получает, но это
+ * нагрузка на БД и шум в payment_intents). Подпись закрывает дёшево.
+ */
+function buildTgPayLink({ tgUserId, plan }) {
+  const secret = process.env.PRODAMUS_SECRET_KEY || '';
+  if (!secret) return null;
+  const exp = Math.floor(Date.now() / 1000) + TG_PAY_LINK_TTL_SEC;
+  const sig = crypto
+    .createHmac('sha256', secret)
+    .update(`tgpay:${tgUserId}:${plan}:${exp}`)
+    .digest('hex');
+  const u = new URL(`${APP_ORIGIN}/api/profile/payment/from-tg`);
+  u.searchParams.set('plan', plan);
+  u.searchParams.set('u', String(tgUserId));
+  u.searchParams.set('exp', String(exp));
+  u.searchParams.set('sig', sig);
+  return u.toString();
+}
+
+/**
+ * Inline-клавиатура с 4 кнопками оплаты для owner'а. Тапает «Соло·мес» —
+ * Telegram открывает signed URL на нашем сервере, тот делает 302 на
+ * Продамус. Один тап = чекаут, без промежуточного «откройте СРМ».
+ *
+ * Возвращает null, если не удалось подписать (нет секрета) — caller
+ * подсунет TARIFFS_INLINE_FALLBACK.
+ */
+function buildTariffsInline(tgUserId) {
+  const links = {
+    solo_month:   buildTgPayLink({ tgUserId, plan: 'solo_month' }),
+    solo_year:    buildTgPayLink({ tgUserId, plan: 'solo_year' }),
+    studio_month: buildTgPayLink({ tgUserId, plan: 'studio_month' }),
+    studio_year:  buildTgPayLink({ tgUserId, plan: 'studio_year' }),
+  };
+  if (Object.values(links).some((l) => !l)) return null;
+  return {
+    inline_keyboard: [
+      [{ text: 'Соло · 1\u00a0мес — 4\u00a0900\u00a0₽',         url: links.solo_month }],
+      [{ text: 'Соло · 12\u00a0мес — 49\u00a0900\u00a0₽ (−15%)', url: links.solo_year }],
+      [{ text: 'Студия · 1\u00a0мес — 8\u00a0900\u00a0₽',        url: links.studio_month }],
+      [{ text: 'Студия · 12\u00a0мес — 89\u00a0900\u00a0₽ (−16%)', url: links.studio_year }],
+    ],
+  };
+}
 
 // Inline-клавиатура «Парень/Девушка» — вопрос после успешной привязки.
 const GENDER_INLINE = {
@@ -259,7 +358,7 @@ async function handleStart(message, args) {
   if (linked) {
     await tg.sendMessage({
       chatId, userId: linked.id, kind: 'start_already_linked',
-      replyMarkup: MENU_KEYBOARD,
+      replyMarkup: menuFor(linked),
       text: applyGender(
         `Привет, ${tg.escapeHtml(linked.name || linked.email)} 👋\n` +
         `Мы уже на коннекте, твой аккаунт СРМ надежно привязан. ` +
@@ -375,14 +474,15 @@ async function consumeLinkToken({ token, tgUser, chatId }) {
   // запускаем онбординг (gender + timezone). Эти операции вне транзакции —
   // не должны блокировать commit и не критичны для целостности линковки.
   const u = await pool.query(
-    `SELECT email, name FROM saas_meta.users WHERE id = $1`,
+    `SELECT email, name, role FROM saas_meta.users WHERE id = $1`,
     [userId]
   );
   const display = u.rows[0]?.name || u.rows[0]?.email || '';
+  const role = u.rows[0]?.role || 'master';
 
   await tg.sendMessage({
     chatId, userId, kind: 'link_success',
-    replyMarkup: MENU_KEYBOARD,
+    replyMarkup: menuFor(role),
     text:
       `✅ Супер${display ? ', ' + tg.escapeHtml(display) : ''}. Коннект установлен.\n\n` +
       `Твой аккаунт СРМ успешно привязан к Telegram. ` +
@@ -480,7 +580,7 @@ async function handleSignupStart(chatId, tgUser) {
     const linked = await findLinkedUser(tgUser.id);
     await tg.sendMessage({
       chatId, userId: linked.id, kind: 'signup_already_linked',
-      replyMarkup: MENU_KEYBOARD,
+      replyMarkup: menuFor(linked),
       text: applyGender(
         `У тебя уже есть аккаунт СРМ, и Telegram к нему привязан 👌\n` +
         `Открывай меню внизу, всё на месте.`,
@@ -574,10 +674,10 @@ async function askTimezoneQuestion(chatId, userId) {
   });
 }
 
-async function sendOnboardingDone(chatId, userId) {
+async function sendOnboardingDone(chatId, userId, role = null) {
   await tg.sendMessage({
     chatId, userId, kind: 'onboarding_done',
-    replyMarkup: MENU_KEYBOARD,
+    replyMarkup: menuFor(role),
     text:
       `Готово, всё настроено 🎯\n` +
       `Жду первой записи в календаре, пришлю напоминание за час, ` +
@@ -656,7 +756,7 @@ async function dispatchCallback(cb) {
     if (fresh?.role === 'owner' && fresh.timezone_set === false) {
       await askTimezoneQuestion(chatId, linked.id);
     } else {
-      await sendOnboardingDone(chatId, linked.id);
+      await sendOnboardingDone(chatId, linked.id, fresh?.role || linked.role);
     }
     return;
   }
@@ -688,7 +788,8 @@ async function dispatchCallback(cb) {
       chatId, userId: linked.id, kind: 'tz_set',
       text: `Готово, часовой пояс студии: <b>${tg.escapeHtml(label)}</b>.`,
     });
-    await sendOnboardingDone(chatId, linked.id);
+    // Сюда попадаем только если linked.role === 'owner' (см. проверку выше).
+    await sendOnboardingDone(chatId, linked.id, 'owner');
     return;
   }
 }
@@ -748,7 +849,7 @@ async function handleReferral(message) {
   if (linked.role !== 'owner') {
     await tg.sendMessage({
       chatId: message.chat.id, userId: linked.id, kind: 'referral_not_owner',
-      replyMarkup: MENU_KEYBOARD,
+      replyMarkup: STAFF_MENU_KEYBOARD,
       text:
         'Реферальная программа доступна только владельцу студии. ' +
         'Если есть вопросы, нажми «❓ Помощь».',
@@ -857,7 +958,7 @@ async function handleTariffs(message) {
   if (linked.role !== 'owner') {
     await tg.sendMessage({
       chatId: message.chat.id, userId: linked.id, kind: 'tariffs_not_owner',
-      replyMarkup: MENU_KEYBOARD,
+      replyMarkup: STAFF_MENU_KEYBOARD,
       text:
         `Тариф у студии один на всех, рулит им владелец. ` +
         `Если хочешь что-то изменить, скажи ему, пусть зайдёт в СРМ → Профиль.`,
@@ -884,9 +985,15 @@ async function handleTariffs(message) {
                 `применятся к оплате автоматически.`;
   }
 
+  // Подписанные ссылки на 4 тарифа — тап → наш сервер → 302 на Prodamus.
+  // Если PRODAMUS_SECRET_KEY не задан (dev-окружение), фоллбэкаем на
+  // одну кнопку «Открыть в СРМ» — там фронт сделает intent через сессию.
+  const tgUserId = message.from?.id;
+  const replyMarkup = buildTariffsInline(tgUserId) || TARIFFS_INLINE_FALLBACK;
+
   await tg.sendMessage({
     chatId: message.chat.id, userId: linked.id, kind: 'tariffs_show',
-    replyMarkup: TARIFFS_INLINE,
+    replyMarkup,
     text:
       `<b>Твой тариф: ${tg.escapeHtml(planLabel)}</b>\n` +
       `${accessLine}\n\n` +
@@ -903,10 +1010,12 @@ async function handleTariffs(message) {
       `• До 3 пользователей (собственник + менеджер + мастер)\n` +
       `• Роли «Менеджер» и «Мастер» с разными правами\n` +
       `• Всё из тарифа «Соло»\n` +
+      `• Бот в Telegram: напоминания о записях и задачах каждый день\n` +
+      `• Полная аналитика по продажам и клиентам\n` +
       `• Приоритетная поддержка` +
       bonusLine +
-      `\n\nКнопка ниже откроет страницу оплаты в СРМ: оплата через Продамус, ` +
-      `чек на email прилетит сам.`,
+      `\n\nВыбери тариф и срок — кнопка откроет оплату через Продамус. ` +
+      `Чек на email придёт автоматически.`,
   });
 }
 
@@ -925,7 +1034,7 @@ async function handleHelp(message) {
   if (linked) {
     await tg.sendMessage({
       chatId, userId: linked.id, kind: 'help_linked',
-      replyMarkup: MENU_KEYBOARD,
+      replyMarkup: menuFor(linked),
       text:
         `<b>Помощь по СРМ</b>\n\n` +
         `Что-то отвалилось, пришла идея или просто хочется похвалить? ` +
@@ -1014,7 +1123,7 @@ async function handleSupportMessage(message, linked) {
   await clearState(tgUser.id);
   await tg.sendMessage({
     chatId, userId: linked?.id || null, kind: 'support_received',
-    replyMarkup: linked ? MENU_KEYBOARD : undefined,
+    replyMarkup: linked ? menuFor(linked) : undefined,
     text:
       `Спасибо, передали в поддержку 🛟\n` +
       `Ответ придёт в этот чат, обычно в течение нескольких часов.`,
