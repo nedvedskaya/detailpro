@@ -4,7 +4,7 @@ import {
   ChevronRight, ArrowUpRight, ArrowDownRight, CheckCircle2, Clock, 
   Car, ChevronLeft, ChevronDown, Phone, MessageSquare, MapPin, Info, 
   Trash2, Edit3, X, Circle, AlertOctagon, CalendarDays, Copy, Wallet,
-  Save, Wrench, Maximize2, History, CalendarX, Check, Lock, Tag, AlertCircle, 
+  Save, Wrench, Maximize2, History, CalendarX, Check, Tag, AlertCircle, 
   UserPlus, Coins, CheckSquare2, User, ArrowDownLeft, TrendingUp,
   TrendingDown, DollarSign, RotateCcw
 } from 'lucide-react';
@@ -23,12 +23,14 @@ import { FormField, TaskFormFields, BookingFormFields, AppointmentInputs } from 
 import { ClientsView as ClientsViewComponent } from '@/app/views';
 import { CalendarGrid } from '@/app/components/CalendarGrid';
 import { LoginScreen } from '@/app/components/LoginScreen';
+import { ResetPasswordPage } from '@/app/components/ResetPasswordPage';
 import { ProfilePage } from '@/app/components/ProfilePage';
 import { UserMenu } from '@/app/components/UserMenu';
 import { ClientDetails } from '@/app/components/ClientDetails';
 import { AutocompleteInput } from '@/app/components/ui/AutocompleteInput';
 import { PaymentBadge } from '@/app/components/ui/PaymentBadge';
 import { useOnlineStatus } from '@/app/hooks/useOnlineStatus';
+import { usePaymentReturn } from '@/app/hooks/usePaymentReturn';
 import { ToastContainer, showToast } from '@/app/components/ui/Toast';
 import { NetworkIndicator } from '@/app/components/ui/NetworkIndicator';
 import { saveAllData, loadAllData } from '@/app/utils/offlineCache';
@@ -51,7 +53,7 @@ import {
 import { Header } from '@/app/components/ui/Header';
 import { bootstrap as authBootstrap, getUser, getStudio, setSession, logout, isAuthenticated } from '@/utils/auth';
 import type { Studio, UserData, Role } from '@/utils/types';
-import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canEditEntities, canViewFinance } from '@/utils/permissions';
+import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canEditEntities, canEditTasks, canViewFinance } from '@/utils/permissions';
 import { api } from '@/utils/api';
 
 // --- HELPER COMPONENTS ---
@@ -81,7 +83,7 @@ const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, onTa
   };
   
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-zinc-200 z-[250] shrink-0" style={{paddingBottom: 'env(safe-area-inset-bottom, 0px)', minHeight: '64px'}}>
+    <div className="desktop-tabbar fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-zinc-200 z-[250] shrink-0" style={{paddingBottom: 'env(safe-area-inset-bottom, 0px)', minHeight: '64px'}}>
       <div className="flex justify-between items-center max-w-lg mx-auto px-4 py-2">
         {tabs.map((tab) => (
           <button key={tab.id} onClick={() => handleTabClick(tab.id)} className={`flex flex-col items-center justify-center w-full transition-all active:scale-90 ${activeTab === tab.id ? 'text-black' : 'text-zinc-400'}`}>
@@ -175,8 +177,10 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5" style={{height: '100dvh', minHeight: '-webkit-fill-available'}}>
-        <div className="px-6 pt-safe pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
+    // На десктопе .desktop-card-modal перебивает inset-0 и превращает в центр.карточку.
+    // На мобилке остаётся полноэкранный лист, slide-in снизу — без изменений.
+    <div className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 desktop-card-modal md:bg-white" style={{height: '100dvh', minHeight: '-webkit-fill-available'}}>
+        <div className="px-6 pt-safe pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 md:!pt-5" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
             <Button variant="ghost" size="md" onClick={handleClose} className="text-base">Назад</Button>
             <span className="text-xl font-black">{String(title)}</span>
             <div className="w-[72px]"></div>
@@ -318,6 +322,18 @@ const ClientsView = ClientsViewComponent;
 // --- 6. MAIN APP ---
 
 const App = () => {
+  // /reset?token=... — отдельная страница сброса пароля. Маршрутизатора нет,
+  // поэтому проверяем pathname вручную ДО auth bootstrap'а: на эту страницу
+  // приходят разлогиненные пользователи из Telegram-сообщения, и им не нужен
+  // splash/LoginScreen. Захватываем pathname один раз — если внутри
+  // ResetPasswordPage редиректнут на /, это уже history.replaceState + reload.
+  const [pathname] = useState(() => {
+    try { return window.location.pathname; } catch (_) { return '/'; }
+  });
+  if (pathname === '/reset') {
+    return <ResetPasswordPage />;
+  }
+
   // Состояние авторизации.
   // bootstrapState:
   //   'pending' — делаем GET /api/auth/me; ничего не показываем (или splash)
@@ -525,6 +541,23 @@ const App = () => {
     setBootstrapState('guest');
   };
 
+  // Возврат браузера со страницы оплаты Prodamus (?payment=success|failed).
+  // Хук:
+  //   • показывает тост,
+  //   • поллит /api/auth/me каждые 1.5 сек (до 12 сек), пока не увидит,
+  //     что webhook долетел и подписка активна,
+  //   • кладёт свежий user+studio в state, чтобы в Профиле сразу была актуальная
+  //     дата окончания и плашка тарифа.
+  // currentPlan берём прямо из state, чтобы хук понимал «был trial → стал solo».
+  usePaymentReturn({
+    enabled: bootstrapState === 'authed',
+    currentPlan: studio?.plan ?? null,
+    onPaymentConfirmed: ({ user: u, studio: s }) => {
+      setUser(u);
+      setStudio(s);
+    },
+  });
+
   // Bootstrap ещё идёт — короткий splash, чтобы не мигнуло LoginScreen-ом
   // и тут же не сменилось на основное приложение, если cookie валиден.
   if (bootstrapState === 'pending') {
@@ -544,71 +577,13 @@ const App = () => {
   }
 
   // ── Subscription gate ──────────────────────────────────────────────
-  // Логика:
-  //   • Собственник студии (role=owner) — НИКОГДА не блокируется. Он должен
-  //     иметь возможность зайти в любые блоки, чтобы посмотреть данные и
-  //     решить, оплачивать ли. /profile показывает ему тарифы и countdown.
-  //   • Менеджер/мастер — если у студии истёк access_until или is_active=false,
-  //     показываем lock-окно «Оплатите подписку». Им платить нечем — пусть
-  //     дождутся, пока owner оплатит.
-  //
-  // Парсинг даты устойчив к Postgres-формату («YYYY-MM-DD HH:MM:SS+00»),
-  // ISO с T и null. Если дата невалидна — считаем подписку просроченной.
-  const isSubscriptionExpired = (() => {
-    if (!studio) return false;          // студия ещё не подгружена
-    if (!user) return false;            // пользователь ещё не подгружен
-    if (user.role === 'owner') return false; // owner всегда проходит
-    // Сервер шлёт camelCase (accessUntil/isActive). На случай stale-кэша
-    // читаем оба варианта.
-    const s: any = studio;
-    const accessUntil = s.accessUntil ?? s.access_until;
-    const isActive = s.isActive ?? s.is_active;
-    if (isActive === false) return true;
-    if (!accessUntil) return true;
-    let target: Date;
-    if (typeof accessUntil === 'string'
-        && /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(accessUntil)) {
-      target = new Date(accessUntil.replace(' ', 'T'));
-    } else {
-      target = new Date(accessUntil);
-    }
-    if (isNaN(target.getTime())) return true;
-    return target.getTime() <= Date.now();
-  })();
-
-  if (isSubscriptionExpired) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-orange-50 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-orange-100 p-8 text-center">
-          <div className="mx-auto w-14 h-14 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center mb-4">
-            <Lock size={28} strokeWidth={2.5} />
-          </div>
-          <h1 className="text-xl font-bold text-zinc-900">Оплатите подписку</h1>
-          <p className="mt-3 text-sm text-zinc-600 leading-relaxed">
-            Чтобы продолжить пользоваться <span className="font-semibold text-orange-600">ДЕТЕЙЛ&nbsp;ПРО CRM</span>,
-            оформите тариф «Соло» или «Студия».
-            Все ваши данные сохранены и появятся снова сразу после оплаты.
-          </p>
-          <button
-            onClick={() => setShowProfile(true)}
-            className="mt-6 inline-flex items-center justify-center w-full px-5 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold transition-colors"
-          >
-            Перейти к оплате
-          </button>
-          <button
-            onClick={handleLogout}
-            className="mt-3 inline-flex items-center justify-center w-full px-5 py-2 rounded-xl border border-zinc-200 text-zinc-500 hover:bg-zinc-50 text-sm transition-colors"
-          >
-            Выйти
-          </button>
-          <p className="mt-5 text-[11px] text-zinc-400">
-            Возникли вопросы — напишите на{' '}
-            <a className="underline" href="mailto:nedwedskaya@yandex.ru">nedwedskaya@yandex.ru</a>
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // Синхронизация доступа: менеджер/мастер видят систему ровно столько,
+  // сколько и собственник. Платит собственник, а сотрудники просто работают.
+  // Раньше была lock-страница «Оплатите подписку» только для не-owner — это
+  // ломало рабочий процесс: пока owner шёл оплачивать, менеджер не мог
+  // принять клиента. Теперь блок снят: статус подписки видно в /profile,
+  // там же кнопка оплаты. На сервере `requireActiveStudio` тоже ослаблен —
+  // 402 не возвращается, чтобы не было асимметрии «UI пускает, API нет».
 
   if (showAdmin) {
     return <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyAdminPanel onBack={() => setShowAdmin(false)} /></React.Suspense>;
@@ -623,6 +598,8 @@ const App = () => {
   //          фильтрации вкладок в TabBar и для рендера FinanceView.
   const userRole = (user?.role || 'owner') as Role;
   const canEdit = canEditEntities(userRole);
+  // Задачи — единственный блок, где мастер тоже пишет. См. canEditTasks().
+  const canEditTasksFlag = canEditTasks(userRole);
   const viewerCanViewFinance = canViewFinance(userRole, user?.canViewFinance);
 
   // Если активная вкладка — finance, но текущий пользователь её не видит
@@ -839,6 +816,11 @@ const App = () => {
         await createRecordTransactions(rec, c, saved.id);
         return true;
       } catch (error) {
+        // Откат оптимистичного добавления — убираем temp-запись
+        setClients(prev => updateById(prev, clientId, {
+          records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+            .filter(r => r.id !== tempRecordId)
+        } as any));
         handleApiError(error, 'Ошибка сохранения брони', 'createClientRecord');
         return false;
       }
@@ -851,7 +833,7 @@ const App = () => {
       const oldRecord = (c.records || []).find(r => r.id === recordId);
       const newAdvance = parseFloat(rec.advance) || 0;
       const newAmount = parseFloat(rec.amount) || 0;
-      
+
       setClients(prev => updateById(prev, clientId, {
         records: ((prev.find(cl => cl.id === clientId)?.records) || [])
           .map(r => r.id === recordId ? { ...rec, id: recordId } : r)
@@ -879,6 +861,13 @@ const App = () => {
         await createEditRecordTransactions(rec, oldRecord, c, savedRecordId);
         return true;
       } catch (error) {
+        // Откат оптимистичного редактирования — возвращаем старую запись
+        if (oldRecord) {
+          setClients(prev => updateById(prev, clientId, {
+            records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+              .map(r => r.id === recordId ? oldRecord : r)
+          } as any));
+        }
         handleApiError(error, 'Ошибка обновления брони', 'updateClientRecord');
         return false;
       }
@@ -1056,9 +1045,22 @@ const App = () => {
   };
   
   const handleDeleteClient = async (id) => {
+      // Подтверждение перед удалением — операция необратимая: вместе с
+      // клиентом снесутся его задачи (фильтр ниже), история визитов и
+      // привязка авто (cascade на бэке). Раньше клик по корзинке сразу
+      // удалял — пользователь жаловался на случайные потери карточек.
+      const target = clients.find(c => c.id === id);
+      const nameForConfirm = target?.name?.trim() || 'этого клиента';
+      const ok = window.confirm(
+        `Удалить клиента «${nameForConfirm}»?\n\n` +
+        'Вместе с карточкой пропадут его задачи и история визитов. ' +
+        'Восстановить нельзя.'
+      );
+      if (!ok) return;
+
       const prevClients = [...clients];
       const prevTasks = [...tasks];
-      
+
       setClients(removeById(clients, id));
       setTasks(tasks.filter(t => t.clientId !== id));
 
@@ -1084,7 +1086,9 @@ const App = () => {
         try {
           await api.updateTask(id, buildTaskPayload(updatedTask));
         } catch (error) {
-          console.error('[toggleTask]', error);
+          // Откат: возвращаем completed к прежнему значению
+          setTasks(prev => updateById(prev, id, { completed: task.completed } as any));
+          handleApiError(error, 'Не удалось обновить задачу', 'toggleTask');
         }
       }
   };
@@ -1106,6 +1110,7 @@ const App = () => {
   };
 
   const handleEditTask = async (updatedTask) => {
+      const oldTask = tasks.find(t => t.id === updatedTask.id);
       setTasks(prev => updateById(prev, updatedTask.id, updatedTask));
 
       if (!isRealId(updatedTask.id)) return;
@@ -1113,7 +1118,9 @@ const App = () => {
       try {
         await api.updateTask(updatedTask.id, buildTaskPayload(updatedTask));
       } catch (error) {
-        console.error('[updateTask]', error);
+        // Откат: возвращаем старую задачу
+        if (oldTask) setTasks(prev => updateById(prev, updatedTask.id, oldTask));
+        handleApiError(error, 'Не удалось обновить задачу', 'updateTask');
       }
   };
 
@@ -1131,7 +1138,9 @@ const App = () => {
         const saved = await api.createTask(buildTaskPayload(task));
         setTasks(prev => updateById(prev, tempId, { id: saved.id, clientId: task.clientId || null } as any));
       } catch (error) {
-        console.error('[createTask]', error);
+        // Откат: убираем temp-задачу
+        setTasks(prev => removeById(prev, tempId));
+        handleApiError(error, 'Не удалось добавить задачу', 'createTask');
       }
   };
 
@@ -1196,8 +1205,11 @@ const App = () => {
       setTags(prev => [...prev, newTag]);
 
       try {
-        const saved = await api.createTag({ name: tag.name, color: tag.color });
-        setTags(prev => updateById(prev, tempId, { id: saved.id } as any));
+        // type: 'all' — общий пул (теги клиентов/записей), 'income'/'expense'
+        // — теги финансовых операций. FinanceView передаёт type явно;
+        // остальные места создают теги без type → бэк дефолтит на 'all'.
+        const saved = await api.createTag({ name: tag.name, color: tag.color, type: tag.type });
+        setTags(prev => updateById(prev, tempId, { id: saved.id, type: saved.type } as any));
       } catch (error) {
         console.error('[createTag]', error);
         setTags(prev => removeById(prev, tempId));
@@ -1272,10 +1284,10 @@ const App = () => {
       <ToastContainer />
       <UserMenu onLogout={handleLogout} onShowProfile={() => setShowProfile(true)} onShowAdmin={() => setShowAdmin(true)} networkIndicator={<NetworkIndicator isOnline={isOnline} />} />
       
-      <div className="flex-1 relative overflow-hidden bg-zinc-50">
+      <div className="flex-1 min-h-0 relative overflow-hidden bg-zinc-50">
           {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} isOnline={isOnline} canEdit={canEdit} />}
-          {activeTab === 'tasks' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyTasksView tasks={tasks} onToggleTask={handleToggleTask} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} clients={clients} onOpenClient={setSelectedClient} canEdit={canEdit} /></React.Suspense>}
-          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} canEdit={canEdit} /></React.Suspense>}
+          {activeTab === 'tasks' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyTasksView tasks={tasks} onToggleTask={handleToggleTask} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} clients={clients} onOpenClient={setSelectedClient} canEdit={canEditTasksFlag} /></React.Suspense>}
+          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} canEdit={canEdit} onAddClient={handleAddClient} ClientForm={ClientForm} /></React.Suspense>}
           {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEdit} /></React.Suspense>}
 
           {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} userRole={userRole} canEdit={canEdit} />}
@@ -1297,13 +1309,35 @@ const App = () => {
         body {
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
           background-color: #ffffff;
-          padding-top: var(--safe-top);
-          padding-bottom: var(--safe-bottom);
+          /* НЕ ставим padding-top/bottom из safe-area здесь: при box-sizing:
+             border-box + height: 100dvh это ужимает body content-area, и
+             #root/.app-container (height: 100%) становятся меньше 100dvh,
+             что ломает тач-скролл во вьюхах. Safe-area обрабатывают
+             UserMenu (top) и TabBar (bottom) самостоятельно. */
         }
+        /* .app-container — приколачиваем к viewport через position: fixed,
+           inset: 0. Это снимает любую зависимость от height-chain html → body
+           → #root: какие бы у них ни были height/min-height/padding, у
+           .app-container всегда чёткий размер = visual viewport (top:0
+           bottom:0 left:0 right:0). На iPhone Safari это особенно важно,
+           потому что 100dvh / -webkit-fill-available по-разному резолвятся
+           в зависимости от состояния URL-бара, а dim flex-цепочка
+           UserMenu/.flex-1/TabBar требует у родителя ОДНОЗНАЧНОЙ высоты,
+           иначе внутренний overflow-y-auto перестаёт обнаруживать overflow
+           и тач-скролл «не листает страницу». На десктопе медиа-запрос ниже
+           перебивает inset на margin: auto — центрированная колонка. */
         .app-container {
-          height: 100%;
-          height: -webkit-fill-available;
-          min-height: -webkit-fill-available;
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          height: auto;
+          min-height: 0;
+          /* width НЕ задаём — top/bottom/left/right уже однозначно
+             зафиксировали бокс. Если поставить width: 100% или auto, оно
+             перебьёт логику @media (min-width:768px), где для десктопа
+             колонка центрируется через left/right + transform. */
         }
         .pb-safe { padding-bottom: calc(20px + var(--safe-bottom)); }
         .animate-fade-in { animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
@@ -1313,7 +1347,14 @@ const App = () => {
 
         @supports (height: 100dvh) {
           :root { --app-height: 100dvh; }
-          body, #root, .app-container { height: 100dvh; min-height: 100dvh; }
+          /* НЕ ставим body { height: 100dvh } здесь — иначе body становится
+             фиксированной высотой и не может расти под длинный контент в
+             гостевых экранах (LoginScreen — но этот блок и так не рендерится
+             до bootstrap, поэтому риск низкий, оставляем для App-режима).
+             В App-режиме .app-container { position: fixed; inset: 0 } всё
+             равно не зависит от body.height — выставляем только переменную
+             --app-height для консьюмеров (CalendarView и т.п.). */
+          body { min-height: 100dvh; }
         }
       `}</style>
     </div>

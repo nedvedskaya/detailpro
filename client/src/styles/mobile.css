@@ -20,12 +20,17 @@
     /* Высота для iOS с учетом safe area */
     height: 100%;
     height: -webkit-fill-available;
-    /* Раньше overflow:hidden на html/body/#root жил в inline-<style> в App.tsx,
-       и при early-return на AdminPanel этот блок не рендерился — высота h-full
-       у вьюх «съезжала», внутренний overflow-y-auto не работал, мышиное колесо
-       не находило прокручиваемого предка. Перенесли сюда, чтобы правила
-       применялись всегда, независимо от того, что вернул App. */
-    overflow: hidden;
+    /* ⚠ overflow:hidden на html/body/#root НЕ ставим.
+       Раньше стояло — для удобства App-режима (.app-container с position:fixed
+       inset:0 управляет своим скроллом сама). Но тогда ломаются гостевые
+       экраны (LoginScreen / ResetPasswordPage / ProfilePage в standalone-
+       режиме) — у них нет .app-container вообще, и форма регистрации длиннее
+       экрана не скроллилась.
+       Теперь ставим overflow:hidden ТОЛЬКО на .app-container (через Tailwind-
+       класс в App.tsx). Гостевые страницы скроллятся нативно. App-режим
+       с .app-container { position: fixed; inset: 0; overflow: hidden } по-
+       прежнему сам управляет своим скроллом — он out-of-flow и не зависит
+       от родительского overflow. */
   }
 
   body {
@@ -37,7 +42,6 @@
     width: 100%;
     margin: 0;
     padding: 0;
-    overflow: hidden;
 
     /* Отключаем bounce эффект на iOS */
     overscroll-behavior: none;
@@ -45,28 +49,37 @@
   }
 
   #root {
-    height: 100%;
-    height: -webkit-fill-available;
+    /* min-height (а не height) — даёт гостевым страницам расти выше viewport
+       и скроллиться нативно. В App-режиме .app-container с position:fixed
+       inset:0 не зависит от высоты #root, ничего не ломает. */
+    min-height: 100%;
+    min-height: -webkit-fill-available;
     width: 100%;
-    overflow: hidden;
   }
 
-  /* Оптимизация для notch (Dynamic Island) на iPhone */
-  @supports (padding-top: env(safe-area-inset-top)) {
-    body {
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
-      padding-left: env(safe-area-inset-left);
-      padding-right: env(safe-area-inset-right);
-    }
-  }
+  /* Notch (Dynamic Island) — раньше тут было padding на body. Это ломало
+     scroll-цепочку: body=100dvh + box-sizing border-box + padding из
+     safe-area → его content-area становится МЕНЬШЕ 100dvh, а #root/.app-container
+     с height: 100% наследуют этот «уменьшенный» размер. При этом TabBar
+     (position: fixed; bottom: 0) сидит у нижнего края viewport-а (= за
+     content-area body), и любой скрипт высоты внутри .flex-1 .overflow-y-auto
+     неконсистентно расходился между «видимой областью» и «реальной
+     высотой контейнера», из-за чего тач-скролл переставал работать.
 
-  /* Улучшаем плавность анимаций на iOS */
+     Сейчас safe-area обрабатывают сами компоненты:
+       UserMenu — padding-top: env(safe-area-inset-top)
+       TabBar   — padding-bottom: env(safe-area-inset-bottom)
+       внутренние scroll-зоны — padding-bottom учитывает env() */
+
+  /* Улучшаем плавность анимаций на iOS.
+     ⚠ ВАЖНО: НЕ добавлять сюда `backface-visibility: hidden`. Когда оно
+     висит на `*`, iOS Safari создаёт композитный слой на каждом элементе,
+     ломает внутренний touch-scroll внутри `overflow-y-auto` контейнеров —
+     страница «не листается». Если нужен GPU-акселератор для конкретной
+     анимации, добавляй его точечно на саму анимирующуюся ноду. */
   * {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
   }
 
   /* Оптимизация кнопок для touch на iOS */
@@ -106,12 +119,22 @@
   }
 }
 
-/* Оптимизация высоты viewport для iOS Safari */
+/* Оптимизация высоты viewport для iOS Safari.
+   ⚠ Раньше тут был «универсальный» селектор
+     .h-screen, .h-full, [class*="h-screen"], [class*="h-full"]
+   с `min-height: -webkit-fill-available` — это ЛОМАЛО скролл на мобилке:
+   КАЖДЫЙ tailwind-`h-full` внутри вьюх (TasksView, ClientsView,
+   CalendarView, FinanceView и т.п.) получал min-height во весь viewport,
+   распирался выше своего flex-родителя (.flex-1 между UserMenu и TabBar),
+   а внутренний `flex-1 overflow-y-auto` рассчитывал высоту от раздутого
+   родителя — и решал, что overflow-а нет, скролл не нужен. Симптом ровно
+   как в баг-репорте: «не листается ни одна страница на мобильной версии».
+
+   Корневые контейнеры (html, body, #root, .app-container) уже получают
+   `height: -webkit-fill-available` явно выше — этого достаточно. Тут больше
+   ничего не делаем. */
 @supports (-webkit-touch-callout: none) {
-  .h-screen,
-  .h-full,
-  [class*="h-screen"],
-  [class*="h-full"] {
+  .app-container {
     min-height: -webkit-fill-available;
   }
 }
@@ -183,8 +206,98 @@ input, textarea, select { font-size: 16px !important; }
   html {
     font-size: 15px;
   }
-  
+
   .mobile-text-compact {
     font-size: 0.875rem !important;
+  }
+}
+
+/* ───── Десктоп / широкие экраны ─────────────────────────────────────────────
+   Приложение изначально мобильное. На десктопе раньше всё растягивалось во
+   всю ширину монитора — кнопки длиной в полметра, форма на пол-экрана. Тут
+   мы аккуратно «ужимаем» приложение в центрированную колонку (стиль Telegram
+   Web), сохраняя мобильную эргономику и тач-зоны. ----------------------------- */
+@media (min-width: 768px) {
+  /* .app-container на мобилке — position: fixed inset: 0 (см. App.tsx).
+     На десктопе превращаем в центрированную колонку шириной 1280:
+     left/right оборачиваем вокруг центра, top/bottom оставляем 0/0. */
+  .app-container {
+    left: 50% !important;
+    right: auto !important;
+    width: min(1280px, 100%) !important;
+    transform: translateX(-50%);
+    box-shadow: 0 0 60px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Фоновый «холст» вокруг центрированной колонки приложения. */
+  body {
+    background-color: #f4f4f5; /* zinc-100 — нейтральный фон вокруг колонки */
+  }
+
+  /* TabBar — плавающая центрированная панель с отступом снизу и
+     скругленными краями, чтобы не прилипать к низу огромного монитора.
+     !important — чтобы пересилить tailwind-утилиты bottom-0/left-0/right-0. */
+  .desktop-tabbar {
+    position: fixed !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%);
+    bottom: 16px !important;
+    width: min(560px, calc(100% - 32px)) !important;
+    border-radius: 24px !important;
+    border: 1px solid rgb(228 228 231 / 0.7) !important;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+  }
+
+  /* Полноэкранные модалки (ClientForm и т.п.) — центрированная карточка
+     вместо тейк-овера всего экрана. */
+  .desktop-card-modal {
+    inset: auto !important;
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: min(720px, calc(100% - 48px)) !important;
+    max-height: 88vh !important;
+    height: auto !important;
+    border-radius: 24px !important;
+    overflow: hidden !important;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.25) !important;
+  }
+
+  /* Bottom-sheet модалки — превращаем в центрированный диалог.
+     padding-bottom на контейнере резервирует место под плавающий .desktop-tabbar
+     (bottom:16px + высота ≈64px + отступ): иначе нижний край модалки с длинной
+     формой (Календарь → «Новая бронь») уходит под таббар и кнопка «Добавить»
+     становится некликабельной. 96px = ~80px на таббар + 16px воздуха. */
+  .desktop-sheet-center {
+    align-items: center !important;
+    justify-content: center !important;
+    padding-bottom: 96px !important;
+  }
+  .desktop-sheet-center > div {
+    width: min(560px, calc(100% - 48px)) !important;
+    border-radius: 24px !important;
+    padding-bottom: 24px !important;
+    /* Тоже урезаем — на коротких viewport-ах 85vh всё ещё может перекрыть
+       таббар, безопаснее ограничиться высотой минус место под таббар. */
+    max-height: calc(100dvh - 128px) !important;
+  }
+}
+
+/* Большие десктопы — позволяем сетке клиентов разворачиваться шире.
+   Сбрасываем margin-top, который Tailwind добавляет через space-y-3 на
+   siblings — внутри grid-контейнера расстояния задаются gap, а не margin. */
+@media (min-width: 1024px) {
+  .desktop-grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .desktop-grid-2 > * + * { margin-top: 0 !important; }
+}
+@media (min-width: 1280px) {
+  .desktop-grid-2 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
