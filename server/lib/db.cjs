@@ -71,27 +71,33 @@ function query(sql, params) {
 // ──────────────────────────────────────────────────────────────────────
 // queryInSchema — интерполирует {{schema}} в шаблонной строке через safeIdent.
 //
-// Использование:
+// Использование (вне транзакции):
 //   await queryInSchema(req.session.schema_name,
 //     'SELECT * FROM {{schema}}.clients WHERE id = $1',
 //     [clientId]);
 //
-// Подмена идёт через replace, а не через template literals, потому что
+// Внутри транзакции (withTx) — передавайте client четвёртым аргументом:
+//   await withTx(async (client) => {
+//     await queryInSchema(schemaName, 'INSERT INTO {{schema}}...', [...], client);
+//   });
+//
+// Подмена идёт через split/join, а не через template literals, потому что
 // рантайм-значение схемы должно пройти валидацию ВНУТРИ этой функции
 // (а не на стороне вызывающего, где могут забыть).
 // ──────────────────────────────────────────────────────────────────────
-function queryInSchema(schemaName, sql, params) {
+function queryInSchema(schemaName, sql, params, client) {
   const ident = safeIdent(schemaName); // бросит, если схема невалидна
   if (typeof sql !== 'string' || !sql.includes('{{schema}}')) {
     throw new Error('queryInSchema: SQL должен содержать плейсхолдер {{schema}}');
   }
   const finalSql = sql.split('{{schema}}').join(ident);
-  return pool.query(finalSql, params);
+  // Если client передан (внутри транзакции) — выполняем на нём, иначе — на pool.
+  return (client || pool).query(finalSql, params);
 }
 
 // ──────────────────────────────────────────────────────────────────────
 // Транзакция. В callback приходит client с теми же методами .query.
-// Внутри callback можно использовать queryInSchemaWithClient, ниже.
+// Внутри callback можно использовать queryInSchema(schema, sql, params, client).
 // ──────────────────────────────────────────────────────────────────────
 async function withTx(fn) {
   const client = await pool.connect();
@@ -108,15 +114,6 @@ async function withTx(fn) {
   }
 }
 
-// Версия queryInSchema для использования внутри транзакции, на конкретном client.
-function queryInSchemaWithClient(client, schemaName, sql, params) {
-  const ident = safeIdent(schemaName);
-  if (typeof sql !== 'string' || !sql.includes('{{schema}}')) {
-    throw new Error('queryInSchemaWithClient: SQL должен содержать плейсхолдер {{schema}}');
-  }
-  const finalSql = sql.split('{{schema}}').join(ident);
-  return client.query(finalSql, params);
-}
 
 // ──────────────────────────────────────────────────────────────────────
 // Graceful shutdown. Вызывать из server/index.cjs на SIGTERM.
@@ -129,7 +126,6 @@ module.exports = {
   pool,
   query,
   queryInSchema,
-  queryInSchemaWithClient,
   withTx,
   close,
 };

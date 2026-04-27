@@ -64,11 +64,13 @@ async function requireAuth(req, res, next) {
 // ──────────────────────────────────────────────────────────────────────
 // requireActiveStudio
 //   - is_active=false → 403 (студия отключена админом)
-//   - access_until < now() → 402 (просрочка оплаты, надо доплатить)
+//   - access_until истёк → НЕ блокируем (мягкий режим, см. ниже)
 //
-// Делаем отдельным запросом (не JOIN в verifySession), чтобы:
-//   - решение о состоянии студии было свежим (а не на момент логина)
-//   - можно было применять выборочно к роутам
+// Мягкий режим по подписке: 402 за просрочку убран, чтобы менеджер/мастер
+// и собственник видели одно и то же состояние. Раньше API отдавал 402
+// для не-owner, а UI показывал lock-страницу — менеджер не мог работать,
+// пока owner шёл оплачивать. Бизнес-логика «истёк → отключим» решается
+// админом вручную через is_active=false (это всё ещё 403).
 // ──────────────────────────────────────────────────────────────────────
 async function requireActiveStudio(req, res, next) {
   try {
@@ -87,13 +89,6 @@ async function requireActiveStudio(req, res, next) {
     }
     if (!studio.is_active) {
       return res.status(403).json({ error: 'studio_disabled' });
-    }
-    if (new Date(studio.access_until).getTime() <= Date.now()) {
-      return res.status(402).json({
-        error: 'subscription_expired',
-        access_until: studio.access_until,
-        plan: studio.plan,
-      });
     }
     req.studio = studio;
     next();

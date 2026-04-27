@@ -207,6 +207,30 @@ router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, n
       return digits.slice(0, 11);
     };
 
+    // UI клиентов исторически хранит carBrand/carModel/vin/licensePlate
+    // в ОДНОМ JSON-поле `notes` (см. helpers.ts → normalizeClient/buildClientPayload
+    // и documents.cjs → JSON.parse(client.notes)). Если из импорта мы кладём
+    // в `notes` сырой текст пользователя ("Любит кварц"), а в `vehicles` —
+    // отдельную строку, то в карточке клиента поле «Автомобиль» останется
+    // пустым: парсер не найдёт carBrand в JSON. Чтобы импорт согласовывался
+    // с тем, что показывает UI, упаковываем notes в тот же JSON-формат.
+    const buildNotesJson = ({ comment, vehicle }) => {
+      const carBrand = vehicle && typeof vehicle.brand === 'string' ? vehicle.brand.trim() : '';
+      const carModel = vehicle && typeof vehicle.model === 'string' ? vehicle.model.trim() : '';
+      const licensePlate = vehicle && typeof vehicle.license_plate === 'string' ? vehicle.license_plate.trim() : '';
+      const cleanComment = typeof comment === 'string' ? comment.trim() : '';
+      // Если совсем ничего нет — пишем NULL, не пустой JSON,
+      // чтобы старые карточки без машин не получали лишний шум.
+      if (!carBrand && !carModel && !licensePlate && !cleanComment) return null;
+      return JSON.stringify({
+        carBrand,
+        carModel,
+        vin: '',
+        licensePlate,
+        comment: cleanComment,
+      });
+    };
+
     const result = await withTx(async (client) => {
       // Загружаем существующие телефоны студии один раз — далее in-memory.
       // На 50к клиентов это всё ещё <5 МБ, не проблема.
@@ -240,6 +264,8 @@ router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, n
         const phoneNorm = normalizePhone(c.phone);
         const existingId = phoneNorm ? phoneToId.get(phoneNorm) : null;
 
+        const notesJson = buildNotesJson({ comment: c.notes, vehicle: v });
+
         let clientId = null;
 
         if (existingId && strat === 'skip') {
@@ -254,7 +280,7 @@ router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, n
                 SET name=$1, phone=$2, email=$3, notes=$4, source=$5, city=$6,
                     birth_date=$7, updated_at=now()
               WHERE id=$8 RETURNING id`,
-            [name, c.phone || null, c.email || null, c.notes || null,
+            [name, c.phone || null, c.email || null, notesJson,
              c.source || null, c.city || null, c.birth_date || null, existingId],
             client
           );
@@ -266,7 +292,7 @@ router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, n
             schemaName,
             `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date)
                VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-            [name, c.phone || null, c.email || null, c.notes || null,
+            [name, c.phone || null, c.email || null, notesJson,
              c.source || null, c.city || null, c.birth_date || null],
             client
           );
@@ -281,9 +307,11 @@ router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, n
         }
 
         // Машина (опционально). Только если client заведён/обновлён И есть
-        // хоть бренд. Стратегия overwrite НЕ удаляет старые машины клиента,
-        // а просто докидывает ещё одну — пусть пользователь решает руками,
-        // что лишнее. Удалять машины при импорте — слишком жёстко.
+        // хоть бренд. В дополнение к JSON в `clients.notes` (откуда читает UI
+        // карточки) кладём отдельную запись в `vehicles` — оттуда читают
+        // документы (наряд-заказ, акт приёмки). Стратегия overwrite НЕ
+        // удаляет старые машины клиента, а просто докидывает ещё одну —
+        // пусть пользователь решает руками, что лишнее.
         if (clientId && v && typeof v.brand === 'string' && v.brand.trim()) {
           await queryInSchema(
             schemaName,

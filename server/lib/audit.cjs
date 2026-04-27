@@ -77,4 +77,36 @@ function logAction({
    });
 }
 
-module.exports = { logAction };
+/**
+ * Sugar над logAction для роутов, у которых уже есть готовый req.session.
+ * До этого помощника одна и та же 12-строчная обёртка жила в трёх роутах
+ * (tenant, documents, admin) — добавление поля (например, request_id) сразу
+ * требовало 3 синхронных правки.
+ *
+ * Сигнатура подобрана так, чтобы вызовы из CRUD-роутов читались естественно:
+ *   logFromReq(req, 'create', 'client', clientId, clientName, details);
+ *
+ * @param {import('express').Request} req — должен пройти requireAuth,
+ *        иначе req.session отсутствует.
+ * @param {string} action
+ * @param {string} [entityType]
+ * @param {string|number} [entityId]
+ * @param {string} [entityName]
+ * @param {string} [details]
+ * @returns {Promise<void>}
+ */
+function logFromReq(req, action, entityType, entityId, entityName, details) {
+  return logAction({
+    schemaName: req.session && req.session.schemaName,
+    userId:     req.session && req.session.userId,
+    userName:   req.session && req.session.userName,
+    action,
+    entityType,
+    entityId,
+    entityName,
+    details,
+    ip:         req.ip,
+  });
+}
+
+module.exports = { logAction, logFromReq };

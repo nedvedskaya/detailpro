@@ -74,6 +74,11 @@ function pluralize(n, one, few, many) {
 // ──────────────────────────────────────────────────────────────────────
 
 async function getActiveStudios() {
+  // Шлём всем активным студиям, включая trial и solo. На лендинге Студия
+  // выделена как «у них напоминания» — это маркетинг для апсейла, но
+  // фактически бот напоминает всем, у кого подключён TG. Оплачен ли
+  // тариф — отдельный вопрос; «бесплатной» функцию делает не cron,
+  // а наличие tg_chat_id у пользователя.
   const r = await pool.query(
     `SELECT id, schema_name, timezone
        FROM saas_meta.studios
@@ -97,19 +102,34 @@ async function getStudioUsers(studioId) {
 }
 
 async function getBookingsForDate(schema, dateStr) {
+  // ВАЖНО: фактически бронями владеет таблица client_records, а не bookings.
+  // bookings — наследие из исходного порта, в боевом потоке (UI «Бронь»
+  // в карточке клиента / календарь) ничего туда не пишется. Если читать
+  // bookings — выборка всегда пустая, и за-час-напоминания никогда не
+  // улетают (это уже всплывало в фидбеке: «бот не прислал напоминание
+  // за час о записи клиента»).
+  //
+  // Колонки сохранены под старые имена (b.master_id, b.date, b.time,
+  // b.notes, b.client_name, …) — formatBookingLine и остальная логика
+  // ничего об источнике не знают. is_completed=false аналог
+  // status<>'cancelled': снятые/завершённые брони не спамят.
   const r = await queryInSchema(schema,
-    `SELECT b.id, b.master_id, b.date, b.time, b.status, b.notes,
+    `SELECT cr.id,
+            cr.master_id,
+            cr.date,
+            cr.time,
+            cr.service_name,
+            cr.description AS notes,
             c.name  AS client_name,
-            v.brand AS vehicle_brand, v.model AS vehicle_model,
-            v.license_plate AS vehicle_plate,
-            s.name  AS service_name
-       FROM {{schema}}.bookings b
-       LEFT JOIN {{schema}}.clients  c ON c.id = b.client_id
-       LEFT JOIN {{schema}}.vehicles v ON v.id = b.vehicle_id
-       LEFT JOIN {{schema}}.services s ON s.id = b.service_id
-      WHERE b.date = $1
-        AND b.status <> 'cancelled'
-      ORDER BY b.time ASC`,
+            v.brand AS vehicle_brand,
+            v.model AS vehicle_model,
+            v.license_plate AS vehicle_plate
+       FROM {{schema}}.client_records cr
+       LEFT JOIN {{schema}}.clients  c ON c.id = cr.client_id
+       LEFT JOIN {{schema}}.vehicles v ON v.id = cr.vehicle_id
+      WHERE cr.date = $1
+        AND cr.is_completed = false
+      ORDER BY cr.time ASC`,
     [dateStr]
   );
   return r.rows;

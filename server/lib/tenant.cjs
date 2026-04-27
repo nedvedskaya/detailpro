@@ -72,18 +72,57 @@ function safeIdent(name) {
 }
 
 /**
+ * Транслитерация русской кириллицы в латиницу для имён схем.
+ * Имя схемы должно быть `[a-z][a-z0-9_]{2,31}` — кириллица напрямую не подходит,
+ * без транслита все русские названия схлопывались в одну заглушку `studio_`,
+ * что вызывало 409 schema_name_taken на втором signup.
+ *
+ * Стандарт — упрощённый «GOST R 7.0.34-2014» (наиболее частый для имён файлов
+ * и URL-слугов): «ё»→`yo`, «ж»→`zh`, «ю»→`yu`, «я»→`ya`, «щ»→`shch`, и т.д.
+ */
+const CYRILLIC_MAP = {
+  а: 'a',  б: 'b',  в: 'v',  г: 'g',  д: 'd',  е: 'e',  ё: 'yo',
+  ж: 'zh', з: 'z',  и: 'i',  й: 'i',  к: 'k',  л: 'l',  м: 'm',
+  н: 'n',  о: 'o',  п: 'p',  р: 'r',  с: 's',  т: 't',  у: 'u',
+  ф: 'f',  х: 'h',  ц: 'c',  ч: 'ch', ш: 'sh', щ: 'shch',
+  ъ: '',   ы: 'y',  ь: '',   э: 'e',  ю: 'yu', я: 'ya',
+};
+
+function transliterate(input) {
+  return input.toLowerCase().split('').map((ch) => CYRILLIC_MAP[ch] ?? ch).join('');
+}
+
+/**
  * Генерирует кандидатное имя схемы из произвольной строки (например, названия студии).
  * НЕ использовать напрямую как имя — пропустить через validateSchemaName и проверить
  * уникальность через `saas_meta.studios.schema_name`.
+ *
+ * Алгоритм:
+ *   1. Кириллица → латиница (транслит).
+ *   2. Не-ASCII символы → `_`.
+ *   3. Если итог не начинается с буквы — префикс `studio_`.
+ *   4. Если после всех чисток слаг пустой/слишком короткий — добавляем
+ *      случайный суффикс из 8 hex-символов. Это страхует от коллизий имён
+ *      на чисто символьных названиях вроде «❤️ My Studio».
+ *
  * @param {string} input
- * @returns {string|null} кандидат или null если не получилось
+ * @returns {string|null} кандидат или null если совсем не получилось
  */
 function suggestSchemaName(input) {
   if (typeof input !== 'string') return null;
-  let s = input
-    .toLowerCase()
+  let s = transliterate(input)
     .replace(/[^a-z0-9_]+/g, '_')
     .replace(/^_+|_+$/g, '');
+
+  // После транслита и чистки остался пустой слаг или меньше 2 alphanum
+  // символов — значит, исходное имя состояло почти полностью из эмоджи/символов.
+  // Подставляем случайный суффикс, чтобы schema_name был валиден и уникален.
+  const alnumCount = (s.match(/[a-z0-9]/g) || []).length;
+  if (alnumCount < 2) {
+    const rnd = Math.random().toString(16).slice(2, 10); // 8 hex-символов
+    s = s ? (s + '_' + rnd) : rnd;
+  }
+
   if (!/^[a-z]/.test(s)) s = 'studio_' + s;
   s = s.slice(0, 32);
   if (!SCHEMA_NAME_REGEX.test(s)) return null;

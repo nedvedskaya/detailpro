@@ -86,7 +86,7 @@ function quoteIdent(name) {
 
 /**
  * Чистка протухших payment_intents — двухпроходная стратегия:
- *   • token живёт 60 минут (см. routes/profile.cjs#PAYMENT_INTENT_TTL_MS)
+ *   • token живёт 60 минут (см. lib/payments.cjs#PAYMENT_INTENT_TTL_MS)
  *   • после истечения держим ещё 7 дней для аудита (вдруг webhook опоздал
  *     и придёт «после смерти»; тогда лог покажет, что мы его видели и не
  *     консьюмнули)

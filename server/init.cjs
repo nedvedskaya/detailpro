@@ -76,6 +76,20 @@ async function main() {
 
   const studios = await pool.query('SELECT count(*)::int AS n FROM saas_meta.studios');
   console.log('\nЗарегистрированных студий:', studios.rows[0].n);
+
+  // Прогоняем 100_tenant_template.sql на КАЖДУЮ существующую студию.
+  // Шаблон идемпотентен (CREATE … IF NOT EXISTS, ADD COLUMN IF NOT EXISTS) —
+  // это нужно, чтобы новые ALTER из шаблона (как добавление tags.type) дошли
+  // до уже созданных тенантов, а не только до новых.
+  if (Number(studios.rows[0].n) > 0) {
+    const { migrateAllStudios } = require('./lib/tenant_provisioning.cjs');
+    console.log('\nПрименяем шаблон ко всем студиям (per-tenant migration):');
+    const results = await migrateAllStudios();
+    for (const r of results) {
+      if (r.ok) console.log('  ✓ ' + r.schemaName);
+      else      console.log('  ✗ ' + r.schemaName + ' — ' + r.error);
+    }
+  }
 }
 
 main()
