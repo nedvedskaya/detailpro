@@ -623,9 +623,16 @@ router.get('/work-orders/:bookingId/pdf', async (req, res, next) => {
     const mergedClient  = mergeSnapshot(ctx.client,  wo.client_snapshot);
     const mergedVehicle = mergeSnapshot(ctx.vehicle, wo.vehicle_snapshot);
 
+    // Content-Disposition: attachment — заставляет браузер показать
+    // нативный диалог «Сохранить файл» вместо открытия PDF в новой вкладке.
+    // На iOS Safari `inline` приводил к тому, что юзер видел `about:blank`
+    // (новая вкладка не успевала перенавигироваться) и потом не мог
+    // скачать файл — в screenshot'е жалоба именно про это. С `attachment`
+    // тап на «Скачать PDF» сразу запускает загрузку, страница со списком
+    // документов остаётся на месте.
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
-      `inline; filename="work_order_${wo.id}.pdf"`);
+      `attachment; filename="work_order_${wo.id}.pdf"`);
     streamWorkOrderPdf(res, {
       ...ctx,
       client:  mergedClient,
@@ -777,9 +784,11 @@ router.get('/acceptance-acts/:bookingId/pdf', async (req, res, next) => {
     );
     act.photos_count = cnt.rows[0].n;
 
+    // attachment — см. комментарий в /work-orders/:id/pdf выше: на iOS
+    // `inline` ломает скачивание (открывается about:blank, файл не достать).
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
-      `inline; filename="acceptance_act_${act.id}.pdf"`);
+      `attachment; filename="acceptance_act_${act.id}.pdf"`);
     streamAcceptanceActPdf(res, {
       ...ctx,
       client:  mergedClient,
