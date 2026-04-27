@@ -32,14 +32,16 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Activity, UserPlus, Shield, ShieldOff, Clock,
   ArrowLeft, Trash2, Edit3, KeyRound, Copy, Check, RefreshCw, X, ChevronDown,
-  Eye, EyeOff, Lock,
+  Eye, EyeOff, Lock, BarChart3,
 } from 'lucide-react';
+import { AnalyticsDashboard } from '@/app/components/admin/AnalyticsDashboard';
 import { api } from '@/utils/api';
-import { getRoleName, getActionLabel, getActionTone } from '@/utils/constants';
+import { getRoleName, getActionLabel, getActionTone, formatEntityName, formatLogDetails } from '@/utils/constants';
 import { getVisibleSectionLabels } from '@/utils/permissions';
-import { formatDateTime } from '@/utils/helpers';
+import { formatDateTime, formatDateRu } from '@/utils/helpers';
 import { Modal } from '@/app/components/ui/Modal';
 import { showToast } from '@/app/components/ui/Toast';
+import { handleApiError } from '@/utils/stateHelpers';
 import { getUser } from '@/utils/auth';
 import type { ProfileResponse, Role, StudioUser, ActivityLogEntry } from '@/utils/types';
 
@@ -49,7 +51,7 @@ interface AdminPanelProps {
   onOpenProfile?: () => void;
 }
 
-type AdminTab = 'users' | 'activity';
+type AdminTab = 'users' | 'activity' | 'analytics';
 
 const PAGE_SIZE = 50;
 
@@ -100,6 +102,9 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
   // ── Тариф / лимиты ──
   const [limits, setLimits] = useState<ProfileResponse['limits'] | null>(null);
   const [planLabel, setPlanLabel] = useState<string>('');
+  // Код тарифа («solo» | «studio» | «trial» | «cancelled») — нужен для гейтинга
+  // вкладки «Аналитика»: она показывается только на «Студии».
+  const [planCode, setPlanCode] = useState<string | null>(null);
 
   // ── Активность ──
   const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
@@ -139,6 +144,38 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
   const [ownPwdSubmitting, setOwnPwdSubmitting] = useState(false);
   const [ownPwdShow, setOwnPwdShow] = useState(false);
 
+  // ── «Забыли пароль?» прямо из модалки смены пароля ──
+  // Если owner забыл текущий пароль — даём ему запустить тот же TG-flow,
+  // что и на LoginScreen.tsx (api.requestPasswordReset). Email не спрашиваем —
+  // берём из currentUser, чтобы не было путаницы.
+  //   'idle' | 'submitting' | 'sent' | 'no_channel' | 'error'
+  const [ownPwdResetState, setOwnPwdResetState] = useState<'idle' | 'submitting' | 'sent' | 'no_channel' | 'error'>('idle');
+  const [ownPwdResetError, setOwnPwdResetError] = useState('');
+
+  const requestOwnPwdReset = async () => {
+    if (!currentUser?.email) {
+      setOwnPwdResetError('Не удалось определить ваш email. Перезайдите в систему.');
+      setOwnPwdResetState('error');
+      return;
+    }
+    setOwnPwdResetError('');
+    setOwnPwdResetState('submitting');
+    try {
+      const r = await api.requestPasswordReset(currentUser.email);
+      if (r.delivery === 'no_channel') setOwnPwdResetState('no_channel');
+      else setOwnPwdResetState('sent');
+    } catch (err: any) {
+      if (err?.status === 429) {
+        setOwnPwdResetError('Слишком много попыток. Попробуйте через 15 минут.');
+        setOwnPwdResetState('error');
+      } else {
+        // Любая другая ошибка — не выдаём существование email,
+        // показываем нейтральный «sent».
+        setOwnPwdResetState('sent');
+      }
+    }
+  };
+
   // ── Загрузка ──
   const loadUsers = useCallback(async () => {
     try {
@@ -157,6 +194,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       const profile = await api.getProfile();
       setLimits(profile.limits);
       setPlanLabel(profile.studio.planLabel || profile.studio.plan);
+      setPlanCode(profile.studio.plan || null);
     } catch (e) {
       console.error('Error loading limits:', e);
     }
@@ -247,8 +285,8 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       loadUsers();
       loadLimits();
       if (activeTab === 'activity') loadLogs(true);
-    } catch (err: any) {
-      showToast(err?.message || 'Ошибка при создании сотрудника', 'error');
+    } catch (err) {
+      handleApiError(err, 'Ошибка при создании сотрудника', 'createAdminUser');
     } finally {
       setAddSubmitting(false);
     }
@@ -288,8 +326,8 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       setEditTarget(null);
       loadUsers();
       if (activeTab === 'activity') loadLogs(true);
-    } catch (err: any) {
-      showToast(err?.message || 'Ошибка при сохранении', 'error');
+    } catch (err) {
+      handleApiError(err, 'Ошибка при сохранении', 'updateAdminUser');
     } finally {
       setEditSubmitting(false);
     }
@@ -306,8 +344,8 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       await api.blockUser(u.id, !u.is_active);
       loadUsers();
       if (activeTab === 'activity') loadLogs(true);
-    } catch (err: any) {
-      showToast(err?.message || 'Ошибка при изменении статуса', 'error');
+    } catch (err) {
+      handleApiError(err, 'Ошибка при изменении статуса', 'blockUser');
     }
   };
 
@@ -323,8 +361,8 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       loadUsers();
       loadLimits();
       if (activeTab === 'activity') loadLogs(true);
-    } catch (err: any) {
-      showToast(err?.message || 'Ошибка при удалении', 'error');
+    } catch (err) {
+      handleApiError(err, 'Ошибка при удалении', 'deleteUser');
     }
   };
 
@@ -345,8 +383,8 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       // edit-модалка может быть открыта; закрываем её, чтобы не перекрывать
       setEditTarget(null);
       if (activeTab === 'activity') loadLogs(true);
-    } catch (err: any) {
-      showToast(err?.message || 'Ошибка при сбросе пароля', 'error');
+    } catch (err) {
+      handleApiError(err, 'Ошибка при сбросе пароля', 'resetUserPassword');
     }
   };
 
@@ -387,17 +425,22 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       await api.changePassword(oldPassword, newPassword);
       showToast('Пароль изменён. Остальные сессии завершены.', 'success');
       setShowOwnPwdModal(false);
-    } catch (err: any) {
-      showToast(err?.message || 'Не удалось изменить пароль', 'error');
+    } catch (err) {
+      handleApiError(err, 'Не удалось изменить пароль', 'changePassword');
     } finally {
       setOwnPwdSubmitting(false);
     }
   };
 
   // ── Рендер шапки ──
+  // Вкладка «Аналитика» доступна всем планам. Раньше она была заперта
+  // под тариф «Студия», но та же логика, что и с напоминаниями бота:
+  // на лендинге выделяем фичу как «у Студии», но фактически показываем
+  // её всем — это маркетинг для апсейла, а не реальный гейтинг.
   const tabs: { id: AdminTab; label: string; icon: typeof Users }[] = [
     { id: 'users', label: 'Сотрудники', icon: Users },
     { id: 'activity', label: 'Активность', icon: Activity },
+    { id: 'analytics', label: 'Аналитика', icon: BarChart3 },
   ];
 
   // Inline-toggle «Видит финансы» прямо на карточке (только для manager).
@@ -410,17 +453,24 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
     try {
       await api.updateAdminUser(u.id, { can_view_finance: next });
       if (activeTab === 'activity') loadLogs(true);
-    } catch (err: any) {
+    } catch (err) {
       // откат при ошибке
       setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, can_view_finance: !next } : x));
-      showToast(err?.message || 'Не удалось изменить доступ к финансам', 'error');
+      handleApiError(err, 'Не удалось изменить доступ к финансам', 'toggleFinanceAccess');
     } finally {
       setFinanceBusyId(null);
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-zinc-50 overflow-hidden">
+    // position: fixed inset: 0 — приколачиваем шелл к viewport, чтобы
+    // не зависеть от height-цепочки html→body→#root. На iPhone Safari
+    // h-full тут раньше «не находил» однозначной высоты родителя при
+    // открытом адресном баре, и внутренний overflow-y-auto не скроллился.
+    <div
+      className="flex flex-col bg-zinc-50 overflow-hidden"
+      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+    >
       <div className="sticky top-0 z-30 bg-white shadow-sm shrink-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
           <div className="flex items-center gap-3">
@@ -543,6 +593,12 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                         <span className="text-zinc-400 font-medium">Видит разделы</span>
                         <p className="font-bold text-zinc-800 mt-0.5 leading-snug">
                           {getVisibleSectionLabels(u.role, u.can_view_finance).join(', ')}
+                        </p>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-zinc-400 font-medium">Дата регистрации</span>
+                        <p className="font-bold text-zinc-800 mt-0.5">
+                          {formatDateRu(u.created_at)}
                         </p>
                       </div>
                     </div>
@@ -721,31 +777,39 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
               <div className="text-center py-12 text-zinc-400 font-medium">Записей нет</div>
             ) : (
               <>
-                <div className="space-y-2">
+                {/*
+                  Компактный однострочный лог: точка-индикатор + бейдж + имя
+                  сотрудника + сущность (truncate) слева, время справа.
+                  Детали (log.details) — отдельной мелкой строкой только если
+                  есть. Высота карточки ≈ 36–48px вместо ~92px ранее.
+                */}
+                <div className="space-y-1">
                   {logs.map((log) => {
                     const tone = getActionTone(log.action);
                     const label = getActionLabel(log.action, log.entity_type);
                     return (
-                      <div key={log.id} className="bg-white border border-zinc-200 rounded-xl p-3 space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TONE_DOT[tone]}`} />
-                            <span className="text-xs font-bold text-zinc-800 truncate">{log.user_name || 'Система'}</span>
-                          </div>
-                          <span className="text-[10px] text-zinc-400 font-medium whitespace-nowrap">
+                      <div key={log.id} className="bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TONE_DOT[tone]}`} />
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap shrink-0 ${TONE_BADGE[tone]}`}>
+                            {label}
+                          </span>
+                          <span className="text-xs font-bold text-zinc-800 truncate shrink-0 max-w-[40%]">
+                            {log.user_name || 'Система'}
+                          </span>
+                          {log.entity_name && (
+                            <span className="text-xs text-zinc-500 truncate min-w-0">
+                              · {formatEntityName(log.entity_name)}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-zinc-400 font-medium whitespace-nowrap ml-auto shrink-0">
                             {formatDateTime(log.created_at)}
                           </span>
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border ${TONE_BADGE[tone]}`}>
-                            {label}
-                          </span>
-                          {log.entity_name && (
-                            <span className="text-xs text-zinc-600 truncate">{log.entity_name}</span>
-                          )}
-                        </div>
                         {log.details && (
-                          <p className="text-[11px] text-zinc-500 leading-snug whitespace-pre-line">{log.details}</p>
+                          <p className="text-[10px] text-zinc-500 leading-snug whitespace-pre-line mt-0.5 ml-3.5 truncate">
+                            {formatLogDetails(log.details)}
+                          </p>
                         )}
                       </div>
                     );
@@ -763,6 +827,11 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
               </>
             )}
           </div>
+        )}
+
+        {/* ─────────── Аналитика (только тариф «Студия») ─────────── */}
+        {activeTab === 'analytics' && (
+          <AnalyticsDashboard plan={planCode} />
         )}
 
       </div>
@@ -1031,7 +1100,14 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       {/* ─────────── Модалка: изменить свой пароль (для owner) ─────────── */}
       <Modal
         isOpen={showOwnPwdModal}
-        onClose={() => !ownPwdSubmitting && setShowOwnPwdModal(false)}
+        onClose={() => {
+          if (ownPwdSubmitting) return;
+          setShowOwnPwdModal(false);
+          // При закрытии — чистим состояние «Забыл пароль?»,
+          // чтобы при повторном открытии модалка была свежая.
+          setOwnPwdResetState('idle');
+          setOwnPwdResetError('');
+        }}
         title="Изменить пароль"
         position="center"
       >
@@ -1041,7 +1117,24 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
             будут завершены — этот сеанс остаётся активным.
           </p>
           <div>
-            <label className="block text-sm font-bold text-zinc-700 mb-1.5">Текущий пароль</label>
+            <div className="flex items-baseline justify-between mb-1.5">
+              <label className="block text-sm font-bold text-zinc-700">Текущий пароль</label>
+              {/* «Забыли пароль?» — запускает TG-сброс на email текущего юзера.
+                  Прячем во время отправки/после ответа, чтобы не нажали дважды. */}
+              {ownPwdResetState === 'idle' && (
+                <button
+                  type="button"
+                  onClick={requestOwnPwdReset}
+                  disabled={ownPwdSubmitting}
+                  className="text-xs font-bold text-orange-500 hover:text-orange-600 active:scale-[0.97] transition-all disabled:opacity-50"
+                >
+                  Забыли пароль?
+                </button>
+              )}
+              {ownPwdResetState === 'submitting' && (
+                <span className="text-xs font-bold text-zinc-400">Отправляем…</span>
+              )}
+            </div>
             <input
               type={ownPwdShow ? 'text' : 'password'}
               value={ownPwdForm.oldPassword}
@@ -1050,6 +1143,26 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
               autoComplete="current-password"
               required
             />
+            {/* Inline-фидбек по состоянию TG-сброса — внутри модалки, чтобы
+                не открывать ещё одну поверх и не ломать фокус. */}
+            {ownPwdResetState === 'sent' && (
+              <div className="mt-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-700 font-medium leading-snug">
+                Если у этого аккаунта подключён Telegram-бот, мы прислали туда
+                ссылку для сброса пароля. Она действует 30 минут.
+              </div>
+            )}
+            {ownPwdResetState === 'no_channel' && (
+              <div className="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[12px] text-amber-800 font-medium leading-snug">
+                Telegram-бот не подключён к вашему аккаунту — ссылку отправить
+                некуда. Подключите бота через профиль или напишите в поддержку,
+                чтобы сбросить пароль вручную.
+              </div>
+            )}
+            {ownPwdResetState === 'error' && ownPwdResetError && (
+              <div className="mt-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700 font-medium leading-snug">
+                {ownPwdResetError}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-sm font-bold text-zinc-700 mb-1.5">Новый пароль</label>
@@ -1087,7 +1200,11 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
           <div className="flex gap-3 pt-2">
             <button
               type="button"
-              onClick={() => setShowOwnPwdModal(false)}
+              onClick={() => {
+                setShowOwnPwdModal(false);
+                setOwnPwdResetState('idle');
+                setOwnPwdResetError('');
+              }}
               disabled={ownPwdSubmitting}
               className="flex-1 px-4 py-3 border border-zinc-200 text-zinc-700 rounded-xl font-bold active:scale-[0.97] transition-all disabled:opacity-50"
             >

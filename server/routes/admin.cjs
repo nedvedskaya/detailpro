@@ -418,16 +418,10 @@ router.delete('/users/:id', async (req, res, next) => {
 // ══════════════════════════════════════════════════════════════════════
 router.get('/analytics', async (req, res, next) => {
   try {
-    // 1. Гейтим по тарифу.
-    const plan = await fetchStudioPlan(req.session.studioId);
-    if (plan !== 'studio') {
-      return res.status(402).json({
-        error: 'plan_required',
-        plan,
-        requiredPlan: 'studio',
-        message: 'Аналитика доступна на тарифе «Студия». Повысьте тариф в Профиле.',
-      });
-    }
+    // Аналитика отдаётся всем тарифам (trial / solo / studio). Раньше
+    // здесь стоял 402 plan_required для не-Studio — это было маркетинговым
+    // гейтом, такая же история, как с напоминаниями бота: в продукте
+    // фича доступна всем, на лендинге выделяем как «у Студии».
 
     // 2. Период: 3m | 6m | year (12 мес). По умолчанию 6m.
     // Whitelist через assertEnum: раньше любое значение `period` молча

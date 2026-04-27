@@ -222,17 +222,22 @@ export const ClientsView = ({
             description={search ? 'Попробуйте изменить параметры поиска' : 'Нажмите + чтобы добавить первого клиента'}
           />
         ) : (
-          sortedItems.map(client => (
-            <ClientListCard
-              key={client.id}
-              client={client}
-              onOpen={() => onOpenClient(client)}
-              // master не имеет права редактировать/удалять — передаём undefined,
-              // ClientListCard в этом случае не рендерит swipe-actions/контекстное меню.
-              onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
-              onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
-            />
-          ))
+          // На мобиле — вертикальный список (space-y-3 от родителя), на ≥1024px
+          // .desktop-grid-2 включает grid с 2-3 колонками. space-y-3 на этом
+          // же контейнере используется для вертикальных промежутков на мобиле.
+          <div className="space-y-3 desktop-grid-2">
+            {sortedItems.map(client => (
+              <ClientListCard
+                key={client.id}
+                client={client}
+                onOpen={() => onOpenClient(client)}
+                // master не имеет права редактировать/удалять — передаём undefined,
+                // ClientListCard в этом случае не рендерит swipe-actions/контекстное меню.
+                onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
+                onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>
