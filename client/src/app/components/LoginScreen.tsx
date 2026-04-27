@@ -16,7 +16,9 @@
 
 import { useState, useEffect } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { api, ApiError } from '@/utils/api';
+import { api } from '@/utils/api';
+import { translateApiError } from '@/utils/errorMessages';
+import { isValidEmail, PASSWORD_MIN_LENGTH } from '@/utils/validation';
 import type { Studio } from '@/utils/types';
 
 interface LoginScreenProps {
@@ -36,13 +38,87 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
   const [studioName, setStudioName] = useState('');
   const [consentPersonalData, setConsentPersonalData] = useState(false);
   const [consentTerms, setConsentTerms] = useState(false);
-  const [consentMarketing, setConsentMarketing] = useState(false);
+  // Маркетинговое согласие убрано: рассылок мы не делаем, чекбокс был
+  // лишним шумом в форме регистрации (по запросу пользователя 2026-04-27).
 
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+
+  // Модалка «Забыли пароль?» — отдельное состояние, чтобы не путать с
+  // ошибками логина. resetState — это шаги мини-flow:
+  //   'idle'        — закрыта
+  //   'form'        — открыта форма с email
+  //   'submitting'  — отправляем запрос
+  //   'sent'        — показали «проверьте Telegram»
+  //   'no_channel'  — у юзера нет TG, направляем в поддержку
+  const [resetState, setResetState] = useState<'idle' | 'form' | 'submitting' | 'sent' | 'no_channel'>('idle');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetError, setResetError] = useState('');
+
+  // TG-токен из ?tg=<token> (сохранён в localStorage в main.tsx). Бот →
+  // сайт: бейдж «Telegram @username будет подключён» над формой signup.
+  // tgUsername=null если токен валиден, но у TG-юзера нет username.
+  const [tgUsername, setTgUsername] = useState<string | null>(null);
+  const [tgTokenValid, setTgTokenValid] = useState<boolean>(false);
+
+  useEffect(() => {
+    const stored = (() => {
+      try { return localStorage.getItem('ugt_tg_signup_token'); } catch (_) { return null; }
+    })();
+    if (!stored) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.getTgSignupToken(stored);
+        if (cancelled) return;
+        if (r.valid) {
+          setTgTokenValid(true);
+          setTgUsername(r.tg_username);
+          // Если токен валиден — переключаем форму на signup (человек пришёл
+          // из бота специально создать аккаунт, нет смысла показывать «Войти»).
+          setMode('signup');
+        } else {
+          // Токен протух / уже потрачен — чистим, чтобы не пытаться слать его
+          // на signup и не получать 409.
+          try { localStorage.removeItem('ugt_tg_signup_token'); } catch (_) { /* */ }
+        }
+      } catch (_) { /* network error — молча, показывать форму без бейджа ок */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const openResetForm = () => {
+    setResetState('form');
+    setResetEmail(email);   // префилл текущего значения
+    setResetError('');
+  };
+
+  const submitReset = async () => {
+    setResetError('');
+    const e = resetEmail.trim();
+    if (!e || !isValidEmail(e)) {
+      setResetError('Введите корректный email');
+      return;
+    }
+    setResetState('submitting');
+    try {
+      const r = await api.requestPasswordReset(e);
+      if (r.delivery === 'no_channel') setResetState('no_channel');
+      else setResetState('sent');
+    } catch (err: any) {
+      // Один частный случай — 429 (слишком часто). Остальное молча в sent,
+      // чтобы не выдавать существование email.
+      if (err?.status === 429) {
+        setResetError('Слишком много попыток. Попробуйте через 15 минут.');
+        setResetState('form');
+      } else {
+        setResetState('sent');
+      }
+    }
+  };
 
   useEffect(() => {
     // Сохранённый email/«запомнить меня» — только UI-удобство, не auth.
@@ -53,8 +129,6 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
     // На всякий случай: старые версии могли положить пароль — снести.
     localStorage.removeItem('ugt_saved_pass');
   }, []);
-
-  const validateEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
   const persistRememberMe = () => {
     if (rememberMe) {
@@ -68,8 +142,10 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
   const handleLogin = async () => {
     if (!email.trim()) return setError('Введите email');
-    if (!validateEmail(email)) return setError('Введите корректный email');
+    if (!isValidEmail(email)) return setError('Введите корректный email');
     if (!password) return setError('Введите пароль');
+    // Для login используем минимальную проверку — фактическую длину
+    // решает бэк. Это просто защита от отправки пустого поля.
     if (password.length < 6) return setError('Пароль должен быть не менее 6 символов');
 
     setIsLoading(true);
@@ -78,8 +154,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
       persistRememberMe();
       onLogin(res);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : 'Ошибка соединения с сервером';
-      setError(msg);
+      setError(translateApiError(err));
     } finally {
       setIsLoading(false);
     }
@@ -89,9 +164,9 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
     if (!studioName.trim()) return setError('Введите название студии');
     if (!firstName.trim()) return setError('Введите ваше имя');
     if (!email.trim()) return setError('Введите email');
-    if (!validateEmail(email)) return setError('Введите корректный email');
-    if (!password || password.length < 8) {
-      return setError('Пароль должен быть не менее 8 символов');
+    if (!isValidEmail(email)) return setError('Введите корректный email');
+    if (!password || password.length < PASSWORD_MIN_LENGTH) {
+      return setError(`Пароль должен быть не менее ${PASSWORD_MIN_LENGTH} символов`);
     }
     if (!consentPersonalData) {
       return setError('Без согласия на обработку персональных данных регистрация невозможна');
@@ -102,6 +177,21 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
     setIsLoading(true);
     try {
+      // Реферальный код, если пользователь пришёл по ?ref=… (сохранили в main.tsx).
+      // Чистим из localStorage сразу после signup — повторно не нужен.
+      let referralCode: string | undefined;
+      try {
+        const stored = localStorage.getItem('ugt_referral_code');
+        if (stored) referralCode = stored;
+      } catch (_) { /* noop */ }
+
+      // TG-токен из ?tg=… — сценарий «бот → сайт». Бэк линкует TG-аккаунт.
+      let tgSignupToken: string | undefined;
+      try {
+        const stored = localStorage.getItem('ugt_tg_signup_token');
+        if (stored) tgSignupToken = stored;
+      } catch (_) { /* noop */ }
+
       const res = await api.signup({
         studioName: studioName.trim(),
         email: email.trim(),
@@ -111,14 +201,16 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
         consents: {
           personal_data: consentPersonalData,
           terms: consentTerms,
-          marketing: consentMarketing,
         },
+        referralCode,
+        tgSignupToken,
       });
+      try { localStorage.removeItem('ugt_referral_code'); } catch (_) { /* noop */ }
+      try { localStorage.removeItem('ugt_tg_signup_token'); } catch (_) { /* noop */ }
       persistRememberMe();
       onLogin(res);
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : 'Ошибка соединения с сервером';
-      setError(msg);
+      setError(translateApiError(err));
     } finally {
       setIsLoading(false);
     }
@@ -148,8 +240,19 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 p-8">
           <div className="text-center mb-6">
-            <h1 className="text-2xl font-semibold text-zinc-900 tracking-tight mb-1">
-              ДЕТЕЙЛ ПРО CRM
+            {/* Заголовок: «Детейл Про» крупно, поверх — мини-бейдж CRM в оранжевой плашке.
+                Бейдж абсолютно позиционирован у правого верхнего угла буквы «о», чтобы
+                визуально «приклеиться» к названию, как индекс/«superscript». */}
+            <h1 className="relative inline-block text-3xl font-semibold text-zinc-900 tracking-tight mb-1">
+              Детейл&nbsp;Про
+              <span
+                aria-label="CRM"
+                className="absolute -top-2 -right-7 inline-flex items-center justify-center
+                           rounded-md bg-orange-500 px-1.5 py-0.5 text-[10px] font-bold
+                           tracking-wider text-white shadow-sm leading-none"
+              >
+                CRM
+              </span>
             </h1>
             <p className="text-sm text-zinc-500">
               {mode === 'login' ? 'Войдите в систему' : 'Регистрация студии'}
@@ -177,6 +280,22 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
               Регистрация
             </button>
           </div>
+
+          {/* Бейдж «Telegram будет подключён» — показываем при заходе с
+              ?tg=<token> от бота (сценарий «бот → сайт»). При успешном signup
+              бэк автоматически линкует TG к новому аккаунту и шлёт онбординг
+              в чат. */}
+          {mode === 'signup' && tgTokenValid && (
+            <div className="mb-4 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start gap-2.5">
+              <div className="mt-0.5 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[12px] font-bold shrink-0">✓</div>
+              <div className="text-[13px] text-emerald-800 font-medium leading-snug">
+                {tgUsername
+                  ? <>Telegram <span className="font-bold">@{tgUsername}</span> будет подключён к аккаунту автоматически — после регистрации напоминания и сброс пароля сразу заработают.</>
+                  : <>Telegram будет подключён к аккаунту автоматически — после регистрации напоминания и сброс пароля сразу заработают.</>
+                }
+              </div>
+            </div>
+          )}
 
           <div className="space-y-4 mb-4">
             {mode === 'signup' && (
@@ -252,6 +371,21 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
+
+            {/* Ссылка «Забыли пароль?» — только в режиме входа.
+                Восстановление идёт через привязанный TG-бот:
+                бэк генерит /reset?token=… и шлёт ссылку в TG. */}
+            {mode === 'login' && (
+              <div className="text-right">
+                <button
+                  type="button"
+                  onClick={openResetForm}
+                  className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2 transition-colors"
+                >
+                  Забыли пароль?
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Согласия — только при регистрации (ФЗ-152) */}
@@ -276,12 +410,6 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
                 <a href="/legal/terms" className="text-zinc-900 underline" target="_blank" rel="noreferrer">
                   условия использования
                 </a>
-              </Consent>
-              <Consent
-                checked={consentMarketing}
-                onToggle={() => setConsentMarketing((v) => !v)}
-              >
-                Согласен получать новости и обновления продукта на email (необязательно)
               </Consent>
             </div>
           )}
@@ -334,6 +462,89 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
             : 'После регистрации сразу попадёте в систему. 3 дня пробного периода.'}
         </p>
       </div>
+
+      {/* Модалка «Забыли пароль?» — рендерится поверх login-карточки. */}
+      {resetState !== 'idle' && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg p-6">
+            {resetState === 'form' || resetState === 'submitting' ? (
+              <>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-2">Восстановление пароля</h2>
+                <p className="text-sm text-zinc-500 mb-4">
+                  Введите email от вашего аккаунта. Если у вас подключён Telegram-бот,
+                  ссылку для смены пароля пришлём в Telegram.
+                </p>
+                <input
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => { setResetEmail(e.target.value); setResetError(''); }}
+                  placeholder="Email"
+                  disabled={resetState === 'submitting'}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-base text-zinc-900 placeholder:text-zinc-400 outline-none focus:border-zinc-900 focus:bg-white transition-all disabled:opacity-50"
+                  autoFocus
+                />
+                {resetError && <p className="text-sm text-red-500 mt-2">{resetError}</p>}
+                <div className="flex gap-3 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setResetState('idle')}
+                    disabled={resetState === 'submitting'}
+                    className="flex-1 py-3 text-sm font-medium rounded-xl border border-zinc-200 text-zinc-600 hover:bg-zinc-50 transition-colors disabled:opacity-50"
+                  >
+                    Отмена
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitReset}
+                    disabled={resetState === 'submitting'}
+                    className="flex-1 py-3 text-sm font-medium rounded-xl bg-zinc-900 text-white hover:bg-orange-600 transition-colors disabled:opacity-50"
+                  >
+                    {resetState === 'submitting' ? 'Отправляем…' : 'Прислать ссылку'}
+                  </button>
+                </div>
+              </>
+            ) : resetState === 'sent' ? (
+              <>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-2">Проверьте Telegram</h2>
+                <p className="text-sm text-zinc-600 mb-4">
+                  Если у этого аккаунта подключён Telegram-бот, мы прислали туда ссылку
+                  для сброса пароля. Она действует 30 минут.
+                </p>
+                <p className="text-xs text-zinc-400 mb-4">
+                  Не приходит сообщение? Возможно, бот не подключён к вашему аккаунту.
+                  В этом случае напишите в поддержку — мы поможем сбросить вручную.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setResetState('idle')}
+                  className="w-full py-3 text-sm font-medium rounded-xl bg-zinc-900 text-white hover:bg-orange-600 transition-colors"
+                >
+                  Понятно
+                </button>
+              </>
+            ) : resetState === 'no_channel' ? (
+              <>
+                <h2 className="text-xl font-semibold text-zinc-900 mb-2">Telegram не подключён</h2>
+                <p className="text-sm text-zinc-600 mb-4">
+                  У этого аккаунта нет подключённого Telegram-бота, поэтому мы не можем
+                  отправить ссылку для сброса автоматически.
+                </p>
+                <p className="text-sm text-zinc-600 mb-4">
+                  Напишите в поддержку — мы сбросим пароль вручную и отправим временный
+                  на этот же email.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setResetState('idle')}
+                  className="w-full py-3 text-sm font-medium rounded-xl bg-zinc-900 text-white hover:bg-orange-600 transition-colors"
+                >
+                  Понятно
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

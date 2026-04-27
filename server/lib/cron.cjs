@@ -25,6 +25,7 @@
 const { pool } = require('./db.cjs');
 const { cleanupExpiredSessions } = require('./auth.cjs');
 const reminders = require('./reminders.cjs');
+const cleanup = require('./cleanup.cjs');
 
 const ACTIVITY_RETENTION_DAYS = Number(process.env.ACTIVITY_RETENTION_DAYS) || 90;
 const CRON_INTERVAL_MS = Number(process.env.CRON_INTERVAL_MS) || 24 * 60 * 60 * 1000;
@@ -111,7 +112,11 @@ async function cleanupPaymentIntents() {
  */
 async function runOnce() {
   const startedAt = Date.now();
-  const result = { activityLogs: 0, sessions: 0, paymentIntents: 0, errors: [] };
+  const result = {
+    activityLogs: 0, sessions: 0, paymentIntents: 0,
+    studiosCleanup: null,
+    errors: [],
+  };
 
   try {
     result.activityLogs = await cleanupActivityLogs();
@@ -135,6 +140,16 @@ async function runOnce() {
   } catch (err) {
     console.error('[cron] cleanupPaymentIntents failed:', err.message);
     result.errors.push({ job: 'paymentIntents', message: err.message });
+  }
+
+  // Retention брошенных студий — warnings + delete. dryRun-флаг можно
+  // включить через ENV для прогона на проде без удалений (RETENTION_DRY_RUN=true).
+  try {
+    const dryRun = (process.env.RETENTION_DRY_RUN || '').toLowerCase() === 'true';
+    result.studiosCleanup = await cleanup.runCleanup({ dryRun });
+  } catch (err) {
+    console.error('[cron] studio retention cleanup failed:', err.message);
+    result.errors.push({ job: 'studioRetention', message: err.message });
   }
 
   console.log(`[cron] runOnce finished in ${Date.now() - startedAt}ms`);
