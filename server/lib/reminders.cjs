@@ -121,6 +121,7 @@ async function getBookingsForDate(schema, dateStr) {
             cr.service_name,
             cr.description AS notes,
             c.name  AS client_name,
+            c.phone AS client_phone,
             v.brand AS vehicle_brand,
             v.model AS vehicle_model,
             v.license_plate AS vehicle_plate
@@ -170,11 +171,16 @@ function formatBookingLine(b) {
   const carPart  = car ? `, ${tg.escapeHtml(car)}` : '';
   const platePart= b.vehicle_plate ? ` (${tg.escapeHtml(b.vehicle_plate)})` : '';
   const client   = b.client_name ? tg.escapeHtml(b.client_name) : 'без клиента';
+  // Телефон — отдельной строкой ниже, чтобы Telegram автоматически распарсил
+  // как ссылку tel: и сделал тапом-звонком (на одной строке с другим текстом
+  // он тоже распознаётся, но кликабельная зона у́же). Если телефона нет
+  // (старый клиент, миграция без phone) — строку не добавляем.
+  const phoneLine = b.client_phone ? `\n📞 ${tg.escapeHtml(b.client_phone)}` : '';
   // Услуга идёт через тот же разделитель «·», что и между временем и клиентом —
   // визуально единообразно, не нарушает правило «тире только по правилам
   // русского языка» (тире здесь было бы стилистическим разделителем).
   const service  = b.service_name ? ` · ${tg.escapeHtml(b.service_name)}` : '';
-  return `<b>${time}</b> · ${client}${carPart}${platePart}${service}`;
+  return `<b>${time}</b> · ${client}${carPart}${platePart}${service}${phoneLine}`;
 }
 
 // ──────────────────────────────────────────────────────────────────────
