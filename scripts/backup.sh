@@ -49,8 +49,18 @@ fi
 get_env_var() {
   # Извлекает значение KEY= из .env, обрезает inline-комментарий и
   # пробелы вокруг. Кавычки в значениях не поддерживаем (у нас их нет).
+  #
+  # Принципиально: если ключа нет — возвращаем "", не падаем. Скрипт
+  # работает под `set -euo pipefail`, и пустой grep + pipefail иначе
+  # роняет всю функцию.
   local key="$1"
-  grep -E "^${key}=" "$ENV_FILE" | head -1 \
+  local line
+  line="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | head -1 || true)"
+  if [ -z "$line" ]; then
+    echo ""
+    return 0
+  fi
+  printf '%s\n' "$line" \
     | cut -d= -f2- \
     | sed -E 's/[[:space:]]*#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//'
 }
