@@ -32,7 +32,8 @@ const adminRouter = require('./routes/admin.cjs');
 const documentsRouter = require('./routes/documents.cjs');
 
 const { requireAuth, requireActiveStudio } = require('./lib/middleware.cjs');
-const { trackErrorResponse } = require('./lib/security_log.cjs');
+const { trackErrorResponse, securityLog, SEVERITY } = require('./lib/security_log.cjs');
+const { FixedWindowLimiter } = require('./lib/rate_limit.cjs');
 
 const app = express();
 
@@ -156,6 +157,84 @@ app.use('/api/telegram', telegramRouter);
 // ──────────────────────────────────────────────────────────────────────
 // limit 2mb — клиентские аватары в base64 могут быть до ~1.5mb (как в исходном CRM).
 app.use(express.json({ limit: '2mb' }));
+
+// ──────────────────────────────────────────────────────────────────────
+// 2b. ГЛОБАЛЬНЫЙ API rate-limit на IP.
+//
+// Защищает от:
+//   - DoS-флуда: один IP не может задолбать произвольный /api/clients
+//     или /api/bookings 1000 запросами в секунду и положить сервер.
+//   - Случайных bug-loop'ов на клиенте: если фронт ушёл в бесконечный
+//     fetch-цикл — мы не сожжём БД, ему вернётся 429 и он поймёт.
+//
+// Применяется ПОСЛЕ:
+//   - webhook-роутов (Prodamus ретраит и ему нельзя 429)
+//   - /api/telegram (Telegram bot API — приходит с разных IP)
+//
+// Применяется ПЕРЕД любыми CRUD/auth-роутами.
+//
+// /api/health тоже под лимитом, но на проде health-check от мониторинга
+// один-два запроса в минуту — никогда не заденет лимит.
+//
+// Эндпоинт-специфичные лимитеры (login 5/15min, signup 5/час, reset
+// 3/15min) остаются — они **строже** этого глобального и срабатывают
+// раньше для своих роутов.
+//
+// Лимиты:
+//   200 req/min на IP — нормальный rich-CRM-юзер делает 30-60/мин при
+//     активной работе (открытие календаря + клиенты + переходы).
+//     200 — запас 3-4× от пика без захвата атаки.
+//   3000 req/час на IP — sustained-защита: 50 req/min × 60 = средняя
+//     активность, не больше.
+//
+// Конфиг через env: API_RATE_PER_MIN / API_RATE_PER_HOUR.
+// Чтобы быстро поднять при росте без рестартов — можно прокинуть
+// в systemd EnvironmentFile.
+// ──────────────────────────────────────────────────────────────────────
+const API_RATE_PER_MIN = Number(process.env.API_RATE_PER_MIN) || 200;
+const API_RATE_PER_HOUR = Number(process.env.API_RATE_PER_HOUR) || 3000;
+
+const apiByIpMinute = new FixedWindowLimiter({
+  name: 'api.ip.minute',
+  max: API_RATE_PER_MIN,
+  windowMs: 60 * 1000,
+  blockMs: 60 * 1000,
+});
+const apiByIpHour = new FixedWindowLimiter({
+  name: 'api.ip.hour',
+  max: API_RATE_PER_HOUR,
+  windowMs: 60 * 60 * 1000,
+  blockMs: 60 * 60 * 1000,
+});
+
+app.use('/api', (req, res, next) => {
+  const ip = req.ip;
+  if (!ip) return next();
+
+  // Двойной слой: короткое окно ловит burst, длинное — sustained-flooding.
+  // .hit() атомарно увеличивает счётчик и возвращает false при превышении.
+  const minOk = apiByIpMinute.hit(ip);
+  const hourOk = apiByIpHour.hit(ip);
+  if (minOk && hourOk) return next();
+
+  // Логируем, но без спама — security_log уже умеет dedup через
+  // ip.burst (50 4xx в 5min). Здесь добавим более точечный сигнал.
+  securityLog({
+    event: 'api.rate_limit_block',
+    severity: SEVERITY.WARN,
+    ip,
+    route: req.method + ' ' + req.originalUrl,
+    meta: {
+      minute_exceeded: !minOk,
+      hour_exceeded: !hourOk,
+    },
+  });
+
+  return res.status(429).json({
+    error: 'too_many_requests',
+    retry_after_sec: minOk ? 3600 : 60,
+  });
+});
 
 // ──────────────────────────────────────────────────────────────────────
 // 3. Health check
