@@ -41,7 +41,14 @@ const sharp = require('sharp');
 const { pool, queryInSchema } = require('../lib/db.cjs');
 const { requireRole } = require('../lib/middleware.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
-const { parseId, assertPngBase64, handleFieldError } = require('../lib/validation.cjs');
+const {
+  parseId,
+  assertString,
+  assertOptionalString,
+  assertEnum,
+  assertPngBase64,
+  handleFieldError,
+} = require('../lib/validation.cjs');
 const { streamWorkOrderPdf } = require('../lib/pdf/workOrder.cjs');
 const { streamAcceptanceActPdf } = require('../lib/pdf/acceptanceAct.cjs');
 
@@ -272,30 +279,71 @@ async function backfillClientAndVehicle(schemaName, bookingId, ctx, clientSnap, 
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// JSONB-схемы для work_orders / acceptance_acts.
+//
+// Зачем строгая валидация: в БД эти поля — jsonb, Postgres хранит что
+// угодно. PDF-рендер на стороне сервера (lib/pdf/workOrder.cjs,
+// acceptanceAct.cjs) ожидает строго определённый shape. Раньше
+// валидаторы пропускали:
+//   - длинные name (1MB строка → разваливалась вёрстка таблицы)
+//   - неограниченный price (Number.MAX_VALUE → ломалось форматирование
+//     `${price} ₽`)
+//   - unknown keys в snapshot'ах (пробрасывались в JSONB и ели место)
+//
+// Schema-контракт зафиксирован под то, что реально читает PDF (см.
+// server/lib/pdf/workOrder.cjs:104-129 — items.{name,quantity,price}).
+// Добавление полей PDF → расширение схемы здесь.
+// ──────────────────────────────────────────────────────────────────────
+
+const ITEM_NAME_MAX_LEN = 200;          // 200 хватит на самое длинное название услуги
+const ITEM_QUANTITY_MAX = 99999;
+const ITEM_PRICE_MAX_RUB = 999_999_999; // ₽ — миллиард рублей с запасом
+const MAX_ITEMS_PER_DOC = 100;
+const MAX_ZONES_PER_DOC = 100;
+const ZONE_NAME_MAX_LEN = 100;
+
+const SNAPSHOT_NAME_MAX = 200;
+const SNAPSHOT_PHONE_MAX = 40;
+const SNAPSHOT_EMAIL_MAX = 254;
+const SNAPSHOT_VEHICLE_FIELD_MAX = 100;
+const SNAPSHOT_PLATE_MAX = 20;
+const SNAPSHOT_VIN_MAX = 20;
+const SNAPSHOT_COLOR_MAX = 50;
+
+// Helper: строит FIELD_INVALID с конкретным путём вида `items[2].quantity`.
+function fieldInvalid(path, reason) {
+  const e = new Error(`field_invalid:${path}:${reason}`);
+  e.code = 'FIELD_INVALID';
+  e.field = path;
+  e.reason = reason;
+  return e;
+}
+
 function sanitizeClientSnapshot(s) {
-  if (!s || typeof s !== 'object') return {};
-  const pick = (k) => (typeof s[k] === 'string' ? s[k].trim() : '') || null;
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
   return {
-    name:  pick('name'),
-    phone: pick('phone'),
-    email: pick('email'),
+    name:  assertOptionalString(s.name,  'client_snapshot.name',  SNAPSHOT_NAME_MAX),
+    phone: assertOptionalString(s.phone, 'client_snapshot.phone', SNAPSHOT_PHONE_MAX),
+    email: assertOptionalString(s.email, 'client_snapshot.email', SNAPSHOT_EMAIL_MAX),
   };
 }
 
 function sanitizeVehicleSnapshot(s) {
-  if (!s || typeof s !== 'object') return {};
-  const pickStr = (k) => (typeof s[k] === 'string' ? s[k].trim() : '') || null;
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
   let year = null;
   if (s.year != null && s.year !== '') {
     const n = parseInt(s.year, 10);
     if (Number.isFinite(n) && n >= 1900 && n <= 2100) year = n;
+    // Если пришёл невалидный год — молча отбрасываем (UI часто шлёт пустую
+    // строку). Не кидаем FIELD_INVALID — это терпимое поле.
   }
   return {
-    brand:         pickStr('brand'),
-    model:         pickStr('model'),
-    color:         pickStr('color'),
-    license_plate: pickStr('license_plate'),
-    vin:           pickStr('vin'),
+    brand:         assertOptionalString(s.brand,         'vehicle_snapshot.brand',         SNAPSHOT_VEHICLE_FIELD_MAX),
+    model:         assertOptionalString(s.model,         'vehicle_snapshot.model',         SNAPSHOT_VEHICLE_FIELD_MAX),
+    color:         assertOptionalString(s.color,         'vehicle_snapshot.color',         SNAPSHOT_COLOR_MAX),
+    license_plate: assertOptionalString(s.license_plate, 'vehicle_snapshot.license_plate', SNAPSHOT_PLATE_MAX),
+    vin:           assertOptionalString(s.vin,           'vehicle_snapshot.vin',           SNAPSHOT_VIN_MAX),
     year,
   };
 }
@@ -328,57 +376,75 @@ function validateSignature(sig) {
   return sig;
 }
 
+/**
+ * Items в work_orders. Контракт ровно тот, что читает PDF:
+ *   { name: string (1..200), quantity: number (0..99999), price: number (0..1B ₽) }
+ * Все остальные ключи — выбрасываем (защита от мутаций структуры через
+ * непроверенные поля в JSONB).
+ *
+ * Throw'ит FIELD_INVALID — handleFieldError в роуте даст 400 с
+ * { field: 'items[N].quantity', reason: 'must_be_0_to_99999' }.
+ */
 function validateItems(items) {
   if (items === null || items === undefined) return [];
-  if (!Array.isArray(items)) {
-    const e = new Error('items_must_be_array'); e.status = 400; throw e;
+  if (!Array.isArray(items)) throw fieldInvalid('items', 'must_be_array');
+  if (items.length > MAX_ITEMS_PER_DOC) {
+    throw fieldInvalid('items', `max_items_${MAX_ITEMS_PER_DOC}`);
   }
-  if (items.length > 100) {
-    const e = new Error('too_many_items'); e.status = 400; throw e;
-  }
+
   return items.map((it, i) => {
-    if (!it || typeof it !== 'object') {
-      const e = new Error(`item_${i}_invalid`); e.status = 400; throw e;
+    if (!it || typeof it !== 'object' || Array.isArray(it)) {
+      throw fieldInvalid(`items[${i}]`, 'must_be_object');
     }
-    const name = typeof it.name === 'string' ? it.name.trim() : '';
-    if (!name) {
-      const e = new Error(`item_${i}_name_required`); e.status = 400; throw e;
-    }
+
+    // name: строка 1..200. assertString trim'ит и кидает FIELD_INVALID
+    // с правильным path-полем.
+    const name = assertString(it.name, `items[${i}].name`, ITEM_NAME_MAX_LEN);
+
+    // quantity: число 0..99999. Принимаем строки '5' тоже (UI часто шлёт
+    // строкой из <input type="number">), Number() их сконвертит. NaN отлавливаем.
     const quantity = Number(it.quantity);
-    const price    = Number(it.price);
-    if (!Number.isFinite(quantity) || quantity < 0 || quantity > 99999) {
-      const e = new Error(`item_${i}_quantity_invalid`); e.status = 400; throw e;
+    if (!Number.isFinite(quantity) || quantity < 0 || quantity > ITEM_QUANTITY_MAX) {
+      throw fieldInvalid(`items[${i}].quantity`, `must_be_0_to_${ITEM_QUANTITY_MAX}`);
     }
-    if (!Number.isFinite(price) || price < 0) {
-      const e = new Error(`item_${i}_price_invalid`); e.status = 400; throw e;
+
+    // price: 0..1_000_000_000 ₽. Верхняя граница не для бизнеса (миллиард ₽
+    // в наряде нереален), а для защиты от Number.MAX_VALUE / Infinity,
+    // которые ломают форматирование `${price} ₽` в PDF.
+    const price = Number(it.price);
+    if (!Number.isFinite(price) || price < 0 || price > ITEM_PRICE_MAX_RUB) {
+      throw fieldInvalid(`items[${i}].price`, `must_be_0_to_${ITEM_PRICE_MAX_RUB}`);
     }
+
+    // Возвращаем РОВНО три поля. Любые extras (description, _internal,
+    // attempt-injection) выкидываются → JSONB не растёт мусором.
     return { name, quantity, price };
   });
 }
 
+/**
+ * Zones в acceptance_acts. PDF использует zone_name + scratches/dents +
+ * condition. Прочее — отбрасываем.
+ */
 function validateZones(zones) {
   if (zones === null || zones === undefined) return [];
-  if (!Array.isArray(zones)) {
-    const e = new Error('zones_must_be_array'); e.status = 400; throw e;
+  if (!Array.isArray(zones)) throw fieldInvalid('zones', 'must_be_array');
+  if (zones.length > MAX_ZONES_PER_DOC) {
+    throw fieldInvalid('zones', `max_items_${MAX_ZONES_PER_DOC}`);
   }
-  if (zones.length > 100) {
-    const e = new Error('too_many_zones'); e.status = 400; throw e;
-  }
+
+  const allowedConditions = ['ok', 'minor', 'damaged'];
   return zones.map((z, i) => {
-    if (!z || typeof z !== 'object') {
-      const e = new Error(`zone_${i}_invalid`); e.status = 400; throw e;
+    if (!z || typeof z !== 'object' || Array.isArray(z)) {
+      throw fieldInvalid(`zones[${i}]`, 'must_be_object');
     }
-    const name = typeof z.zone_name === 'string' ? z.zone_name.trim() : '';
-    if (!name) {
-      const e = new Error(`zone_${i}_name_required`); e.status = 400; throw e;
-    }
-    const condition = z.condition || 'ok';
-    if (!VALID_CONDITIONS.has(condition)) {
-      const e = new Error(`zone_${i}_condition_invalid`); e.status = 400; throw e;
-    }
+    const zone_name = assertString(z.zone_name, `zones[${i}].zone_name`, ZONE_NAME_MAX_LEN);
+    const condition = z.condition === undefined || z.condition === null || z.condition === ''
+      ? 'ok'
+      : assertEnum(z.condition, `zones[${i}].condition`, allowedConditions);
     return {
-      zone_name: name,
-      scratches: !!z.scratches,
+      zone_name,
+      scratches: !!z.scratches,   // приводим к boolean — truthy любого типа
       dents:     !!z.dents,
       condition,
     };
@@ -516,6 +582,12 @@ router.put('/work-orders/:bookingId', canWrite, async (req, res, next) => {
 
     res.json(r.rows[0]);
   } catch (err) {
+    // Новые валидаторы (validateItems/validateZones/sanitize*) кидают
+    // FIELD_INVALID с .field и .reason — отдаём структурированный 400,
+    // фронт через translateApiError построит «Поле X строка N: причина».
+    if (handleFieldError(err, res)) return;
+    // Legacy-ветка для validateSignature и других мест, где ещё используется
+    // err.status = 400 + err.message — постепенно переводим на FIELD_INVALID.
     if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }

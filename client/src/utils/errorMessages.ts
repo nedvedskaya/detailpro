@@ -98,6 +98,7 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
  *   3. Иначе возвращаем fallback.
  */
 // Человеческие имена полей для сообщений field_invalid.
+// Ключи синхронизированы с тем, что бэк передаёт в `err.field`.
 const FIELD_LABELS: Record<string, string> = {
   name: 'имя',
   firstName: 'имя',
@@ -112,7 +113,46 @@ const FIELD_LABELS: Record<string, string> = {
   limit: 'количество',
   offset: 'смещение',
   period: 'период',
+  // Поля внутри items / zones / snapshot — раскрываются ниже через explainPath
+  items: 'строки документа',
+  zones: 'зоны осмотра',
+  zone_name: 'название зоны',
+  quantity: 'количество',
+  price: 'стоимость',
+  condition: 'состояние',
 };
+
+/**
+ * Раскрывает путь вида `items[2].quantity` в человечески читаемое
+ * «строка 3, количество». Если путь простой (например `notes`) —
+ * возвращает label из FIELD_LABELS или сам путь.
+ */
+function explainPath(path: string): string {
+  // items[N].field → «строка N+1, <field>»
+  const itemMatch = path.match(/^items\[(\d+)\]\.(.+)$/);
+  if (itemMatch) {
+    const rowNum = Number(itemMatch[1]) + 1;
+    const sub = FIELD_LABELS[itemMatch[2]] || itemMatch[2];
+    return `строка ${rowNum} — ${sub}`;
+  }
+  // items[N] (без поля) — сам объект
+  const itemRowMatch = path.match(/^items\[(\d+)\]$/);
+  if (itemRowMatch) return `строка ${Number(itemRowMatch[1]) + 1}`;
+  // zones[N].field
+  const zoneMatch = path.match(/^zones\[(\d+)\]\.(.+)$/);
+  if (zoneMatch) {
+    const zoneNum = Number(zoneMatch[1]) + 1;
+    const sub = FIELD_LABELS[zoneMatch[2]] || zoneMatch[2];
+    return `зона ${zoneNum} — ${sub}`;
+  }
+  const zoneRowMatch = path.match(/^zones\[(\d+)\]$/);
+  if (zoneRowMatch) return `зона ${Number(zoneRowMatch[1]) + 1}`;
+  // snapshot.field — пропускаем префикс
+  const snapMatch = path.match(/^(client_snapshot|vehicle_snapshot)\.(.+)$/);
+  if (snapMatch) return FIELD_LABELS[snapMatch[2]] || snapMatch[2];
+  // Простое поле
+  return FIELD_LABELS[path] || path;
+}
 
 // Reason → читаемое объяснение. Reason приходит вида `max_5000`, `must_be_string`,
 // `item_2_must_be_string` (для массивов с индексом).
@@ -149,7 +189,7 @@ export function translateApiError(err: unknown, fallback = 'Ошибка сое�
   // field_invalid: ApiError с .field и .reason. Строим осмысленное «Поле X — Y».
   if (err instanceof ApiError && (err.code === 'field_invalid' || err.message === 'field_invalid')) {
     if (err.field && err.reason) {
-      const label = FIELD_LABELS[err.field] || err.field;
+      const label = explainPath(err.field);
       return `Поле «${label}»: ${explainReason(err.reason)}`;
     }
   }
