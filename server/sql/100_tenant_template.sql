@@ -374,61 +374,48 @@ CREATE INDEX IF NOT EXISTS idx_activity_logs_entity  ON {{schema}}.activity_logs
 -- Идемпотентно: DROP TRIGGER IF EXISTS перед CREATE.
 -- ──────────────────────────────────────────────────────────────────────
 
--- bookings.master_id
-DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.bookings;
-CREATE TRIGGER check_master_id_in_studio
-  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.bookings
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
-
--- tasks.assigned_to
-DROP TRIGGER IF EXISTS check_assigned_to_in_studio ON {{schema}}.tasks;
-CREATE TRIGGER check_assigned_to_in_studio
-  BEFORE INSERT OR UPDATE OF assigned_to ON {{schema}}.tasks
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('assigned_to');
-
--- client_records.master_id
-DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.client_records;
-CREATE TRIGGER check_master_id_in_studio
-  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.client_records
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
-
--- transactions.created_by — заполняется из req.session.userId, так что
--- значения всегда корректны на app-уровне. Триггер — страховка.
-DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.transactions;
-CREATE TRIGGER check_created_by_in_studio
-  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.transactions
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
-
--- work_orders: master_id + created_by
-DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.work_orders;
-CREATE TRIGGER check_master_id_in_studio
-  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.work_orders
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
-
-DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.work_orders;
-CREATE TRIGGER check_created_by_in_studio
-  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.work_orders
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
-
--- acceptance_acts: master_id + created_by
-DROP TRIGGER IF EXISTS check_master_id_in_studio ON {{schema}}.acceptance_acts;
-CREATE TRIGGER check_master_id_in_studio
-  BEFORE INSERT OR UPDATE OF master_id ON {{schema}}.acceptance_acts
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('master_id');
-
-DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.acceptance_acts;
-CREATE TRIGGER check_created_by_in_studio
-  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.acceptance_acts
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
-
--- order_photos.created_by
-DROP TRIGGER IF EXISTS check_created_by_in_studio ON {{schema}}.order_photos;
-CREATE TRIGGER check_created_by_in_studio
-  BEFORE INSERT OR UPDATE OF created_by ON {{schema}}.order_photos
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('created_by');
-
--- activity_logs.user_id — лог не должен содержать ссылок на чужих юзеров.
-DROP TRIGGER IF EXISTS check_user_id_in_studio ON {{schema}}.activity_logs;
-CREATE TRIGGER check_user_id_in_studio
-  BEFORE INSERT OR UPDATE OF user_id ON {{schema}}.activity_logs
-  FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio('user_id');
+-- Список (table → колонки-FK на saas_meta.users) лежит ОДИН раз в JSONB.
+-- При добавлении новой колонки достаточно вписать строку в spec — DO-блок
+-- сам построит DROP IF EXISTS + CREATE TRIGGER. Раньше каждый триггер был
+-- 3-строчной копипастой на 9 таблиц = 27 строк boilerplate'а, которые надо
+-- было править параллельно при любом изменении.
+--
+-- Имя триггера фиксированное `check_<col>_in_studio` — то же что было до
+-- рефакторинга, чтобы DROP IF EXISTS снёс старые триггеры без residue.
+--
+-- Безопасность: имена столбцов — литералы из этого файла, не user-input.
+-- {{schema}} уже к этому моменту заменён в app-коде через safeIdent
+-- (см. server/lib/db.cjs:queryInSchema), на месте подстановки —
+-- валидный quoted-identifier вида "studio_xxx".
+DO $cross_tenant_triggers$
+DECLARE
+  spec JSONB := '{
+    "bookings":         ["master_id"],
+    "tasks":            ["assigned_to"],
+    "client_records":   ["master_id"],
+    "transactions":     ["created_by"],
+    "work_orders":      ["master_id", "created_by"],
+    "acceptance_acts":  ["master_id", "created_by"],
+    "order_photos":     ["created_by"],
+    "activity_logs":    ["user_id"]
+  }';
+  tbl  TEXT;
+  cols JSONB;
+  col  TEXT;
+BEGIN
+  FOR tbl, cols IN SELECT key, value FROM jsonb_each(spec) LOOP
+    FOR col IN SELECT jsonb_array_elements_text(cols) LOOP
+      EXECUTE format(
+        'DROP TRIGGER IF EXISTS check_%I_in_studio ON {{schema}}.%I',
+        col, tbl
+      );
+      EXECUTE format(
+        'CREATE TRIGGER check_%I_in_studio
+           BEFORE INSERT OR UPDATE OF %I ON {{schema}}.%I
+           FOR EACH ROW EXECUTE FUNCTION saas_meta.check_user_belongs_to_studio(%L)',
+        col, col, tbl, col
+      );
+    END LOOP;
+  END LOOP;
+END
+$cross_tenant_triggers$;

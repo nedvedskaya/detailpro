@@ -37,10 +37,10 @@
  */
 
 const express = require('express');
-const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
 const tg = require('../lib/telegram.cjs');
 const { securityLog, SEVERITY } = require('../lib/security_log.cjs');
+const { verifySignatureProdamus } = require('../lib/webhook_signing.cjs');
 
 const router = express.Router();
 
@@ -217,58 +217,9 @@ function parseBody(buf, contentType) {
   return parseUrlencoded(str);
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// Алгоритм подписи Продамуса (port из их PHP Hmac::create).
-//
-// Рекурсивно сортируем ключи объекта. Для массивов сортировки нет — порядок
-// сохраняется как пришёл. На листьях — приводим к строке (Продамус делает то же
-// в JSON-сериализации).
-// ──────────────────────────────────────────────────────────────────────
-function deepSort(value) {
-  if (Array.isArray(value)) {
-    return value.map(deepSort);
-  }
-  if (value && typeof value === 'object') {
-    const keys = Object.keys(value).sort();
-    const out = {};
-    for (const k of keys) out[k] = deepSort(value[k]);
-    return out;
-  }
-  return value;
-}
-
-function prodamusHmac(payload, secret) {
-  // 1. Убираем подпись (на случай если она лежит в теле)
-  const cleaned = { ...payload };
-  delete cleaned.signature;
-  delete cleaned.sign;
-
-  // 2. Рекурсивная сортировка ключей
-  const sorted = deepSort(cleaned);
-
-  // 3. JSON.stringify. JS по-умолчанию НЕ escape-ит юникод и слеши — это и есть
-  //    эквивалент JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES в PHP.
-  const json = JSON.stringify(sorted);
-
-  // 4. HMAC-SHA256 в hex
-  return crypto.createHmac('sha256', secret).update(json, 'utf8').digest('hex');
-}
-
-function verifySignatureProdamus(payload, headerSign, secret) {
-  if (!secret) return false;
-  if (typeof headerSign !== 'string' || !headerSign) return false;
-
-  const expected = prodamusHmac(payload, secret);
-  if (expected.length !== headerSign.length) return false;
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, 'utf8'),
-      Buffer.from(headerSign, 'utf8'),
-    );
-  } catch (_) {
-    return false;
-  }
-}
+// HMAC и алгоритм подписи Продамуса (port из их PHP Hmac::create) живут
+// в server/lib/webhook_signing.cjs — вынесли туда чтобы было удобно
+// тестировать в изоляции и расширять при появлении других провайдеров.
 
 // ──────────────────────────────────────────────────────────────────────
 // Маппинг статусов Продамуса → нашему enum в payments.status

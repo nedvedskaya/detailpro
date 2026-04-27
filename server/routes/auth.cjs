@@ -24,7 +24,8 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
-const { pool } = require('../lib/db.cjs');
+const { pool, withTx } = require('../lib/db.cjs');
+const { consumeOneTimeToken, OneTimeTokenError } = require('../lib/one_time_token.cjs');
 const {
   verifyPassword,
   hashPassword,
@@ -106,28 +107,27 @@ function clientIp(req) {
   return req.ip || req.socket?.remoteAddress || null;
 }
 
-function setSessionCookie(res, token, expiresAt) {
+// Базовые опции session-cookie. Меняются ТОЛЬКО здесь — иначе set/clear
+// разойдутся (clearCookie не сработает если domain/path/sameSite/secure
+// отличаются от того, чем cookie ставился).
+function sessionCookieOpts() {
   const opts = {
     httpOnly: true,
     sameSite: 'lax',
     secure: SESSION_COOKIE_SECURE,
-    expires: expiresAt,
     path: '/',
   };
   if (SESSION_COOKIE_DOMAIN) opts.domain = SESSION_COOKIE_DOMAIN;
-  res.cookie(SESSION_COOKIE_NAME, token, opts);
+  return opts;
+}
+
+function setSessionCookie(res, token, expiresAt) {
+  res.cookie(SESSION_COOKIE_NAME, token, { ...sessionCookieOpts(), expires: expiresAt });
 }
 
 function clearSessionCookie(res) {
-  const opts = {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: SESSION_COOKIE_SECURE,
-    path: '/',
-    expires: new Date(0),
-  };
-  if (SESSION_COOKIE_DOMAIN) opts.domain = SESSION_COOKIE_DOMAIN;
-  res.clearCookie(SESSION_COOKIE_NAME, opts);
+  // expires: epoch — заставляет браузер удалить cookie сразу
+  res.clearCookie(SESSION_COOKIE_NAME, { ...sessionCookieOpts(), expires: new Date(0) });
 }
 
 async function recordConsent(client, { userId, email, types, policyVersion, policyUrl, ip, userAgent }) {
@@ -772,7 +772,6 @@ router.post('/password-reset/request', async (req, res, next) => {
 // сессию для текущего клиента.
 // ──────────────────────────────────────────────────────────────────────
 router.post('/password-reset/confirm', async (req, res, next) => {
-  const client = await pool.connect();
   try {
     const { token, newPassword } = req.body || {};
     if (typeof token !== 'string' || !token) {
@@ -788,54 +787,42 @@ router.post('/password-reset/confirm', async (req, res, next) => {
       return res.status(400).json({ error: err.message });
     }
 
-    await client.query('BEGIN');
+    // Транзакция: проверка токена + смена пароля + consume + чтение user-row
+    // под одной блокировкой. Любой throw внутри withTx → автоматический ROLLBACK.
+    // OneTimeTokenError ловим ниже и мапим на 400 с конкретным reason.
+    const user = await withTx(async (client) => {
+      const tokenRow = await consumeOneTimeToken(
+        client,
+        'saas_meta.password_reset_tokens',
+        token,
+        { columns: ['user_id'] }
+      );
 
-    const t = await client.query(
-      `SELECT user_id, expires_at, consumed_at
-         FROM saas_meta.password_reset_tokens
-        WHERE token = $1
-        FOR UPDATE`,
-      [token]
-    );
-    const row = t.rows[0];
-    if (!row) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'invalid_token' });
-    }
-    if (row.consumed_at) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'token_used' });
-    }
-    if (new Date(row.expires_at).getTime() < Date.now()) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'token_expired' });
-    }
+      const newHash = await hashPassword(newPassword);
+      await client.query(
+        `UPDATE saas_meta.users SET password_hash = $1 WHERE id = $2`,
+        [newHash, tokenRow.user_id]
+      );
+      await client.query(
+        `UPDATE saas_meta.password_reset_tokens SET consumed_at = now() WHERE token = $1`,
+        [token]
+      );
 
-    const newHash = await hashPassword(newPassword);
-    await client.query(
-      `UPDATE saas_meta.users SET password_hash = $1 WHERE id = $2`,
-      [newHash, row.user_id]
-    );
-    await client.query(
-      `UPDATE saas_meta.password_reset_tokens SET consumed_at = now() WHERE token = $1`,
-      [token]
-    );
+      // studio + schema нужны чтобы создать сессию ниже (post-commit).
+      const u = await client.query(
+        `SELECT u.id, u.studio_id, s.schema_name, u.tg_chat_id, u.gender
+           FROM saas_meta.users u
+           JOIN saas_meta.studios s ON s.id = u.studio_id
+          WHERE u.id = $1`,
+        [tokenRow.user_id]
+      );
+      return u.rows[0] || null;
+    });
 
-    // Подтянем studio + schema, чтобы создать сессию.
-    const u = await client.query(
-      `SELECT u.id, u.studio_id, s.schema_name, u.tg_chat_id, u.gender
-         FROM saas_meta.users u
-         JOIN saas_meta.studios s ON s.id = u.studio_id
-        WHERE u.id = $1`,
-      [row.user_id]
-    );
-    await client.query('COMMIT');
-
-    const user = u.rows[0];
     if (!user) return res.status(404).json({ error: 'user_not_found' });
 
-    // Снести все сессии (включая возможную сессию злоумышленника),
-    // и сразу выдать свежую этому браузеру.
+    // Post-commit: снести все сессии (на случай если злоумышленник сидит
+    // в активной сессии) и сразу выдать свежую этому браузеру.
     await invalidateAllUserSessions(user.id);
     const session = await createSession({
       userId:     user.id,
@@ -863,10 +850,12 @@ router.post('/password-reset/confirm', async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) {}
+    if (err instanceof OneTimeTokenError) {
+      // invalid → 'invalid_token', used → 'token_used', expired → 'token_expired'
+      const map = { invalid: 'invalid_token', used: 'token_used', expired: 'token_expired' };
+      return res.status(400).json({ error: map[err.reason] || 'invalid_token' });
+    }
     next(err);
-  } finally {
-    client.release();
   }
 });
 

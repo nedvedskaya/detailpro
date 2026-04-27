@@ -28,7 +28,7 @@ const express = require('express');
 const { queryInSchema, query, withTx } = require('../lib/db.cjs');
 const { requireRole } = require('../lib/middleware.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
-const { parseId, assertString, assertOptionalString, assertArrayOfStrings, handleFieldError } = require('../lib/validation.cjs');
+const { parseId, assertString, assertOptionalString, assertArrayOfStrings, parsePagination, handleFieldError } = require('../lib/validation.cjs');
 const { assertUserInStudio } = require('../lib/tenant_security.cjs');
 
 const router = express.Router();
@@ -1015,8 +1015,12 @@ router.post('/data/:key', canWrite, async (req, res, next) => {
 // ══════════════════════════════════════════════════════════════════════
 
 router.get('/activity-logs', requireRole('owner'), async (req, res, next) => {
-  const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
-  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+  let limit, offset;
+  try {
+    ({ limit, offset } = parsePagination(req.query.limit, req.query.offset, {
+      defaultLimit: 100, maxLimit: 500,
+    }));
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
   const params = [];
   const conds = [];
   if (req.query.user_id) { params.push(req.query.user_id); conds.push(`user_id = $${params.length}`); }
