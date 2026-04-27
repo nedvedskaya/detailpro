@@ -37,7 +37,14 @@ const {
 const { requireRole } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan } = require('../lib/plans.cjs');
 const { logFromReq } = require('../lib/audit.cjs');
-const { isValidEmail, isValidPassword, assertStrongPassword } = require('../lib/validation.cjs');
+const { isValidEmail, assertStrongPassword, assertString, assertOptionalString, assertEnum, handleFieldError } = require('../lib/validation.cjs');
+
+// Лимиты для admin user-полей. Значения совпадают с тем, что использует
+// /api/profile (PATCH /me) — 100/40 — чтобы оба пути дали одинаковую ошибку
+// на длинных строках, а не один прошёл, а другой упал на DB-constraint.
+const USER_NAME_MAX = 100;
+const USER_PHONE_MAX = 40;
+const VALID_ROLES_FOR_INPUT = ['manager', 'master']; // owner создаётся ТОЛЬКО при signup
 
 const router = express.Router();
 
@@ -140,6 +147,18 @@ router.post('/users', async (req, res, next) => {
   } catch (err) {
     return res.status(400).json({ error: err.message });
   }
+
+  // Длины и формат опциональных полей. До этого фикса принимались строки
+  // любой длины — атакующий мог положить 1MB в name/phone и упереться в
+  // DB-constraint (либо переполнить лог).
+  let nameC, firstNameC, lastNameC, phoneC;
+  try {
+    nameC      = assertOptionalString(name,      'name',       USER_NAME_MAX);
+    firstNameC = assertOptionalString(firstName, 'firstName',  USER_NAME_MAX);
+    lastNameC  = assertOptionalString(lastName,  'lastName',   USER_NAME_MAX);
+    phoneC     = assertOptionalString(phone,     'phone',      USER_PHONE_MAX);
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
   // Через эту ручку owner создавать нельзя — он один на студию (см. signup).
   const finalRole = CREATABLE_ROLES.includes(role) ? role : 'master';
 
@@ -167,8 +186,8 @@ router.post('/users', async (req, res, next) => {
 
   const passwordHash = await hashPassword(password);
   // Computed legacy `name` — для совместимости со старым кодом, читающим users.name.
-  const composedName = name
-    || [firstName, lastName].filter(Boolean).join(' ').trim()
+  const composedName = nameC
+    || [firstNameC, lastNameC].filter(Boolean).join(' ').trim()
     || null;
 
   let r;
@@ -181,7 +200,7 @@ router.post('/users', async (req, res, next) => {
                    role, is_active, created_at, can_view_finance, last_login_at`,
       [
         req.session.studioId, email.toLowerCase(), passwordHash, finalRole,
-        composedName, firstName || null, lastName || null, phone || null,
+        composedName, firstNameC, lastNameC, phoneC,
         finalFinance,
       ]
     );
@@ -208,6 +227,17 @@ router.put('/users/:id', async (req, res, next) => {
 
   const { name, role, is_active, can_view_finance } = req.body || {};
 
+  // Длина name. Раньше принималась строка любого размера → DB-constraint
+  // или silent truncation. Если name НЕ передан — оставляем текущее
+  // значение (обработка ниже через `name !== undefined`), так что null
+  // корректно сериализуется.
+  let nameC;
+  try {
+    nameC = name === undefined
+      ? undefined
+      : (assertOptionalString(name, 'name', USER_NAME_MAX));
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
   // self-protection: нельзя себя downgrade или дезактивировать
   if (id === req.session.userId) {
     if (role && role !== 'owner') return res.status(400).json({ error: 'cannot_demote_self' });
@@ -231,7 +261,7 @@ router.put('/users/:id', async (req, res, next) => {
 
   const newRole = role && VALID_ROLES.includes(role) ? role : target.role;
   const newActive = typeof is_active === 'boolean' ? is_active : target.is_active;
-  const newName = name !== undefined ? name : target.name;
+  const newName = nameC !== undefined ? nameC : target.name;
 
   // Видимость финансов:
   //   - master никогда не видит → принудительно false
@@ -400,8 +430,18 @@ router.get('/analytics', async (req, res, next) => {
     }
 
     // 2. Период: 3m | 6m | year (12 мес). По умолчанию 6m.
+    // Whitelist через assertEnum: раньше любое значение `period` молча
+    // фолбэчилось на 6m — UI не понимал, что параметр ему не уважают.
+    // Теперь любое неизвестное → 400 с понятным reason.
     const periodInput = String(req.query.period || '6m').toLowerCase();
-    const months = periodInput === '3m' ? 3 : periodInput === 'year' || periodInput === '12m' ? 12 : 6;
+    const ALLOWED_PERIODS = ['3m', '6m', 'year', '12m'];
+    if (!ALLOWED_PERIODS.includes(periodInput)) {
+      return res.status(400).json({
+        error: 'period_invalid',
+        allowed: ['3m', '6m', 'year'],
+      });
+    }
+    const months = periodInput === '3m' ? 3 : (periodInput === 'year' || periodInput === '12m') ? 12 : 6;
 
     const schema = req.session.schemaName;
     const { queryInSchema } = require('../lib/db.cjs');

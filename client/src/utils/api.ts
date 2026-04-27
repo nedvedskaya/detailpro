@@ -26,6 +26,11 @@ class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+  // Для error: 'field_invalid' с бэкенда — конкретное поле и причина.
+  // Заполняется в handleResponse при разборе body. translateApiError умеет
+  // строить из этого читаемое сообщение «Поле X слишком длинное».
+  field?: string;
+  reason?: string;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -42,7 +47,14 @@ async function handleResponse<T>(response: Response): Promise<T> {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new ApiError(body.error || 'Request failed', response.status, body.code);
+    const err = new ApiError(body.error || 'Request failed', response.status, body.code);
+    // field_invalid: бэк прикладывает { field, reason } — пробрасываем,
+    // чтобы UI мог показать «Поле X: слишком длинное» через translateApiError.
+    if (body && typeof body === 'object') {
+      if (typeof body.field === 'string') err.field = body.field;
+      if (typeof body.reason === 'string') err.reason = body.reason;
+    }
+    throw err;
   }
   // 204 No Content на DELETE/PUT может прилететь — отдаём undefined
   if (response.status === 204) return undefined as unknown as T;

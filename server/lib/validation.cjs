@@ -150,6 +150,208 @@ function parseId(id) {
   return n;
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Helpers для строгой валидации body-полей.
+//
+// Контракт ошибок: бросают `Error & { code: 'FIELD_INVALID', field, reason }`.
+// Это даёт роуту единообразный обработчик: try/catch → res.status(400)
+// .json({ error: 'field_invalid', field, reason }).
+//
+// Зачем не Zod: зависимость +20kb gzipped, которая для нашего объёма
+// валидации не критична. Если в будущем будет 50+ роутов и сложные схемы —
+// заменим на Zod, контракт ошибок совместим.
+// ──────────────────────────────────────────────────────────────────────
+
+function fieldErr(field, reason) {
+  const e = new Error(`field_invalid:${field}:${reason}`);
+  e.code = 'FIELD_INVALID';
+  e.field = field;
+  e.reason = reason;
+  return e;
+}
+
+/**
+ * Обязательная строка с верхним лимитом длины. Trim применяется до проверки.
+ * Empty string после trim → reject (для полей где `null` лучше — используй
+ * assertOptionalString).
+ *
+ * @param {unknown} v
+ * @param {string} fieldName — имя поля для ошибки
+ * @param {number} maxLen
+ * @returns {string} — обработанная (trim'нутая) строка
+ */
+function assertString(v, fieldName, maxLen) {
+  if (typeof v !== 'string') throw fieldErr(fieldName, 'must_be_string');
+  const trimmed = v.trim();
+  if (trimmed.length === 0) throw fieldErr(fieldName, 'empty');
+  if (trimmed.length > maxLen) throw fieldErr(fieldName, `max_${maxLen}`);
+  return trimmed;
+}
+
+/**
+ * Опциональная строка. Null/undefined/пустая → возвращает null.
+ * Иначе — assertString с лимитом длины.
+ *
+ * @param {unknown} v
+ * @param {string} fieldName
+ * @param {number} maxLen
+ * @returns {string | null}
+ */
+function assertOptionalString(v, fieldName, maxLen) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v !== 'string') throw fieldErr(fieldName, 'must_be_string');
+  const trimmed = v.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.length > maxLen) throw fieldErr(fieldName, `max_${maxLen}`);
+  return trimmed;
+}
+
+/**
+ * Массив строк (например, теги). Каждый элемент trim'нут, проверен на длину.
+ * Дубликаты НЕ удаляются (хочешь — фильтруй сам после), но empty/whitespace
+ * элементы выкидываются.
+ *
+ * @param {unknown} v
+ * @param {string} fieldName
+ * @param {number} maxItems
+ * @param {number} maxItemLen
+ * @returns {string[]} — массив обработанных строк (может быть пустым)
+ */
+function assertArrayOfStrings(v, fieldName, maxItems, maxItemLen) {
+  if (v === null || v === undefined) return [];
+  if (!Array.isArray(v)) throw fieldErr(fieldName, 'must_be_array');
+  if (v.length > maxItems) throw fieldErr(fieldName, `max_items_${maxItems}`);
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const item = v[i];
+    if (typeof item !== 'string') throw fieldErr(fieldName, `item_${i}_must_be_string`);
+    const trimmed = item.trim();
+    if (trimmed.length === 0) continue; // пропускаем пустые
+    if (trimmed.length > maxItemLen) throw fieldErr(fieldName, `item_${i}_max_${maxItemLen}`);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+/**
+ * Whitelist enum. Если v не в списке — кидает.
+ *
+ * @template T
+ * @param {unknown} v
+ * @param {string} fieldName
+ * @param {readonly T[]} allowed
+ * @returns {T}
+ */
+function assertEnum(v, fieldName, allowed) {
+  if (!allowed.includes(v)) throw fieldErr(fieldName, `must_be_one_of_${allowed.join('|')}`);
+  return v;
+}
+
+/**
+ * Натуральное число с верхним лимитом. NaN/строки/отрицательные → reject.
+ *
+ * @param {unknown} v
+ * @param {string} fieldName
+ * @param {number} max
+ * @returns {number}
+ */
+function assertNonNegativeInt(v, fieldName, max) {
+  const n = typeof v === 'number' ? v : parseInt(v, 10);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) throw fieldErr(fieldName, 'must_be_non_negative_int');
+  if (n > max) throw fieldErr(fieldName, `max_${max}`);
+  return n;
+}
+
+/**
+ * Pagination limit/offset. Дефолты разумные, потолки фиксированные.
+ * Используется для всех list-эндпоинтов с пейджингом.
+ *
+ * @param {unknown} limitRaw
+ * @param {unknown} offsetRaw
+ * @param {{ defaultLimit?: number, maxLimit?: number }} opts
+ * @returns {{ limit: number, offset: number }}
+ */
+function parsePagination(limitRaw, offsetRaw, opts = {}) {
+  const defaultLimit = opts.defaultLimit || 50;
+  const maxLimit = opts.maxLimit || 200;
+  let limit = defaultLimit;
+  let offset = 0;
+  if (limitRaw !== undefined && limitRaw !== null && limitRaw !== '') {
+    limit = assertNonNegativeInt(limitRaw, 'limit', maxLimit);
+    if (limit === 0) limit = defaultLimit;
+  }
+  if (offsetRaw !== undefined && offsetRaw !== null && offsetRaw !== '') {
+    // offset до 100K — выше уже DoS на seq scan.
+    offset = assertNonNegativeInt(offsetRaw, 'offset', 100_000);
+  }
+  return { limit, offset };
+}
+
+/**
+ * Валидирует data-URL/raw base64 PNG.
+ *
+ * Зачем: signature_data из UI приходит как base64 PNG-строка. Без проверки
+ * клиент может прислать любой бинарь — JSONB сохранит, PDF embed-ит,
+ * рендер упадёт (или, в случае с другим форматом, сольёт другие байты в
+ * документ). Проверяем magic bytes: PNG = 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A.
+ *
+ * @param {unknown} v — base64-строка или 'data:image/png;base64,...'
+ * @param {string} fieldName
+ * @param {number} maxDecodedBytes — лимит на ДЕКОДИРОВАННЫЕ байты, не на base64
+ * @returns {string} — нормализованная raw base64 без data: префикса
+ */
+function assertPngBase64(v, fieldName, maxDecodedBytes) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v !== 'string') throw fieldErr(fieldName, 'must_be_string');
+  // Срезаем data:image/png;base64,... префикс если есть
+  let raw = v;
+  const m = v.match(/^data:image\/png;base64,(.+)$/i);
+  if (m) raw = m[1];
+  // base64 → длина в байтах ≈ raw.length * 3/4
+  const approxBytes = Math.floor((raw.length * 3) / 4);
+  if (approxBytes > maxDecodedBytes) throw fieldErr(fieldName, `max_${maxDecodedBytes}_bytes`);
+  let buf;
+  try {
+    buf = Buffer.from(raw, 'base64');
+  } catch (_) {
+    throw fieldErr(fieldName, 'invalid_base64');
+  }
+  if (buf.length < 8) throw fieldErr(fieldName, 'too_short');
+  // PNG magic
+  if (
+    buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4E || buf[3] !== 0x47 ||
+    buf[4] !== 0x0D || buf[5] !== 0x0A || buf[6] !== 0x1A || buf[7] !== 0x0A
+  ) {
+    throw fieldErr(fieldName, 'not_png');
+  }
+  if (buf.length > maxDecodedBytes) throw fieldErr(fieldName, `max_${maxDecodedBytes}_bytes`);
+  // Возвращаем raw base64 (без префикса) — UI/PDF сами добавят что нужно
+  return raw;
+}
+
+/**
+ * Универсальный обработчик ошибки валидации в роутах.
+ * Если err — это FIELD_INVALID → 400 с понятной структурой; иначе кидает дальше.
+ *
+ * Использование:
+ *   try { ... } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+ *
+ * @param {Error} err
+ * @param {import('express').Response} res
+ * @returns {boolean} true если ошибка обработана и ответ отправлен
+ */
+function handleFieldError(err, res) {
+  if (err && err.code === 'FIELD_INVALID') {
+    res.status(400).json({
+      error: 'field_invalid',
+      field: err.field,
+      reason: err.reason,
+    });
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   EMAIL_REGEX,
   PASSWORD_MIN_LENGTH,
@@ -161,4 +363,13 @@ module.exports = {
   isSequential,
   assertStrongPassword,
   parseId,
+  // строгие body-validators
+  assertString,
+  assertOptionalString,
+  assertArrayOfStrings,
+  assertEnum,
+  assertNonNegativeInt,
+  parsePagination,
+  assertPngBase64,
+  handleFieldError,
 };

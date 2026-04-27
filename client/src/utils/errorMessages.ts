@@ -97,7 +97,63 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
  *   2. Если message уже на русском (содержит кириллицу) — возвращаем его как есть.
  *   3. Иначе возвращаем fallback.
  */
+// Человеческие имена полей для сообщений field_invalid.
+const FIELD_LABELS: Record<string, string> = {
+  name: 'имя',
+  firstName: 'имя',
+  lastName: 'фамилия',
+  phone: 'телефон',
+  email: 'email',
+  city: 'город',
+  source: 'источник',
+  notes: 'заметки',
+  tags: 'теги',
+  signature_data: 'подпись',
+  limit: 'количество',
+  offset: 'смещение',
+  period: 'период',
+};
+
+// Reason → читаемое объяснение. Reason приходит вида `max_5000`, `must_be_string`,
+// `item_2_must_be_string` (для массивов с индексом).
+function explainReason(reason: string): string {
+  if (reason === 'must_be_string') return 'должно быть строкой';
+  if (reason === 'must_be_array') return 'должно быть списком';
+  if (reason === 'must_be_non_negative_int') return 'должно быть положительным числом';
+  if (reason === 'empty') return 'не может быть пустым';
+  if (reason === 'invalid_base64') return 'неверный формат файла';
+  if (reason === 'not_png') return 'должно быть PNG-изображением';
+  if (reason === 'too_short') return 'слишком короткое значение';
+  // max_NNNN или max_NNNN_bytes
+  const maxMatch = reason.match(/^max_(\d+)(_bytes)?$/);
+  if (maxMatch) {
+    return maxMatch[2] ? `превышен лимит ${maxMatch[1]} байт` : `превышен лимит ${maxMatch[1]} символов`;
+  }
+  // max_items_NN
+  const maxItemsMatch = reason.match(/^max_items_(\d+)$/);
+  if (maxItemsMatch) return `не более ${maxItemsMatch[1]} элементов`;
+  // item_N_max_NNN
+  const itemMaxMatch = reason.match(/^item_(\d+)_max_(\d+)$/);
+  if (itemMaxMatch) return `элемент ${Number(itemMaxMatch[1]) + 1}: превышен лимит ${itemMaxMatch[2]} символов`;
+  // item_N_must_be_string
+  const itemTypeMatch = reason.match(/^item_(\d+)_must_be_string$/);
+  if (itemTypeMatch) return `элемент ${Number(itemTypeMatch[1]) + 1}: должен быть строкой`;
+  // must_be_one_of_a|b|c
+  if (reason.startsWith('must_be_one_of_')) {
+    return `допустимые значения: ${reason.slice('must_be_one_of_'.length).replace(/\|/g, ', ')}`;
+  }
+  return reason;
+}
+
 export function translateApiError(err: unknown, fallback = 'Ошибка соединения с сервером'): string {
+  // field_invalid: ApiError с .field и .reason. Строим осмысленное «Поле X — Y».
+  if (err instanceof ApiError && (err.code === 'field_invalid' || err.message === 'field_invalid')) {
+    if (err.field && err.reason) {
+      const label = FIELD_LABELS[err.field] || err.field;
+      return `Поле «${label}»: ${explainReason(err.reason)}`;
+    }
+  }
+
   // Сетевые ошибки fetch — `TypeError: Failed to fetch` / `Network request failed`.
   // Это не сообщение для пользователя: показываем fallback.
   const isNetworkNoise = (s: string) =>

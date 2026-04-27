@@ -25,44 +25,45 @@
  */
 
 const express = require('express');
-const { queryInSchema, query } = require('../lib/db.cjs');
+const { queryInSchema, query, withTx } = require('../lib/db.cjs');
 const { requireRole } = require('../lib/middleware.cjs');
-const { logAction: auditLog } = require('../lib/audit.cjs');
+const { logFromReq: logAction } = require('../lib/audit.cjs');
+const { parseId, assertString, assertOptionalString, assertArrayOfStrings, handleFieldError } = require('../lib/validation.cjs');
 
 const router = express.Router();
 
-// ──────────────────────────────────────────────────────────────────────
-// Audit log helper.
-//
-// Тонкая обёртка над server/lib/audit.cjs. Раньше функция была private
-// этому файлу, но теперь ту же запись делают auth.cjs (login/logout) и
-// admin.cjs (CRUD пользователей), поэтому реализация вынесена в общий
-// lib/audit.cjs. Здесь — sugar для вызова из роутов с готовым req.
-// ──────────────────────────────────────────────────────────────────────
-function logAction(req, action, entityType, entityId, entityName, details) {
-  auditLog({
-    schemaName: req.session.schemaName,
-    userId:     req.session.userId,
-    userName:   req.session.userName,
-    action,
-    entityType,
-    entityId,
-    entityName,
-    details,
-    ip:         req.ip,
-  });
-}
+// logAction(req, action, entityType, entityId, entityName, details) →
+// тонкая обёртка над audit.logAction, см. server/lib/audit.cjs#logFromReq.
+// Импортируется как алиас выше — сигнатура исторически зовётся logAction
+// и менять все 30+ вызовов в этом файле смысла нет.
 
 // Кто имеет право писать в БД. Master — read-only по всем CRM-сущностям.
 const canWrite = requireRole('owner', 'manager');
 
-function badId(id) {
-  const n = parseInt(id, 10);
-  if (Number.isNaN(n) || n <= 0 || n > 2147483647) return null;
-  return n;
-}
+// Задачи — единственный блок, где master тоже пишет (создаёт/правит/удаляет
+// свои таски, отмечает выполненные). По бизнес-смыслу мастер ведёт задачи
+// сам — owner/manager не должны постоянно подкидывать ему «не забудь
+// помыть колёса» вручную.
+const canWriteTasks = requireRole('owner', 'manager', 'master');
+
+// Алиас на parseId() из lib/validation.cjs — оставлен под старым именем,
+// чтобы не править все вызовы в этом файле (~50+). Семантика та же:
+// возвращает null для невалидных id, иначе int4.
+const badId = parseId;
 function nonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+// Лимиты для tags (теги транзакций / бронирований).
+// 20 тегов на запись хватает с запасом — UI больше не покажет, и это
+// ограничивает payload размером ~1KB (max 20 × 50 chars).
+// Раньше tags принимался как `JSON.stringify(tags || [])` без проверки —
+// атакующий мог прислать `{foo: 1}`, объект, массив объектов; UI/PDF на
+// этом ломался. assertArrayOfStrings гарантирует flat array<string>.
+const TAGS_MAX_ITEMS = 20;
+const TAGS_MAX_LEN = 50;
+function normalizeTags(raw, fieldName = 'tags') {
+  return assertArrayOfStrings(raw, fieldName, TAGS_MAX_ITEMS, TAGS_MAX_LEN);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -78,14 +79,34 @@ router.get('/clients', async (req, res, next) => {
   res.json(r.rows);
 });
 
+// Лимиты длин для clients-полей. Раньше длины не проверялись — атакующий
+// мог через UI отправить 100MB-строку в `notes`, упереться в DB-лимит и
+// получить 500 (плюс сожжённую память на сериализацию). Жёстко режем
+// здесь, на роуте, до похода в БД.
+const CLIENT_NAME_MAX = 200;
+const CLIENT_PHONE_MAX = 40;
+const CLIENT_EMAIL_MAX = 254;       // RFC 5321
+const CLIENT_CITY_MAX = 100;
+const CLIENT_SOURCE_MAX = 100;
+const CLIENT_NOTES_MAX = 5000;
+
 router.post('/clients', canWrite, async (req, res, next) => {
   const { name, phone, email, notes, source, city, birth_date, avatar } = req.body || {};
-  if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
+  let nameC, phoneC, emailC, notesC, sourceC, cityC;
+  try {
+    nameC   = assertString(name, 'name', CLIENT_NAME_MAX);
+    phoneC  = assertOptionalString(phone, 'phone', CLIENT_PHONE_MAX);
+    emailC  = assertOptionalString(email, 'email', CLIENT_EMAIL_MAX);
+    notesC  = assertOptionalString(notes, 'notes', CLIENT_NOTES_MAX);
+    sourceC = assertOptionalString(source, 'source', CLIENT_SOURCE_MAX);
+    cityC   = assertOptionalString(city, 'city', CLIENT_CITY_MAX);
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date, avatar)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [name.trim(), phone || null, email || null, notes || null, source || null, city || null, birth_date || null, avatar || null]
+    [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null]
   );
   logAction(req, 'create', 'client', r.rows[0].id, r.rows[0].name);
   res.status(201).json(r.rows[0]);
@@ -95,14 +116,23 @@ router.put('/clients/:id', canWrite, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { name, phone, email, notes, source, city, birth_date, avatar } = req.body || {};
-  if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
+  let nameC, phoneC, emailC, notesC, sourceC, cityC;
+  try {
+    nameC   = assertString(name, 'name', CLIENT_NAME_MAX);
+    phoneC  = assertOptionalString(phone, 'phone', CLIENT_PHONE_MAX);
+    emailC  = assertOptionalString(email, 'email', CLIENT_EMAIL_MAX);
+    notesC  = assertOptionalString(notes, 'notes', CLIENT_NOTES_MAX);
+    sourceC = assertOptionalString(source, 'source', CLIENT_SOURCE_MAX);
+    cityC   = assertOptionalString(city, 'city', CLIENT_CITY_MAX);
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
   const r = await queryInSchema(
     req.session.schemaName,
     `UPDATE {{schema}}.clients
         SET name=$1, phone=$2, email=$3, notes=$4, source=$5, city=$6, birth_date=$7,
             avatar = COALESCE($8, avatar), updated_at = now()
       WHERE id=$9 RETURNING *`,
-    [name.trim(), phone || null, email || null, notes || null, source || null, city || null, birth_date || null,
+    [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null,
      avatar !== undefined ? avatar : null, id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'client_not_found' });
@@ -129,6 +159,153 @@ router.delete('/clients/:id', requireRole('owner', 'manager'), async (req, res, 
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.clients WHERE id=$1`, [id]);
   logAction(req, 'delete', 'client', id);
   res.json({ ok: true });
+});
+
+/**
+ * POST /api/clients/bulk
+ *
+ * Массовый импорт клиентской базы (Профиль → Студия → «Импорт клиентов»).
+ * Тело: { rows: [{ client: {...}, vehicle?: {...} }, ...], strategy }
+ *   strategy ∈ 'skip' | 'overwrite' | 'create_new' — что делать при
+ *   совпадении нормализованного телефона с существующим клиентом.
+ *
+ * Идёт ОДНОЙ транзакцией: либо все строки применяются, либо ничего —
+ * иначе на 4000-й строке падает по сети, а у пользователя в БД остаются
+ * полузагруженные клиенты, и непонятно, с какой строки продолжать.
+ *
+ * Лимит 5000 строк — защита от случайной заливки 100k. Если кому-то нужно
+ * больше — пусть бьёт на куски руками; за раз импортировать гигантскую
+ * базу всё равно неудобно (нет UI для долгого прогресса).
+ *
+ * Доступ: только owner/manager. Master не импортирует — у него и так
+ * read-only по клиентам.
+ */
+router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, next) => {
+  try {
+    const { rows, strategy } = req.body || {};
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'empty_payload' });
+    }
+    if (rows.length > 5000) {
+      return res.status(413).json({ error: 'too_many_rows', limit: 5000 });
+    }
+    const STRATEGIES = new Set(['skip', 'overwrite', 'create_new']);
+    const strat = STRATEGIES.has(strategy) ? strategy : 'skip';
+
+    const schemaName = req.session.schemaName;
+
+    // Нормализованный телефон → только цифры, ведущая 8 → 7. Точно так же
+    // как фронт парсит из шаблона — иначе дубликаты искались бы по строке
+    // «+7 (920) 610-18-41» != «8 920 610 18 41», что бессмысленно.
+    const normalizePhone = (raw) => {
+      if (!raw || typeof raw !== 'string') return null;
+      let digits = raw.replace(/\D/g, '');
+      if (!digits) return null;
+      if (digits.startsWith('8')) digits = '7' + digits.slice(1);
+      if (!digits.startsWith('7')) digits = '7' + digits;
+      return digits.slice(0, 11);
+    };
+
+    const result = await withTx(async (client) => {
+      // Загружаем существующие телефоны студии один раз — далее in-memory.
+      // На 50к клиентов это всё ещё <5 МБ, не проблема.
+      const existing = await queryInSchema(
+        schemaName,
+        `SELECT id, name, phone FROM {{schema}}.clients WHERE phone IS NOT NULL`,
+        [],
+        client
+      );
+      const phoneToId = new Map();
+      for (const r of existing.rows) {
+        const norm = normalizePhone(r.phone);
+        if (norm) phoneToId.set(norm, r.id);
+      }
+
+      const stats = { created: 0, updated: 0, skipped: 0 };
+      const errors = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i] || {};
+        const c = row.client || {};
+        const v = row.vehicle || null;
+        const rowNum = i + 1;
+
+        const name = typeof c.name === 'string' ? c.name.trim() : '';
+        if (!name) {
+          errors.push({ row: rowNum, reason: 'name_required' });
+          continue;
+        }
+
+        const phoneNorm = normalizePhone(c.phone);
+        const existingId = phoneNorm ? phoneToId.get(phoneNorm) : null;
+
+        let clientId = null;
+
+        if (existingId && strat === 'skip') {
+          stats.skipped += 1;
+          continue;
+        }
+
+        if (existingId && strat === 'overwrite') {
+          const upd = await queryInSchema(
+            schemaName,
+            `UPDATE {{schema}}.clients
+                SET name=$1, phone=$2, email=$3, notes=$4, source=$5, city=$6,
+                    birth_date=$7, updated_at=now()
+              WHERE id=$8 RETURNING id`,
+            [name, c.phone || null, c.email || null, c.notes || null,
+             c.source || null, c.city || null, c.birth_date || null, existingId],
+            client
+          );
+          clientId = upd.rows[0]?.id || null;
+          if (clientId) stats.updated += 1;
+        } else {
+          // create_new или совпадений нет — INSERT
+          const ins = await queryInSchema(
+            schemaName,
+            `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [name, c.phone || null, c.email || null, c.notes || null,
+             c.source || null, c.city || null, c.birth_date || null],
+            client
+          );
+          clientId = ins.rows[0]?.id || null;
+          if (clientId) {
+            stats.created += 1;
+            // Чтобы повторный INSERT с тем же телефоном в той же пачке
+            // не задвоился (например, в шаблоне дважды Иван +7920...) —
+            // подмешиваем созданный id в карту существующих.
+            if (phoneNorm) phoneToId.set(phoneNorm, clientId);
+          }
+        }
+
+        // Машина (опционально). Только если client заведён/обновлён И есть
+        // хоть бренд. Стратегия overwrite НЕ удаляет старые машины клиента,
+        // а просто докидывает ещё одну — пусть пользователь решает руками,
+        // что лишнее. Удалять машины при импорте — слишком жёстко.
+        if (clientId && v && typeof v.brand === 'string' && v.brand.trim()) {
+          await queryInSchema(
+            schemaName,
+            `INSERT INTO {{schema}}.vehicles (client_id, brand, model, license_plate, color, year)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+            [clientId, v.brand.trim(), v.model || null, v.license_plate || null,
+             v.color || null, v.year || null],
+            client
+          );
+        }
+      }
+
+      return { stats, errors };
+    });
+
+    logAction(
+      req, 'bulk_import', 'client', null, null,
+      { strategy: strat, ...result.stats, errors: result.errors.length }
+    );
+    res.json({ ok: true, strategy: strat, ...result.stats, errors: result.errors });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -317,37 +494,54 @@ router.delete('/bookings/:id', canWrite, async (req, res, next) => {
 // ══════════════════════════════════════════════════════════════════════
 // TRANSACTIONS
 //
-// Гейты роли:
-//   - Master никогда не имеет доступа к финансам (вкладка скрыта на UI,
-//     но и API закрываем — middleware `canSeeFinance` ниже).
-//   - Manager имеет доступ только если can_view_finance=true (по умолчанию
-//     true; собственник в админ-панели может снять галочку).
-//   - Owner всегда видит финансы.
-// Отдельный middleware вместо if-в-каждом-хендлере, чтобы не забыть.
+// Доступ к разделу «Финансы» и связанным транзакциям:
+//   • Owner — всегда полный доступ.
+//   • Manager с can_view_finance=true — полный доступ.
+//   • Manager с can_view_finance=false — может работать ТОЛЬКО с транзакциями,
+//       привязанными к client_record_id (это автогенерация от заказа: аванс,
+//       оплата, корректировка). Без этого менеджер без галочки финансов
+//       не сможет принять предоплату — а это ломает рабочий процесс.
+//   • Master — нет доступа (по ТЗ; canWrite его всё равно блокирует ниже).
+//
+// Решение: middleware ставит req.txScope = 'all' | 'linked' и каждый
+// хендлер делает scope-aware. 'linked' — фильтрация и проверки на
+// client_record_id.
 // ══════════════════════════════════════════════════════════════════════
 
-function canSeeFinance(req, res, next) {
+function txAccessControl(req, res, next) {
   const role = req.session?.role;
-  if (role === 'owner') return next();
-  if (role === 'manager' && req.session.canViewFinance !== false) return next();
+  if (role === 'owner') { req.txScope = 'all'; return next(); }
+  if (role === 'manager' && req.session.canViewFinance !== false) {
+    req.txScope = 'all'; return next();
+  }
+  if (role === 'manager') { req.txScope = 'linked'; return next(); }
   return res.status(403).json({ error: 'finance_forbidden' });
 }
 
-router.get('/transactions', canSeeFinance, async (req, res, next) => {
+router.get('/transactions', txAccessControl, async (req, res, next) => {
+  const where = req.txScope === 'linked' ? 'WHERE client_record_id IS NOT NULL' : '';
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT id, type, amount, category_id, category, description, date, time,
             booking_id, client_record_id, client_id, created_by, tags, created_at
        FROM {{schema}}.transactions
+       ${where}
       ORDER BY date DESC, created_at DESC`
   );
   res.json(r.rows);
 });
 
-router.post('/transactions', canWrite, canSeeFinance, async (req, res, next) => {
+router.post('/transactions', canWrite, txAccessControl, async (req, res, next) => {
   const { type, amount, category, category_id, description, date, time, booking_id, client_record_id, client_id, tags } = req.body || {};
   if (!type || (type !== 'income' && type !== 'expense')) return res.status(400).json({ error: 'type_invalid' });
   if (typeof amount !== 'number' && typeof amount !== 'string') return res.status(400).json({ error: 'amount_required' });
+  // Для 'linked'-скоупа: транзакция должна быть привязана к заказу.
+  if (req.txScope === 'linked' && !badId(client_record_id)) {
+    return res.status(403).json({ error: 'finance_forbidden' });
+  }
+  let normalizedTags;
+  try { normalizedTags = normalizeTags(tags); }
+  catch (err) { if (handleFieldError(err, res)) return; throw err; }
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.transactions
@@ -360,32 +554,54 @@ router.post('/transactions', canWrite, canSeeFinance, async (req, res, next) => 
       date || new Date().toISOString().slice(0, 10), time || null,
       badId(booking_id), badId(client_record_id), badId(client_id),
       req.session.userId,
-      JSON.stringify(tags || []),
+      JSON.stringify(normalizedTags),
     ]
   );
-  logAction(req, 'create', 'transaction', r.rows[0].id, type, `${amount}`);
+  // Лог на русском: entity_name = «Доход»/«Расход», details = «5000 ₽».
+  const TX_TYPE_RU = { income: 'Доход', expense: 'Расход' };
+  logAction(req, 'create', 'transaction', r.rows[0].id, TX_TYPE_RU[type] || type, `${amount} ₽`);
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/transactions/:id', canWrite, canSeeFinance, async (req, res, next) => {
+// Утилита: для 'linked'-скоупа подгружает транзакцию и проверяет
+// client_record_id. Возвращает true/false; при false уже отвечает на res.
+async function ensureLinkedScope(req, res, txId) {
+  if (req.txScope !== 'linked') return true;
+  const r = await queryInSchema(
+    req.session.schemaName,
+    `SELECT client_record_id FROM {{schema}}.transactions WHERE id=$1`,
+    [txId]
+  );
+  if (!r.rows[0]) { res.status(404).json({ error: 'transaction_not_found' }); return false; }
+  if (!badId(r.rows[0].client_record_id)) { res.status(403).json({ error: 'finance_forbidden' }); return false; }
+  return true;
+}
+
+router.put('/transactions/:id', canWrite, txAccessControl, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
+  if (!(await ensureLinkedScope(req, res, id))) return;
   const { type, amount, category, category_id, description, date, time, tags } = req.body || {};
+  let normalizedTags;
+  try { normalizedTags = normalizeTags(tags); }
+  catch (err) { if (handleFieldError(err, res)) return; throw err; }
   const r = await queryInSchema(
     req.session.schemaName,
     `UPDATE {{schema}}.transactions
         SET type=$1, amount=$2, category_id=$3, category=$4, description=$5, date=$6, time=$7, tags=$8::jsonb
       WHERE id=$9 RETURNING *`,
-    [type, amount, badId(category_id), category || null, description || '', date || new Date().toISOString().slice(0,10), time || null, JSON.stringify(tags || []), id]
+    [type, amount, badId(category_id), category || null, description || '', date || new Date().toISOString().slice(0,10), time || null, JSON.stringify(normalizedTags), id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'transaction_not_found' });
-  logAction(req, 'update', 'transaction', id, type, `${amount}`);
+  const TX_TYPE_RU = { income: 'Доход', expense: 'Расход' };
+  logAction(req, 'update', 'transaction', id, TX_TYPE_RU[type] || type, `${amount} ₽`);
   res.json(r.rows[0]);
 });
 
-router.delete('/transactions/:id', canWrite, canSeeFinance, async (req, res, next) => {
+router.delete('/transactions/:id', canWrite, txAccessControl, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
+  if (!(await ensureLinkedScope(req, res, id))) return;
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.transactions WHERE id=$1`, [id]);
   logAction(req, 'delete', 'transaction', id);
   res.json({ ok: true });
@@ -407,7 +623,7 @@ router.get('/tasks', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/tasks', canWrite, async (req, res, next) => {
+router.post('/tasks', canWriteTasks, async (req, res, next) => {
   const { title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to } = req.body || {};
   if (!nonEmptyString(title)) return res.status(400).json({ error: 'title_required' });
   const r = await queryInSchema(
@@ -422,7 +638,7 @@ router.post('/tasks', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/tasks/:id', canWrite, async (req, res, next) => {
+router.put('/tasks/:id', canWriteTasks, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to, completed_at } = req.body || {};
@@ -445,7 +661,7 @@ router.put('/tasks/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/tasks/:id', canWrite, async (req, res, next) => {
+router.delete('/tasks/:id', canWriteTasks, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.tasks WHERE id=$1`, [id]);
@@ -491,6 +707,10 @@ router.post('/client-records', canWrite, async (req, res, next) => {
   if (!nonEmptyString(service_name)) return res.status(400).json({ error: 'service_name_required' });
   if (!date) return res.status(400).json({ error: 'date_required' });
 
+  let normalizedTags;
+  try { normalizedTags = normalizeTags(tags); }
+  catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.client_records
@@ -507,7 +727,7 @@ router.post('/client-records', canWrite, async (req, res, next) => {
       advance || 0, advance_date || null, end_date || null,
       badId(category_id),
       payment_status || 'none',
-      JSON.stringify(tags || []),
+      JSON.stringify(normalizedTags),
     ]
   );
   logAction(req, 'create', 'client_record', r.rows[0].id, service_name);
@@ -542,7 +762,10 @@ router.put('/client-records/:id', canWrite, async (req, res, next) => {
     if (fields[key] === undefined) continue;
     let val = fields[key];
     if (key === 'category_id') val = badId(val);
-    if (key === 'tags') val = JSON.stringify(val || []);
+    if (key === 'tags') {
+      try { val = JSON.stringify(normalizeTags(val)); }
+      catch (err) { if (handleFieldError(err, res)) return; throw err; }
+    }
     set.push(`${col} = $${pi++}`);
     values.push(val);
   }
@@ -616,23 +839,42 @@ router.delete('/categories/:id', canWrite, async (req, res, next) => {
 // TAGS
 // ══════════════════════════════════════════════════════════════════════
 
+// type: 'all' | 'income' | 'expense'. Невалидные значения → 'all'
+// (мягко, без 400, чтобы не ломать legacy-клиентов).
+const ALLOWED_TAG_TYPES = ['all', 'income', 'expense'];
+const normalizeTagType = (v) => ALLOWED_TAG_TYPES.includes(v) ? v : 'all';
+
 router.get('/tags', async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
-    `SELECT * FROM {{schema}}.tags ORDER BY name`
+    `SELECT id, name, color, type, created_at FROM {{schema}}.tags ORDER BY name`
   );
   res.json(r.rows);
 });
 
 router.post('/tags', canWrite, async (req, res, next) => {
-  const { name, color } = req.body || {};
+  const { name, color, type } = req.body || {};
   if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
   const r = await queryInSchema(
     req.session.schemaName,
-    `INSERT INTO {{schema}}.tags (name, color) VALUES ($1, $2) RETURNING *`,
-    [name.trim(), color || null]
+    `INSERT INTO {{schema}}.tags (name, color, type) VALUES ($1, $2, $3) RETURNING *`,
+    [name.trim(), color || null, normalizeTagType(type)]
   );
   res.status(201).json(r.rows[0]);
+});
+
+router.put('/tags/:id', canWrite, async (req, res, next) => {
+  const id = badId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
+  const { name, color, type } = req.body || {};
+  if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
+  const r = await queryInSchema(
+    req.session.schemaName,
+    `UPDATE {{schema}}.tags SET name=$1, color=$2, type=$3 WHERE id=$4 RETURNING *`,
+    [name.trim(), color || null, normalizeTagType(type), id]
+  );
+  if (r.rowCount === 0) return res.status(404).json({ error: 'not_found' });
+  res.json(r.rows[0]);
 });
 
 router.delete('/tags/:id', canWrite, async (req, res, next) => {
@@ -705,14 +947,37 @@ router.get('/data/:key', async (req, res, next) => {
   res.json(r.rows[0]?.value ?? null);
 });
 
+// Generic key/value store — UI кладёт сюда настройки (фильтры, layout-state).
+// Структура by-design свободная, но размер ограничиваем 64KB на ключ —
+// иначе через эту ручку можно залить мегабайты JSON в studio_xxx.app_data
+// и устроить DoS на дисковое место + замедлить чтения.
+const MAX_DATA_VALUE_BYTES = 64 * 1024;
+
 router.post('/data/:key', canWrite, async (req, res, next) => {
   const { value } = req.body || {};
+  // Ключ — тоже user input. Ограничиваем длиной 100 + регексп
+  // [a-zA-Z0-9_.-] чтобы избежать сюрпризов с UNIQUE и сортировкой.
+  const key = String(req.params.key || '');
+  if (!key || key.length > 100 || !/^[a-zA-Z0-9_.-]+$/.test(key)) {
+    return res.status(400).json({ error: 'key_invalid' });
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(value);
+  } catch (_) {
+    return res.status(400).json({ error: 'value_not_serializable' });
+  }
+  // Длина строки в UTF-16 ≈ длине в UTF-8 для ASCII; для русского × 2-3.
+  // Грубо: Buffer.byteLength для точности.
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_DATA_VALUE_BYTES) {
+    return res.status(400).json({ error: 'value_too_large', max_bytes: MAX_DATA_VALUE_BYTES });
+  }
   await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.app_data (key, value, updated_at)
        VALUES ($1, $2::jsonb, now())
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
-    [req.params.key, JSON.stringify(value)]
+    [key, serialized]
   );
   res.json({ ok: true });
 });
@@ -752,13 +1017,16 @@ router.get('/users', async (req, res, next) => {
       ORDER BY name NULLS LAST, email`,
     [req.session.studioId]
   );
+  // Поля snake_case — фронт-тип StudioUser в client/src/utils/types.ts
+  // ожидает is_active и created_at в snake_case (исторически совместимо
+  // с /api/admin/users, который тоже шлёт snake_case).
   res.json(r.rows.map((u) => ({
     id: u.id,
     email: u.email,
     name: u.name,
     role: u.role,
-    isActive: u.is_active,
-    createdAt: u.created_at,
+    is_active: u.is_active,
+    created_at: u.created_at,
   })));
 });
 

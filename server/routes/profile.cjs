@@ -52,9 +52,21 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: AVATAR_UPLOAD_LIMIT_BYTES, files: 1 },
   fileFilter(req, file, cb) {
-    // Принимаем только image/*. Дополнительная проверка sharp ниже.
+    // Defense in depth (3 слоя):
+    //   1) MIME-prefix `image/*` — отрезает .exe/.zip с правильным заголовком,
+    //      но MIME клиент-контролируемый, не доверяем как единственному.
+    //   2) Расширение в whitelist — отсекает файлы с .php/.html, маскирующимися
+    //      под image/jpeg в MIME (если в будущем мы перестанем re-encode'ить).
+    //   3) sharp().webp() ниже re-encode'ит файл в memory — это убивает
+    //      embedded EXIF/SVG-script/поломанные изображения. Это финальная
+    //      гарантия что в storage уйдёт валидный WebP, а не PNG-bomb.
     if (!file.mimetype || !file.mimetype.startsWith('image/')) {
       return cb(new Error('not_an_image'));
+    }
+    const ext = (file.originalname || '').toLowerCase().match(/\.[a-z0-9]+$/);
+    const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif']);
+    if (ext && !ALLOWED_EXT.has(ext[0])) {
+      return cb(new Error('extension_not_allowed'));
     }
     cb(null, true);
   },
