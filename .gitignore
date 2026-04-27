@@ -13,3 +13,6 @@ ca.crt
 # Build output
 dist/
 *.tsbuildinfo
+
+# Apple Pages document templates (binary, держим локально)
+*.pages
