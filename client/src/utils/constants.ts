@@ -112,6 +112,17 @@ export const INITIAL_TRANSACTIONS = [];
 // Чтобы UI показывал «Сотрудник заблокирован» вместо "user.block",
 // строим лейбл через комбинацию entity_type + action в getActionLabel().
 export const ACTION_LABELS: Record<string, string> = {
+  // Голые action-коды — фолбек для случаев, когда entity_type не подсказан или
+  // не входит в карту ниже. Чтобы в бейдже не светилось «Update»/«Create».
+  'create':                  'Создано',
+  'update':                  'Изменено',
+  'delete':                  'Удалено',
+  'login':                   'Вход в систему',
+  'logout':                  'Выход',
+  'block':                   'Заблокирован',
+  'unblock':                 'Разблокирован',
+  'password_reset':          'Сброс пароля',
+
   // session: вход/выход
   'session.login':           'Вход в систему',
   'session.logout':          'Выход',
@@ -148,6 +159,46 @@ export const ACTION_LABELS: Record<string, string> = {
   'client_record.create':    'История: запись добавлена',
   'client_record.update':    'История: запись изменена',
   'client_record.delete':    'История: запись удалена',
+
+  // Документы (создаются из routes/documents.cjs)
+  'work_order.update':       'Заказ-наряд изменён',
+  'acceptance_act.update':   'Акт приёмки изменён',
+  'order_photo.create':      'Фото добавлено',
+  'order_photo.delete':      'Фото удалено',
+};
+
+// Карта названий сущностей для расшифровки entity_name вида "booking#8"
+// (так пишет server/routes/documents.cjs — entity_name = `booking#${id}`).
+const ENTITY_TYPE_NAMES: Record<string, string> = {
+  booking:        'Бронь',
+  client:         'Клиент',
+  vehicle:        'Авто',
+  task:           'Задача',
+  transaction:    'Финоперация',
+  client_record:  'История',
+  user:           'Сотрудник',
+  work_order:     'Заказ-наряд',
+  acceptance_act: 'Акт приёмки',
+  order_photo:    'Фото',
+};
+
+// Карта вспомогательных значений для перевода частей details.
+const VALUE_TRANSLATIONS: Record<string, string> = {
+  income:   'Доход',
+  expense:  'Расход',
+  owner:    'Собственник',
+  manager:  'Менеджер',
+  master:   'Мастер',
+  true:     'да',
+  false:    'нет',
+};
+
+// Ключи в details (admin.cjs пишет `role=…, finance=…` и подобное)
+const KEY_TRANSLATIONS: Record<string, string> = {
+  role:    'роль',
+  finance: 'финансы',
+  active:  'активен',
+  name:    'имя',
 };
 
 // Цветовая группировка для AdminPanel→Активность.
@@ -181,4 +232,65 @@ export function getActionLabel(action: string, entityType?: string | null): stri
 /** Цвет для action — см. ACTION_TONES. По умолчанию gray. */
 export function getActionTone(action: string): 'green' | 'blue' | 'red' | 'gray' {
   return ACTION_TONES[action] || 'gray';
+}
+
+/**
+ * Локализует значение entity_name для активити-лога.
+ *
+ * Бэк пишет туда разное:
+ *   • документы: "booking#8"  → "Бронь #8"
+ *   • транзакции: "income"/"expense" → "Доход"/"Расход"
+ *   • прочее (имя клиента, авто, задачи) — оставляем как есть, оно уже на
+ *     русском или содержит человекочитаемые данные.
+ */
+export function formatEntityName(name: string | null | undefined): string {
+  if (!name) return '';
+  const trimmed = String(name).trim();
+  if (!trimmed) return '';
+  // Шаблон "<entity>#<id>" → "<Русское название> #<id>"
+  const m = trimmed.match(/^([a-z_]+)#(\d+)$/i);
+  if (m) {
+    const ru = ENTITY_TYPE_NAMES[m[1].toLowerCase()];
+    if (ru) return `${ru} #${m[2]}`;
+  }
+  // Чистое значение в нижнем регистре, известное в словаре (income/expense).
+  if (VALUE_TRANSLATIONS[trimmed.toLowerCase()]) {
+    return VALUE_TRANSLATIONS[trimmed.toLowerCase()];
+  }
+  return trimmed;
+}
+
+/**
+ * Локализует строку details. Бэк пишет туда машинные ключи через `=`
+ * («role=master, finance=false») или диффы со стрелкой («role: master → owner»).
+ * Здесь по простым правилам подменяем ключи и значения на русские.
+ */
+export function formatLogDetails(details: string | null | undefined): string {
+  if (!details) return '';
+  let out = String(details);
+  // 1. "key=value" → "ключ: значение"
+  out = out.replace(/([a-z_]+)\s*=\s*([A-Za-zА-Яа-яёЁ0-9_-]+)/g, (_m, key, val) => {
+    const k = KEY_TRANSLATIONS[key.toLowerCase()] || key;
+    const v = VALUE_TRANSLATIONS[String(val).toLowerCase()] || val;
+    return `${k}: ${v}`;
+  });
+  // 2. Диффы вида "key: oldVal → newVal" — переведём ключ и оба значения
+  out = out.replace(
+    /([a-z_]+):\s*([A-Za-zА-Яа-яёЁ0-9_."-]+)\s*→\s*([A-Za-zА-Яа-яёЁ0-9_."-]+)/g,
+    (_m, key, oldV, newV) => {
+      const k = KEY_TRANSLATIONS[key.toLowerCase()] || key;
+      const tr = (v: string) => {
+        const stripped = v.replace(/^"|"$/g, '');
+        return VALUE_TRANSLATIONS[stripped.toLowerCase()] || v;
+      };
+      return `${k}: ${tr(oldV)} → ${tr(newV)}`;
+    }
+  );
+  // 3. Одиночные английские ключевые значения (если details — это просто
+  //    "income" / "expense", как пишет tenant.cjs для транзакций в качестве
+  //    details=type — подменяем).
+  if (VALUE_TRANSLATIONS[out.trim().toLowerCase()]) {
+    out = VALUE_TRANSLATIONS[out.trim().toLowerCase()];
+  }
+  return out;
 }

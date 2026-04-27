@@ -344,8 +344,47 @@ const App = () => {
   const [bootstrapState, setBootstrapState] = useState<'pending' | 'guest' | 'authed'>('pending');
   const [user, setUser] = useState<UserData | null>(null);
   const [studio, setStudio] = useState<Studio | null>(null);
-  const [showProfile, setShowProfile] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false);
+  // Простая маршрутизация без react-router. Инициализация из window.location:
+  //   /profile         → showProfile=true (и линк из TG-бота «Оплатить в СРМ»
+  //                       приведёт сюда же)
+  //   /admin           → showAdmin=true
+  //   всё остальное    → main app с табами
+  // setShow*-обёртки ниже синхронизируют URL через history.pushState/replaceState,
+  // поэтому refresh страницы не сбрасывает экран.
+  const [showProfile, setShowProfileState] = useState(() => pathname === '/profile');
+  const [showAdmin, setShowAdminState] = useState(() => pathname === '/admin');
+  const setShowProfile = (v: boolean) => {
+    setShowProfileState(v);
+    try {
+      const target = v ? '/profile' : '/';
+      if (window.location.pathname !== target) {
+        window.history.pushState({}, '', target);
+      }
+    } catch (_) { /* SSR/sandbox */ }
+    if (v) setShowAdminState(false);
+  };
+  const setShowAdmin = (v: boolean) => {
+    setShowAdminState(v);
+    try {
+      const target = v ? '/admin' : '/';
+      if (window.location.pathname !== target) {
+        window.history.pushState({}, '', target);
+      }
+    } catch (_) { /* SSR/sandbox */ }
+    if (v) setShowProfileState(false);
+  };
+  // Кнопка «назад» в браузере: синхронизируем стейт с новым pathname.
+  useEffect(() => {
+    const onPop = () => {
+      try {
+        const p = window.location.pathname;
+        setShowProfileState(p === '/profile');
+        setShowAdminState(p === '/admin');
+      } catch (_) {}
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const isOnline = useOnlineStatus();
 
   // Bootstrap: один раз при маунте узнаём, есть ли валидная сессия.

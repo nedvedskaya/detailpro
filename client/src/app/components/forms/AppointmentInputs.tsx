@@ -55,7 +55,9 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
     const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         onChange(e);
         if (e.target.name === 'date' && e.target.value) {
-            if (!data.endDate) {
+            // Если конца нет — копируем начало.
+            // Если конец РАНЬШЕ нового начала — двигаем его вперёд, чтобы не остался невалидным.
+            if (!data.endDate || data.endDate < e.target.value) {
                 onChange({ target: { name: 'endDate', value: e.target.value } });
             }
         }

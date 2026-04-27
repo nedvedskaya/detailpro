@@ -15,6 +15,8 @@ interface FormFieldProps {
   disabled?: boolean;
   className?: string;
   rows?: number;
+  min?: string | number;
+  max?: string | number;
 }
 
 export const FormField = ({
@@ -29,7 +31,9 @@ export const FormField = ({
   options,
   disabled = false,
   className = '',
-  rows = 3
+  rows = 3,
+  min,
+  max,
 }: FormFieldProps) => {
   const baseInputClass = "w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm disabled:bg-zinc-50 disabled:text-zinc-400 whitespace-nowrap";
   const labelClass = "text-xs font-black text-zinc-400 uppercase tracking-widest mb-2 block";
@@ -85,6 +89,8 @@ export const FormField = ({
           placeholder={placeholder}
           required={required}
           disabled={disabled}
+          min={min}
+          max={max}
           className={`${baseInputClass} ${Icon ? 'pl-10' : ''}`}
         />
       </div>

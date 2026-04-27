@@ -11,6 +11,7 @@
  * здесь они используются под капотом.
  */
 import { showToast } from '@/app/components/ui/Toast';
+import { translateApiError } from '@/utils/errorMessages';
 
 const PG_INT_MAX = 2147483647;
 
@@ -105,14 +106,17 @@ export const replaceById = <T extends { id: any }>(
  *
  * Эта функция:
  *   - логирует ошибку в консоль (с контекстом, если передан);
- *   - извлекает человекочитаемое сообщение (e.message либо fallback);
+ *   - прогоняет через translateApiError → русский текст по словарю
+ *     ERROR_TRANSLATIONS (см. errorMessages.ts). Это ловит коды вроде
+ *     `schema_name_taken` / `email_already_used`, которые иначе показались
+ *     бы пользователю как есть;
  *   - показывает toast.
  *
  * Возвращает строку, которую показала пользователю — на случай, если хендлер
  * хочет ещё что-то с ней сделать (например, записать в локальный лог).
  *
  * @param err           объект ошибки из catch
- * @param fallbackMsg   текст для toast, если у ошибки нет message (или message — техмусор)
+ * @param fallbackMsg   текст для toast, если ни код, ни message не дали ничего читаемого
  * @param context       опциональный префикс для console.error (название операции)
  * @param toastType     по умолчанию 'error', можно переопределить на 'warning' для невалидаций
  */
@@ -124,10 +128,9 @@ export const handleApiError = (
 ): string => {
   if (context) console.error(`[${context}]`, err);
   else console.error(err);
-  const message =
-    typeof err?.message === 'string' && err.message.trim() && !err.message.startsWith('Failed to fetch')
-      ? err.message
-      : fallbackMsg;
+  // translateApiError сам отбрасывает «Failed to fetch» и прочий техмусор —
+  // вернёт fallback, если у ошибки нет полезного смысла для пользователя.
+  const message = translateApiError(err, fallbackMsg);
   showToast(message, toastType);
   return message;
 };

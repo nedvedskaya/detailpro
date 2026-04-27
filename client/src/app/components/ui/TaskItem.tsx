@@ -22,33 +22,58 @@ interface TaskItemProps {
   onOpenClient?: (client: any) => void;
 }
 
-export const TaskItem: React.FC<TaskItemProps> = ({ 
-  task, 
-  onToggle, 
-  onDelete, 
-  onEdit, 
-  client, 
-  onOpenClient 
+export const TaskItem: React.FC<TaskItemProps> = ({
+  task,
+  onToggle,
+  onDelete,
+  onEdit,
+  client,
+  onOpenClient
 }) => {
   const isOverdue = task.date < getDateStr(0) && !task.completed;
   const isUrgent = task.urgency === 'high';
-  
+
+  // Тап по всему блоку → редактирование задачи (для архивных тапы no-op).
+  // Внутренние кнопки (toggle, badge клиента, edit/delete-иконки, «Восстановить»)
+  // делают stopPropagation, чтобы тап в них не вылетал в карточку.
+  const handleCardClick = () => {
+    if (task.completed) return;
+    if (onEdit) onEdit(task);
+  };
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+
+  const cardCls =
+    'p-4 rounded-xl border shadow-sm transition-all ' +
+    (task.completed
+      ? 'bg-zinc-50 border-zinc-200'
+      : isOverdue
+        ? 'bg-red-50 border-red-200'
+        : isUrgent
+          ? 'bg-orange-50 border-orange-200'
+          : 'bg-white border-zinc-200') +
+    (task.completed ? '' : ' cursor-pointer active:scale-[0.99] hover:border-zinc-300');
+
   return (
-    <div className={`p-4 rounded-xl border ${task.completed ? 'bg-zinc-50 border-zinc-200' : isOverdue ? 'bg-red-50 border-red-200' : isUrgent ? 'bg-orange-50 border-orange-200' : 'bg-white border-zinc-200'} shadow-sm`}>
+    <div className={cardCls} onClick={handleCardClick} role={task.completed ? undefined : 'button'}>
       <div className="flex items-start gap-3">
-        <button 
-          onClick={() => onToggle(task.id)}
+        <button
+          type="button"
+          onClick={stop(() => onToggle(task.id))}
           className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${task.completed ? 'bg-green-500 border-green-500 text-white' : 'border-zinc-300 hover:border-zinc-400'}`}
         >
           {task.completed && <CheckCircle2 size={14} />}
         </button>
         <div className="flex-1 min-w-0">
           {(client || task.clientName) && (
-            <button 
-              onClick={() => client && onOpenClient && onOpenClient(client)}
+            <button
+              type="button"
+              onClick={stop(() => { if (client && onOpenClient) onOpenClient(client); })}
               className={`text-xs px-2 py-1 rounded-lg font-bold mb-2 inline-block ${
-                client 
-                  ? 'bg-blue-500 text-white hover:bg-blue-600 cursor-pointer' 
+                client
+                  ? 'bg-orange-500 text-white hover:bg-orange-600 cursor-pointer'
                   : 'bg-zinc-200 text-zinc-600 cursor-default'
               } transition-colors`}
             >
@@ -68,9 +93,10 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               </span>
             )}
             {task.completed && (
-              <button 
-                onClick={() => onToggle(task.id)}
-                className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded font-semibold hover:bg-blue-200 transition-colors"
+              <button
+                type="button"
+                onClick={stop(() => onToggle(task.id))}
+                className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-semibold hover:bg-orange-200 transition-colors"
               >
                 Восстановить
               </button>
@@ -79,12 +105,22 @@ export const TaskItem: React.FC<TaskItemProps> = ({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {!task.completed && onEdit && (
-            <button onClick={() => onEdit(task)} className="text-zinc-400 hover:text-zinc-600 p-1">
+            <button
+              type="button"
+              onClick={stop(() => onEdit(task))}
+              className="text-zinc-400 hover:text-zinc-600 p-1"
+              aria-label="Редактировать"
+            >
               <Edit3 size={16} />
             </button>
           )}
           {onDelete && (
-            <button onClick={() => onDelete(task.id)} className="text-zinc-400 hover:text-red-500 p-1">
+            <button
+              type="button"
+              onClick={stop(() => onDelete(task.id))}
+              className="text-zinc-400 hover:text-red-500 p-1"
+              aria-label="Удалить"
+            >
               <Trash2 size={16} />
             </button>
           )}

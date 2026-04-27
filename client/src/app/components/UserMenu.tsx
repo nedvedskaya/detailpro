@@ -49,7 +49,13 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
   const userIsAdmin = isAdmin(user.role as any);
 
   return (
-    <div className="bg-white border-b border-zinc-200 px-4 py-2 relative">
+    /* paddingTop = max(safe-area-inset-top, 8px) — раньше safe-area висел
+       на body, но это ломало scroll-цепочку (см. App.tsx и mobile.css).
+       Теперь top-safe-area отрисовывается тут, ниже notch / Dynamic Island. */
+    <div
+      className="bg-white border-b border-zinc-200 px-4 pb-2 relative shrink-0"
+      style={{ paddingTop: 'max(env(safe-area-inset-top, 0px), 8px)' }}
+    >
       <div className="flex items-center justify-between">
         <button
           onClick={() => setIsMenuOpen(!isMenuOpen)}

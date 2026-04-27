@@ -9,17 +9,20 @@ interface AutocompleteInputProps {
     name?: string;
     disabled?: boolean;
     aliases?: Record<string, string>;
+    // Опциональная sticky-кнопка в самом верху выпадашки (например, «+ Добавить клиента»).
+    topAction?: { label: string; onClick: () => void };
 }
 
-export const AutocompleteInput = ({ 
-    options, 
-    value, 
-    onChange, 
-    placeholder, 
-    className, 
-    name, 
-    disabled, 
-    aliases 
+export const AutocompleteInput = ({
+    options,
+    value,
+    onChange,
+    placeholder,
+    className,
+    name,
+    disabled,
+    aliases,
+    topAction,
 }: AutocompleteInputProps) => {
     const [suggestions, setSuggestions] = useState<string[]>([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
@@ -98,13 +101,23 @@ export const AutocompleteInput = ({
                 autoComplete="off" 
                 disabled={disabled}
             />
-            {showSuggestions && suggestions.length > 0 && !disabled && (
-                <div className="absolute z-[150] w-full bg-white border border-zinc-200 rounded-xl mt-1 shadow-2xl max-h-48 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
-                    <div className="sticky top-0 bg-zinc-50 px-3 py-1.5 border-b border-zinc-100">
-                        <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">
-                            {suggestions.length} {suggestions.length === 1 ? 'вариант' : suggestions.length < 5 ? 'варианта' : 'вариантов'}
-                        </span>
-                    </div>
+            {showSuggestions && (suggestions.length > 0 || topAction) && !disabled && (
+                <div className="absolute z-[150] w-full bg-white border border-zinc-200 rounded-xl mt-1 shadow-2xl max-h-60 overflow-y-auto animate-in fade-in slide-in-from-top-2 duration-200">
+                    {topAction && (
+                        <div
+                            onClick={() => { topAction.onClick(); setShowSuggestions(false); }}
+                            className="sticky top-0 px-4 py-3 bg-orange-50 hover:bg-orange-100 cursor-pointer text-sm font-bold text-orange-600 border-b border-orange-100 active:bg-orange-200 transition-colors"
+                        >
+                            {topAction.label}
+                        </div>
+                    )}
+                    {suggestions.length > 0 && (
+                      <div className="sticky bg-zinc-50 px-3 py-1.5 border-b border-zinc-100" style={{ top: topAction ? 44 : 0 }}>
+                          <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">
+                              {suggestions.length} {suggestions.length === 1 ? 'вариант' : suggestions.length < 5 ? 'варианта' : 'вариантов'}
+                          </span>
+                      </div>
+                    )}
                     {suggestions.map((opt, idx) => (
                         <div 
                             key={idx} 

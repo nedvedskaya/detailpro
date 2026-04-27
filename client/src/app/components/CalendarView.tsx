@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Plus, X, ChevronLeft, ChevronRight, CalendarDays, ChevronRight as ChevronRightIcon, Copy, CheckCircle2, DollarSign } from 'lucide-react';
 import { formatDate, formatTime, getDateStr, findCategoryById, isDateInRange } from '@/utils/helpers';
 import { LAYOUT_CLASSES } from '@/utils/styleConstants';
@@ -22,6 +22,9 @@ interface CalendarViewProps {
     // canEdit=false → master-режим: скрываем «+» в шапке. Тап по дню/событию
     // открывает детали клиента в просмотре через onOpenClient.
     canEdit?: boolean;
+    // Создание клиента прямо из формы новой брони (sticky-кнопка в выпадашке).
+    onAddClient?: (data: any, tasks?: any, records?: any) => Promise<any>;
+    ClientForm?: React.ComponentType<any>;
 }
 
 export const CalendarView = ({
@@ -33,11 +36,15 @@ export const CalendarView = ({
     tags,
     users = [],
     canEdit = true,
+    onAddClient,
+    ClientForm,
 }: CalendarViewProps) => {
-    const [currentDate, setCurrentDate] = useState(new Date()); 
+    const [currentDate, setCurrentDate] = useState(new Date());
     const [isAdding, setIsAdding] = useState(false);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [newEntry, setNewEntry] = useState(getInitialCalendarEntryState());
+    // Sub-modal: «+ Добавить клиента» прямо из формы новой брони.
+    const [isAddingClient, setIsAddingClient] = useState(false);
     const month = currentDate.getMonth();
     const year = currentDate.getFullYear();
     const names = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
@@ -61,12 +68,16 @@ export const CalendarView = ({
                             <button onClick={() => setIsAdding(false)} className="bg-zinc-100 p-3 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center"><X size={22}/></button>
                         </div>
                         <div className="space-y-4">
-                            <AutocompleteInput 
-                                options={clients.map(c => c.name)} 
-                                value={newEntry.clientName} 
-                                onChange={(e) => setNewEntry({...newEntry, clientName: e.target.value})} 
-                                placeholder="Поиск клиента..." 
-                                className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 font-bold outline-none" 
+                            <AutocompleteInput
+                                options={clients.map(c => c.name)}
+                                value={newEntry.clientName}
+                                onChange={(e) => setNewEntry({...newEntry, clientName: e.target.value})}
+                                placeholder="Поиск клиента..."
+                                className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 font-bold outline-none"
+                                topAction={(onAddClient && ClientForm) ? {
+                                    label: '+ Добавить клиента',
+                                    onClick: () => setIsAddingClient(true),
+                                } : undefined}
                             />
                             <AppointmentInputs
                                 data={newEntry}
@@ -103,6 +114,21 @@ export const CalendarView = ({
                         </div>
                     </div>
                  </div>
+             )}
+             {isAdding && canEdit && isAddingClient && ClientForm && onAddClient && (
+                 <ClientForm
+                     onSave={async (data: any, tasks: any, records: any) => {
+                         const saved = await onAddClient(data, tasks, records);
+                         // Подставляем имя нового клиента в текущую форму брони.
+                         const name = saved?.name || data?.name || '';
+                         if (name) setNewEntry((prev: any) => ({ ...prev, clientName: name }));
+                         setIsAddingClient(false);
+                     }}
+                     onCancel={() => setIsAddingClient(false)}
+                     categories={categories}
+                     tags={tags}
+                     users={users}
+                 />
              )}
              <div className="px-4 py-2 flex items-center justify-between bg-white/50 backdrop-blur-sm shrink-0">
                 <div className="flex items-center gap-4">

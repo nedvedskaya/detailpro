@@ -34,9 +34,11 @@ export const sanitizeUrl = (url: string | null | undefined): string | null => {
   if (!url) return null;
   
   const trimmed = url.trim();
-  
-  // Разрешённые протоколы
-  const allowedProtocols = ['http:', 'https:', 'tel:', 'mailto:'];
+
+  // Разрешённые протоколы.
+  // tg: — официальный deep-link Telegram (tg://resolve?phone=…), используется
+  // в кнопке «Telegram» в карточке клиента, чтобы открыть приложение напрямую.
+  const allowedProtocols = ['http:', 'https:', 'tel:', 'mailto:', 'tg:'];
   
   try {
     const urlObj = new URL(trimmed);
@@ -90,12 +92,51 @@ export const sanitizeWhatsAppUrl = (phone: string | null | undefined): string | 
  */
 export const sanitizeTelUrl = (phone: string | null | undefined): string | null => {
   const cleanPhone = sanitizePhone(phone);
-  
+
   if (!cleanPhone) {
     return null;
   }
-  
+
   return `tel:${cleanPhone}`;
+};
+
+/**
+ * Санитизация Telegram-ссылки.
+ *
+ * Используем tg://resolve?phone=<digits> — официальный deep-link Telegram
+ * (см. core.telegram.org/api/links). На iOS/Android открывает приложение
+ * напрямую и сразу ведёт в чат с пользователем по номеру; на десктопе
+ * запускает Telegram Desktop. Старая https://t.me/+<digits> на iOS
+ * нередко открывала веб-страницу t.me без авто-редиректа в приложение —
+ * пользователю приходилось вручную тапать «Открыть в Telegram».
+ *
+ * Российские номера в локальном формате 8XXXXXXXXXX автоматически
+ * нормализуются в 7XXXXXXXXXX (Telegram ищет в международном формате).
+ *
+ * @param phone - номер телефона
+ * @returns готовый deep-link tg:// или null
+ */
+export const sanitizeTelegramUrl = (phone: string | null | undefined): string | null => {
+  const cleanPhone = sanitizePhone(phone);
+
+  if (!cleanPhone) {
+    return null;
+  }
+
+  // Только цифры — без + и других символов.
+  let digits = cleanPhone.replace(/\+/g, '');
+
+  // RU-нормализация: 8XXXXXXXXXX → 7XXXXXXXXXX. Иначе Telegram не находит
+  // абонента, потому что ищет в международном формате (+7…).
+  if (digits.length === 11 && digits.startsWith('8')) {
+    digits = '7' + digits.slice(1);
+  }
+
+  if (digits.length < 10) {
+    return null;
+  }
+
+  return `tg://resolve?phone=${digits}`;
 };
 
 /**

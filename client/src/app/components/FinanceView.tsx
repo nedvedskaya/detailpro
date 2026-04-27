@@ -248,10 +248,15 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     
     const handleAddQuickTag = () => {
         if (!newTagName.trim()) return;
+        // type = тип текущей операции → тег появится только в доходах или
+        // только в расходах. Чтобы создать общий тег ('all') — пользователь
+        // делает это в разделе клиентов/записей; здесь тег всегда «прописан»
+        // к типу финансовой операции.
         const newTag = {
             id: `temp_tag_${Date.now()}`,
             name: newTagName.toUpperCase(),
-            color: newTagColor
+            color: newTagColor,
+            type: newTransaction.type,
         };
         onAddTag(newTag);
         setSelectedTags([...selectedTags, newTag.id]);
@@ -260,6 +265,13 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     };
     
     const filteredCategories = categories.filter(c => c.type === newTransaction.type);
+    // Фильтр тегов по типу операции: показываем теги, помеченные как
+    // 'all' (общие, видны и в доходах, и в расходах) либо совпадающие с
+    // типом текущей операции. Старые теги без поля type считаем общими.
+    const filteredTags = tags.filter(t => {
+      const tagType = t.type || 'all';
+      return tagType === 'all' || tagType === newTransaction.type;
+    });
     
     const handleEditClick = (t) => {
         setEditingTransaction(t);
@@ -322,7 +334,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     return (
       <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
         {isAdding && (
-            <div className="fixed inset-0 z-[200] bg-zinc-900/50 backdrop-blur-sm flex items-end animate-in fade-in" onClick={() => { 
+            <div className="fixed inset-0 z-[260] bg-zinc-900/50 backdrop-blur-sm flex items-end animate-in fade-in" onClick={() => {
                 setIsAdding(false); 
                 setEditingTransaction(null); 
                 setNewTransaction(getInitialTransactionState());
@@ -471,8 +483,8 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                             <div className="flex items-center justify-between mb-2">
                                 <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Теги</label>
                                 <div className="flex items-center gap-3">
-                                    {tags.length > 0 && (
-                                        <button 
+                                    {filteredTags.length > 0 && (
+                                        <button
                                             onClick={() => setIsEditingTags(!isEditingTags)}
                                             className={`text-[11px] font-bold transition-all ${isEditingTags ? 'text-red-500' : 'text-zinc-400 hover:text-zinc-600'}`}
                                         >
@@ -487,9 +499,9 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                     </button>
                                 </div>
                             </div>
-                            {tags.length > 0 ? (
+                            {filteredTags.length > 0 ? (
                                 <div className="flex flex-wrap gap-2">
-                                    {tags.map(tag => (
+                                    {filteredTags.map(tag => (
                                         <div
                                             key={tag.id}
                                             className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-bold transition-all cursor-pointer ${

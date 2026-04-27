@@ -1,6 +1,6 @@
-import { Phone, MessageSquare } from 'lucide-react';
+import { Phone, MessageSquare, Send } from 'lucide-react';
 import { ActionButton } from './ActionButton';
-import { sanitizeTelUrl, sanitizeWhatsAppUrl } from '@/utils/sanitize';
+import { sanitizeTelUrl, sanitizeWhatsAppUrl, sanitizeTelegramUrl } from '@/utils/sanitize';
 
 interface ContactButtonsProps {
   phone: string;
@@ -8,20 +8,21 @@ interface ContactButtonsProps {
   className?: string;
 }
 
-export const ContactButtons = ({ 
-  phone, 
+export const ContactButtons = ({
+  phone,
   size = 'md',
-  className = '' 
+  className = ''
 }: ContactButtonsProps) => {
   if (!phone) return null;
-  
+
   const telUrl = sanitizeTelUrl(phone);
   const waUrl = sanitizeWhatsAppUrl(phone);
+  const tgUrl = sanitizeTelegramUrl(phone);
 
   return (
     <div className={`flex gap-2 ${className}`}>
       {telUrl && (
-        <ActionButton 
+        <ActionButton
           as="a"
           href={telUrl}
           icon={Phone}
@@ -44,6 +45,21 @@ export const ContactButtons = ({
           variant="default"
         >
           WhatsApp
+        </ActionButton>
+      )}
+      {tgUrl && (
+        <ActionButton
+          as="button"
+          // tg://resolve?phone=… надо открывать в текущем окне через
+          // location.href — _blank на iOS даёт пустую вкладку без
+          // перехода в приложение.
+          onClick={() => { window.location.href = tgUrl; }}
+          icon={Send}
+          iconSize={12}
+          size={size}
+          variant="default"
+        >
+          Telegram
         </ActionButton>
       )}
     </div>

@@ -63,11 +63,15 @@ const MANAGER_PERMISSIONS: Permission[] = [
   'view_finance', 'create_transactions', 'edit_transactions', 'delete_transactions',
 ];
 
-// Мастер — только просмотр клиентов / задач / календаря. Финансы и админка
-// исключены полностью (никаких view_finance даже для чтения).
+// Мастер — read-only по клиентам и календарю. Задачи — единственное, где
+// мастер может писать: создавать/править/выполнять. Это его рабочий блок.
+// Финансы и админка по-прежнему закрыты полностью.
 const MASTER_PERMISSIONS: Permission[] = [
   'view_clients',
   'view_tasks',
+  'create_tasks',
+  'edit_tasks',
+  'delete_tasks',
   'view_calendar',
 ];
 
@@ -100,6 +104,51 @@ export const isOwner = (role: Role): boolean => {
 export const canEditEntities = (role: Role): boolean => {
   return role !== 'master';
 };
+
+/**
+ * Может ли роль управлять задачами (create / edit / toggle / delete).
+ * Отличие от canEditEntities: мастер тоже МОЖЕТ. Задачи — его рабочий блок,
+ * по бизнес-смыслу мастер должен сам себе ставить таски, отмечать выполненные
+ * и т. д. Owner/manager, разумеется, тоже могут.
+ */
+export const canEditTasks = (role: Role): boolean => {
+  return role === 'owner' || role === 'manager' || role === 'master';
+};
+
+/**
+ * Может ли роль править свой профиль (имя, фамилия, телефон, аватар).
+ *
+ * По бизнес-правилу мастер должен видеть карточку, но НЕ редактировать —
+ * любое изменение его данных делает собственник через админ-панель.
+ * Owner/manager могут править свой профиль свободно.
+ */
+export const canEditOwnProfile = (role: Role): boolean => role !== 'master';
+
+// ──────────────────────────────────────────────────────────────────────
+// Семантические хелперы для специфичных секций.
+//
+// Раньше в ProfilePage / AdminPanel / App.tsx по 8+ раз писали
+// `role === 'owner'`, что работало, но смешивало «технический факт роли»
+// с «бизнес-смыслом действия». Теперь когда меняется правило — например,
+// разрешить менеджеру править реквизиты студии — это правится в одной
+// точке, а не в 8.
+//
+// Бэк всё равно перепроверяет — см. server/routes/profile.cjs (only_owner_*),
+// поэтому ослабление этих хелперов не открывает дыры.
+// ──────────────────────────────────────────────────────────────────────
+
+/** Реквизиты студии для счёта-оферты — правит только собственник. */
+export const canEditStudio = (role: Role): boolean => role === 'owner';
+
+/** Управление подпиской (отмена/возобновление) — только собственник. */
+export const canManageSubscription = (role: Role): boolean => role === 'owner';
+
+/** Реферальная программа: смотреть и копировать ссылку — только собственник. */
+export const canManageReferrals = (role: Role): boolean => role === 'owner';
+
+/** Каталог услуг (ServicesManager) — owner и manager, master read-only. */
+export const canManageServices = (role: Role): boolean =>
+  role === 'owner' || role === 'manager';
 
 /**
  * Видит ли пользователь финансы.

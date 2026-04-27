@@ -28,21 +28,31 @@ export const Modal = ({
     full: 'max-w-full',
   };
 
-  const positionClasses = position === 'bottom' 
-    ? 'items-end' 
+  const positionClasses = position === 'bottom'
+    ? 'items-end'
     : 'items-center justify-center';
 
   const containerClasses = position === 'bottom'
     ? 'w-full rounded-t-[32px] pb-32'
     : `${maxWidthClasses[maxWidth]} rounded-3xl`;
 
+  // На десктопе bottom-sheet превращаем в центрированный диалог: класс
+  // .desktop-sheet-center перебивает items-end и ужимает контейнер по ширине.
+  // На мобильной версии действуют только мобильные правила.
+  const desktopOverride = position === 'bottom' ? 'desktop-sheet-center' : '';
+
   return (
-    <div 
-      className={`absolute inset-0 z-[200] bg-zinc-900/50 backdrop-blur-sm flex ${positionClasses} animate-in fade-in`}
+    <div
+      // z-[260]: выше нижнего таб-бара (z-[250] в App.tsx), иначе таб-бар
+      // перекрывает кнопку «Закрыть» внизу модалки и тапы по ней не доходят.
+      className={`fixed inset-0 z-[260] bg-zinc-900/50 backdrop-blur-sm flex ${positionClasses} ${desktopOverride} animate-in fade-in`}
       onClick={onClose}
     >
-      <div 
-        className={`${containerClasses} bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto`}
+      <div
+        // overscroll-contain + WebkitOverflowScrolling — чтобы скролл работал на iOS
+        // и не «цеплял» страницу под модалкой.
+        className={`${containerClasses} bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto overscroll-contain`}
+        style={{ WebkitOverflowScrolling: 'touch' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-6">

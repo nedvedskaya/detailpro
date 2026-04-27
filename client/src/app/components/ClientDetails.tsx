@@ -1,9 +1,11 @@
 import { useState } from 'react';
-import { 
-  ChevronLeft, Edit3, Trash2, Phone, MessageSquare, 
-  CalendarDays, RotateCcw, History, 
-  ChevronDown, AlertOctagon, Coins, CheckCircle2
+import {
+  ChevronLeft, Edit3, Trash2, Phone, MessageSquare, Send,
+  CalendarDays, RotateCcw, History,
+  ChevronDown, AlertOctagon, Coins, CheckCircle2,
+  ClipboardCheck, FileText
 } from 'lucide-react';
+import { AcceptanceActForm, WorkOrderForm } from '@/app/components/documents';
 import { Button } from '@/app/components/ui/Button';
 import { Badge } from '@/app/components/ui/Badge';
 import { ClientAvatar } from '@/app/components/ui/ClientAvatar';
@@ -14,7 +16,7 @@ import { BTN_METAL, CARD_METAL } from '@/utils/constants';
 import { PaymentBadge } from '@/app/components/ui/PaymentBadge';
 import { formatDate, formatTime, formatMoney, getDateStr, findCategoryById, matchId } from '@/utils/helpers';
 import { getInitialTaskState, getInitialRecordState } from '@/utils/initialStates';
-import { sanitizeTelUrl, sanitizeWhatsAppUrl, safeOpenLink } from '@/utils/sanitize';
+import { sanitizeTelUrl, sanitizeWhatsAppUrl, sanitizeTelegramUrl, safeOpenLink } from '@/utils/sanitize';
 
 interface ClientDetailsProps {
   client: any;
@@ -63,7 +65,10 @@ export const ClientDetails = ({
   const [completingRecordId, setCompletingRecordId] = useState<any>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<any>(null);
   const [savingRecord, setSavingRecord] = useState(false);
-  
+  // Открытое окно документа (акт приёмки / заказ-наряд) для конкретной брони.
+  // null — закрыто. id здесь — bookingId; форма сама подгрузит/создаст документ.
+  const [openDoc, setOpenDoc] = useState<{ bookingId: number; type: 'act' | 'order'; title: string } | null>(null);
+
   const clientRecords = client.records || [];
   const today = getDateStr(0);
   
@@ -119,8 +124,32 @@ export const ClientDetails = ({
     setNewTask(getInitialTaskState());
   };
 
+  // Клик по бэкдропу (область вне карточки на десктопе) — закрывает карточку.
+  // На мобиле карточка занимает почти весь экран, бэкдропа почти не видно —
+  // там основной способ закрытия остаётся прежним (кнопка «Назад»).
+  // Если внутри карточки открыта вложенная форма (редактирование записи или
+  // документ приёмки), бэкдроп-клик игнорируем — иначе можно случайно потерять
+  // несохранённые правки.
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    if (editingRecordId || isAddingRecord || isAddingTask || openDoc) return;
+    onBack();
+  };
+
   return (
-    <div className="fixed top-0 left-0 right-0 z-[120] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-right duration-300" style={{bottom: 'calc(64px + env(safe-area-inset-bottom, 0px))'}}>
+    // На десктопе .desktop-card-modal превращает полноэкранную карточку
+    // клиента в центрированный диалог — иначе она бы вылезала за границы
+    // центрированной колонки приложения.
+    // Внешний div — бэкдроп: ловит клики мимо карточки и закрывает её.
+    <div
+      className="fixed inset-0 z-[120] md:bg-black/40"
+      onClick={handleBackdropClick}
+    >
+    <div
+      className="fixed top-0 left-0 right-0 z-[120] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-right duration-300 desktop-card-modal"
+      style={{bottom: 'calc(64px + env(safe-area-inset-bottom, 0px))'}}
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="px-5 pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
         <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold"><ChevronLeft size={24} /> {editingRecordId ? 'Назад к карточке' : 'Назад'}</button>
         {!editingRecordId && canEdit && <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>}
@@ -146,28 +175,46 @@ export const ClientDetails = ({
           
           <div className="mt-4 mb-6" />
 
-          <div className="flex gap-3 w-full">
-            <Button 
-              variant="primary" 
-              icon={Phone} 
+          {/* 3 кнопки в строку: gap-2 на мобиле и !px-3 ужимают паддинги, чтобы
+              «Позвонить / WhatsApp / Telegram» помещались в одну линию даже на
+              iPhone SE (375 px). На десктопе остаётся стандартный gap-3. */}
+          <div className="flex gap-2 sm:gap-3 w-full">
+            <Button
+              variant="primary"
+              icon={Phone}
               onClick={() => {
                 const telUrl = sanitizeTelUrl(client.phone);
                 if (telUrl) window.location.href = telUrl;
-              }} 
-              className="flex-1"
+              }}
+              className="flex-1 !px-3 sm:!px-4"
             >
               Позвонить
             </Button>
-            <Button 
-              variant="primary" 
-              icon={MessageSquare} 
+            <Button
+              variant="primary"
+              icon={MessageSquare}
               onClick={() => {
                 const waUrl = sanitizeWhatsAppUrl(client.phone);
                 if (waUrl) safeOpenLink(waUrl);
-              }} 
-              className="flex-1"
+              }}
+              className="flex-1 !px-3 sm:!px-4"
             >
               WhatsApp
+            </Button>
+            <Button
+              variant="primary"
+              icon={Send}
+              onClick={() => {
+                const tgUrl = sanitizeTelegramUrl(client.phone);
+                // tg://resolve?phone=… надо открывать в текущем окне:
+                // window.open('tg://…', '_blank') на iOS Safari открывает
+                // пустую вкладку без редиректа в приложение. Через
+                // location.href iOS видит deep-link и открывает Telegram.
+                if (tgUrl) window.location.href = tgUrl;
+              }}
+              className="flex-1 !px-3 sm:!px-4"
+            >
+              Telegram
             </Button>
           </div>
         </div>
@@ -380,6 +427,33 @@ export const ClientDetails = ({
                         </button>
                       </div>
                     )}
+                    {/* Документы по брони — акт приёмки + заказ-наряд. */}
+                    {deletingRecordId !== record.id && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setOpenDoc({
+                            bookingId: Number(record.id),
+                            type: 'act',
+                            title: `${client.name || ''} • ${record.service || ''}`.trim().replace(/^•\s*/, ''),
+                          })}
+                          className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-2 ${BTN_METAL} font-bold text-xs`}
+                        >
+                          <ClipboardCheck size={14} />
+                          Акт приёмки
+                        </button>
+                        <button
+                          onClick={() => setOpenDoc({
+                            bookingId: Number(record.id),
+                            type: 'order',
+                            title: `${client.name || ''} • ${record.service || ''}`.trim().replace(/^•\s*/, ''),
+                          })}
+                          className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-2 ${BTN_METAL} font-bold text-xs`}
+                        >
+                          <FileText size={14} />
+                          Заказ-наряд
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -431,6 +505,32 @@ export const ClientDetails = ({
                           <p className="text-sm font-medium text-zinc-500 whitespace-nowrap">{formatDate(record.date)} • {formatTime(record.time)}</p>
                           <p className="text-lg font-black text-zinc-800">{formatMoney(record.amount)} ₽</p>
                         </div>
+                        {/* Быстрый доступ к документам выполненной брони —
+                            чтобы вспомнить, что было сделано в прошлый раз. */}
+                        <div className="flex gap-2 pt-2">
+                          <button
+                            onClick={() => setOpenDoc({
+                              bookingId: Number(record.id),
+                              type: 'act',
+                              title: `${client.name || ''} • ${record.service || ''}`.trim().replace(/^•\s*/, ''),
+                            })}
+                            className={`flex-1 py-2 rounded-xl flex items-center justify-center gap-1.5 ${BTN_METAL} font-bold text-xs`}
+                          >
+                            <ClipboardCheck size={13} />
+                            Акт приёмки
+                          </button>
+                          <button
+                            onClick={() => setOpenDoc({
+                              bookingId: Number(record.id),
+                              type: 'order',
+                              title: `${client.name || ''} • ${record.service || ''}`.trim().replace(/^•\s*/, ''),
+                            })}
+                            className={`flex-1 py-2 rounded-xl flex items-center justify-center gap-1.5 ${BTN_METAL} font-bold text-xs`}
+                          >
+                            <FileText size={13} />
+                            Заказ-наряд
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -473,7 +573,33 @@ export const ClientDetails = ({
           {completedTasks.length > 0 && (<div className="mt-6"><button onClick={() => setShowArchive(!showArchive)} className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all">Архив ({completedTasks.length}) <ChevronDown size={12} className={showArchive ? 'rotate-180' : ''} /></button>{showArchive && <div className="space-y-2 opacity-60 animate-in fade-in">{completedTasks.map(t => <TaskItem key={t.id} task={t} onToggle={onToggleTask} />)}</div>}</div>)}
         </div>}
       </div>
-      
+
+      {/* ── Документы по брони (акт приёмки / заказ-наряд) ── */}
+      {openDoc?.type === 'act' && (
+        <AcceptanceActForm
+          isOpen
+          onClose={() => setOpenDoc(null)}
+          bookingId={openDoc.bookingId}
+          bookingTitle={openDoc.title}
+        />
+      )}
+      {openDoc?.type === 'order' && (
+        <WorkOrderForm
+          isOpen
+          onClose={() => setOpenDoc(null)}
+          bookingId={openDoc.bookingId}
+          bookingTitle={openDoc.title}
+          initialItems={(() => {
+            // Если у брони уже заполнен service+amount — стартуем наряд с одной строки.
+            const rec = activeRecords.find((r: any) => Number(r.id) === openDoc.bookingId);
+            if (!rec) return undefined;
+            const price = Number(rec.amount) || 0;
+            const name = String(rec.service || '').trim();
+            return name ? [{ name, quantity: 1, price }] : undefined;
+          })()}
+        />
+      )}
+    </div>
     </div>
   );
 };

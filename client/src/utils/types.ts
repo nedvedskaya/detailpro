@@ -77,6 +77,11 @@ export interface ProfileResponse {
     // см. UserData.canViewFinance — те же правила.
     canViewFinance?: boolean;
     lastLoginAt?: string | null;
+    // Telegram-привязка (Фаза 1 интеграции с TG-ботом). Если tgLinked=false —
+    // ProfilePage показывает «Подключить Telegram» с deep-link на бота.
+    tgLinked?: boolean;
+    tgUsername?: string | null;
+    tgLinkedAt?: string | null;
   };
   studio: {
     id: string;
@@ -91,6 +96,19 @@ export interface ProfileResponse {
     // true → пользователь нажал «Отменить подписку».
     // Доступ сохраняется до accessUntil, но автопродления не будет.
     cancelPending: boolean;
+    // Реквизиты для шапки PDF-документов (заполняются owner-ом в Профиле).
+    // null до заполнения → в документе будет «—».
+    inn: string | null;
+    ogrn: string | null;
+    legalAddress: string | null;
+    actualAddress: string | null;
+    contactPhone: string | null;
+    contactEmail: string | null;
+    guaranteeText: string | null;
+    // Реферальная программа: уникальный 8-символьный код студии и текущий
+    // баланс бонусов в копейках. Подробности — в saas-crm/server/sql/005.
+    referralCode: string | null;
+    bonusBalanceKop: number;
   };
   limits: {
     currentUsers: number;

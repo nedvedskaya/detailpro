@@ -63,7 +63,14 @@ export const BookingFormFields = ({
           name="date"
           type="date"
           value={bookingData.date}
-          onChange={onChange}
+          onChange={(e) => {
+            onChange(e as React.ChangeEvent<HTMLInputElement>);
+            // Если конец брони раньше нового начала — двигаем его вперёд.
+            const v = (e.target as HTMLInputElement).value;
+            if (showEndDate && bookingData.endDate && v && bookingData.endDate < v) {
+              onChange({ target: { name: 'endDate', value: v } } as any);
+            }
+          }}
           icon={Calendar}
           required
         />
@@ -76,6 +83,7 @@ export const BookingFormFields = ({
             value={bookingData.endDate || ''}
             onChange={onChange}
             icon={Calendar}
+            min={bookingData.date}
           />
         )}
 

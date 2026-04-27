@@ -21,6 +21,42 @@ export const parseLocalDate = (dateStr: string): Date => {
   return new Date(dateStr);
 };
 
+/**
+ * Устойчивый парсер для значений из Postgres TIMESTAMPTZ.
+ *
+ * Зачем отдельная функция: дефолтный `new Date(...)` в Safari/iOS падает на
+ * двух квирках формата pg-драйвера:
+ *   1. Микросекунды («2026-04-26 11:28:31.968692+00») — Safari ждёт максимум
+ *      миллисекунды, поэтому хвост `968692` интерпретируется как ошибка.
+ *   2. Без двоеточия в TZ-смещении («+00» вместо «+00:00») — тоже Invalid Date.
+ *   3. Пробел вместо «T» как разделитель даты и времени — Chrome/Firefox
+ *      ещё кушают, а Safari нет.
+ *
+ * Эта функция нормализует все три случая и возвращает `null` для невалидного
+ * входа (вместо «Invalid Date»), чтобы вызывающий код мог честно показать
+ * fallback-текст вроде «дата не указана» вместо «дата некорректна».
+ *
+ * Используется в ProfilePage для access_until и в любых других местах,
+ * где приходит TIMESTAMPTZ из бэка. Для DATE-only полей (YYYY-MM-DD) лучше
+ * использовать parseLocalDate выше — он не «теряет» день из-за TZ.
+ */
+export const parseDbDate = (value: string | Date | null | undefined): Date | null => {
+  if (!value) return null;
+  if (value instanceof Date) return isNaN(value.getTime()) ? null : value;
+  let str = String(value).trim();
+  if (!str) return null;
+  // Чистый DATE — отдаём через локальный полдень, как parseLocalDate.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const [y, m, day] = str.split('-').map(Number);
+    return new Date(y, m - 1, day, 12, 0, 0);
+  }
+  if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(str)) str = str.replace(' ', 'T');
+  str = str.replace(/\.(\d{3})\d+/, '.$1');           // µs → ms
+  str = str.replace(/([+-]\d{2})$/, '$1:00');          // +00 → +00:00
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 export const toDateStr = (val: any): string => {
   if (!val) return '';
   if (typeof val === 'string') {
@@ -115,30 +151,51 @@ export const formatTime = (timeStr: string | undefined): string => {
  * @param date - дата в любом формате
  * @param locale - локаль (по умолчанию 'ru-RU')
  * @returns отформатированная дата и время (например: "15.01.2025, 14:30")
+ *
+ * Принимает Postgres TIMESTAMPTZ (с микросекундами и неполным TZ типа «+00»)
+ * и DATE-only строки — всё через parseDbDate / parseLocalDate, чтобы не падать
+ * в Safari/Chrome на квирках pg-драйвера.
  */
 export const formatDateTime = (date: Date | string | null | undefined, locale = 'ru-RU'): string => {
   if (!date) return '—';
-  let d: Date;
+  let d: Date | null;
   if (date instanceof Date) {
-    d = date;
+    d = isNaN(date.getTime()) ? null : date;
   } else if (typeof date === 'string') {
-    // ISO с «T» или Postgres-формат «YYYY-MM-DD HH:MM:SS» — парсим как полный datetime,
-    // иначе fallback на parseLocalDate (для date-only строк, чтобы не было TZ-сдвига).
-    if (date.includes('T') || /\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(date)) {
-      d = new Date(date.replace(' ', 'T'));
-    } else {
-      d = parseLocalDate(date);
-    }
+    // DATE-only (YYYY-MM-DD) — через parseLocalDate, чтобы не было TZ-сдвига на день.
+    // Всё остальное (ISO с «T», PG-формат с пробелом, µs, «+00») — через parseDbDate.
+    d = /^\d{4}-\d{2}-\d{2}$/.test(date) ? parseLocalDate(date) : parseDbDate(date);
   } else {
     return '—';
   }
-  if (isNaN(d.getTime())) return '—';
+  if (!d || isNaN(d.getTime())) return '—';
   return d.toLocaleString(locale, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit'
+  });
+};
+
+/**
+ * formatDateRu — «26 апреля 2026», без времени, для дат регистрации, доступа,
+ * подписки и т.п.
+ *
+ * Работает с Postgres TIMESTAMPTZ (включая микросекунды и неполный TZ-сдвиг
+ * вроде «+00») и с чистыми DATE («YYYY-MM-DD»). Для невалидного входа
+ * возвращает «—», чтобы UI не падал на «Invalid Date».
+ *
+ * Используется в ProfilePage (дата регистрации, access_until), AdminPanel
+ * (дата регистрации сотрудника) и везде, где нужна «человеческая» дата без часов.
+ */
+export const formatDateRu = (value: string | Date | null | undefined): string => {
+  const d = parseDbDate(value);
+  if (!d) return '—';
+  return d.toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
   });
 };
 
@@ -240,7 +297,9 @@ export const normalizeRecord = (record: any) => {
     tags: parsedTags,
     paymentStatus: record.payment_status || 'none',
     isPaid: record.is_paid || false,
-    isCompleted: record.is_completed || false
+    isCompleted: record.is_completed || false,
+    master_id: record.master_id || null,
+    master_name: record.master_name || null
   };
 };
 
@@ -248,10 +307,12 @@ export const normalizeTask = (t: any) => ({
   ...t,
   clientId: t.client_id || null,
   clientName: t.client_name || null,
-  completed: t.status === 'completed',
+  completed: t.status === 'done',
   urgency: t.priority === 'high' ? 'high' : 'low',
   date: t.due_date || t.date || getDateStr(0),
-  time: t.time || '10:00'
+  time: t.due_time || t.time || '10:00',
+  assigned_to: t.assigned_to || null,
+  assigned_to_name: t.assigned_to_name || null
 });
 
 export const normalizeClient = (client: any, records: any[] = []) => {
@@ -310,10 +371,12 @@ export const buildClientPayload = (data: any) => ({
 export const buildTaskPayload = (task: any, overrides: Record<string, any> = {}) => ({
   title: task.title || '',
   description: task.description || '',
-  status: task.completed ? 'completed' : 'pending',
+  status: task.completed ? 'done' : 'pending',
   priority: task.urgency === 'high' ? 'high' : 'medium',
   client_id: task.clientId || null,
   due_date: task.date || null,
+  due_time: task.time || null,
+  assigned_to: task.assigned_to || null,
   ...overrides
 });
 
@@ -332,6 +395,7 @@ export const buildRecordPayload = (rec: any, clientId: number | string, override
   payment_status: rec.paymentStatus || rec.payment_status || 'none',
   is_paid: (rec.paymentStatus || rec.payment_status) === 'paid',
   is_completed: rec.isCompleted || rec.is_completed || false,
+  master_id: rec.master_id || null,
   ...overrides
 });
 
