@@ -40,6 +40,7 @@ const {
 const { validateSchemaName } = require('../lib/tenant.cjs');
 const { assertStrongPassword } = require('../lib/validation.cjs');
 const { logAction } = require('../lib/audit.cjs');
+const { securityLog, SEVERITY } = require('../lib/security_log.cjs');
 const tgClient = require('../lib/telegram.cjs');
 const { applyGender } = require('../lib/gender.cjs');
 
@@ -388,6 +389,13 @@ router.post('/login', async (req, res, next) => {
     // Email-блок защищает конкретного юзера от целенаправленного перебора.
     // IP-блок защищает от distributed-атаки (один IP перебирает много email).
     if (loginByEmail.isBlocked(emailKey) || (ipKey && loginByIp.isBlocked(ipKey))) {
+      securityLog({
+        event: 'login.rate_limit_block',
+        severity: SEVERITY.WARN,
+        ip: ipKey,
+        email: emailKey,
+        route: 'POST /api/auth/login',
+      });
       return res.status(429).json({ error: 'too_many_attempts' });
     }
 
@@ -408,6 +416,14 @@ router.post('/login', async (req, res, next) => {
       await verifyPassword(password, '0000.0000');
       loginByEmail.recordFailure(emailKey);
       if (ipKey) loginByIp.recordFailure(ipKey);
+      securityLog({
+        event: 'login.failure',
+        severity: SEVERITY.WARN,
+        ip: ipKey,
+        email: emailKey,
+        reason: 'unknown_email',
+        route: 'POST /api/auth/login',
+      });
       return res.status(401).json({ error: 'invalid_credentials' });
     }
 
@@ -415,6 +431,15 @@ router.post('/login', async (req, res, next) => {
     if (!ok) {
       loginByEmail.recordFailure(emailKey);
       if (ipKey) loginByIp.recordFailure(ipKey);
+      securityLog({
+        event: 'login.failure',
+        severity: SEVERITY.WARN,
+        ip: ipKey,
+        email: emailKey,
+        userId: user.id,
+        reason: 'wrong_password',
+        route: 'POST /api/auth/login',
+      });
       return res.status(401).json({ error: 'invalid_credentials' });
     }
 
@@ -431,6 +456,14 @@ router.post('/login', async (req, res, next) => {
     // IP уже было 25 неудач по разным email и потом пришёл успех — это
     // подозрительно, оставляем счётчик.
     loginByEmail.recordSuccess(emailKey);
+    securityLog({
+      event: 'login.success',
+      severity: SEVERITY.INFO,
+      ip: ipKey,
+      email: emailKey,
+      userId: user.id,
+      route: 'POST /api/auth/login',
+    });
 
     // last_login_at — для отображения в админке «когда заходил». Не блокируем
     // логин если запись не удалась (это лишь дата для UI).

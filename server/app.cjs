@@ -24,12 +24,15 @@ const path = require('node:path');
 const express = require('express');
 
 const webhooksRouter = require('./routes/webhooks.cjs');
+const telegramRouter = require('./routes/telegram.cjs');
 const authRouter = require('./routes/auth.cjs');
 const profileRouter = require('./routes/profile.cjs');
 const tenantRouter = require('./routes/tenant.cjs');
 const adminRouter = require('./routes/admin.cjs');
+const documentsRouter = require('./routes/documents.cjs');
 
 const { requireAuth, requireActiveStudio } = require('./lib/middleware.cjs');
+const { trackErrorResponse } = require('./lib/security_log.cjs');
 
 const app = express();
 
@@ -68,19 +71,85 @@ app.use((req, res, next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// Минимальные security headers (без helmet — чтобы не тянуть зависимость)
+// Security headers (без helmet — чтобы не тянуть зависимость).
+//
+// Дублирование с nginx (он же шлёт X-Content-Type-Options/X-Frame-Options):
+// это ОК. Если завтра кто-то поднимет saas-crm без nginx (например, локально
+// для отладки или временно через прямой Node-listen), заголовки всё равно
+// будут стоять.
+//
+// HSTS: max-age=2 года + includeSubDomains. Включается только когда
+// X-Forwarded-Proto=https (или secure-cookie стоит) — иначе при работе
+// dev-сервера на http://localhost браузер закеширует HSTS и пойдёт ломать
+// разработчиков. Production: APP_ORIGIN всегда https, NODE_ENV=production.
+//
+// CSP: default-src 'self' плюс несколько whitelist'ов под наш стек:
+//   - script-src 'self' — только наш код, никаких inline-скриптов
+//     (Vite-build удаляет inline-script в HTML, fingerprint-хеши в путях)
+//   - style-src 'self' 'unsafe-inline' — Tailwind/Vite inject inline-styles
+//     при HMR; в проде после vite build они в файлах, но defense-in-depth
+//     оставляем (плюс компоненты используют style={{...}} в JSX)
+//   - img-src — поддерживаем blob: для аватара (FileReader.readAsDataURL)
+//     и data: для base64-подписей
+//   - connect-src 'self' — XHR только к собственному origin
+//   - frame-ancestors 'none' — никто не может встроить нас в iframe
+//     (более строгий аналог X-Frame-Options=DENY; современный браузер
+//     уважает CSP frame-ancestors поверх XFO)
 // ──────────────────────────────────────────────────────────────────────
+const IS_PRODUCTION = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+
+  // HSTS только в production и только когда запрос пришёл через HTTPS
+  // (определяем по X-Forwarded-Proto, который выставляет nginx).
+  if (IS_PRODUCTION && req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=63072000; includeSubDomains'
+    );
+  }
+
+  // CSP. Если в будущем добавятся внешние ресурсы (analytics, sentry и т.п.),
+  // расширять здесь — иначе они будут блокированы CSP.
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self' https://*.payform.ru",
+    ].join('; ')
+  );
+
   next();
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// IP-burst monitoring: пишет [SEC] event если с одного IP идёт >50 4xx
+// за 5 минут. Сам по себе ничего не блокирует — rate_limit.cjs делает
+// блокировку на конкретных эндпоинтах. Это глобальное наблюдение.
+// ──────────────────────────────────────────────────────────────────────
+app.use(trackErrorResponse);
 
 // ──────────────────────────────────────────────────────────────────────
 // 1. Webhooks (raw body — ДО express.json!)
 // ──────────────────────────────────────────────────────────────────────
 app.use('/api/webhooks', webhooksRouter);
+
+// ──────────────────────────────────────────────────────────────────────
+// 1b. Telegram webhook — без auth, без requireActiveStudio.
+//      Безопасность: проверяем X-Telegram-Bot-Api-Secret-Token внутри роута.
+//      Свой express.json внутри роута (256 KB), чтобы не зависеть от глобального.
+// ──────────────────────────────────────────────────────────────────────
+app.use('/api/telegram', telegramRouter);
 
 // ──────────────────────────────────────────────────────────────────────
 // 2. JSON parser для всего остального API
@@ -117,6 +186,12 @@ app.use('/api/admin', requireAuth, requireActiveStudio, adminRouter);
 // 6. Tenant CRUD (clients, vehicles, services, bookings, …)
 // ──────────────────────────────────────────────────────────────────────
 app.use('/api', requireAuth, requireActiveStudio, tenantRouter);
+
+// ──────────────────────────────────────────────────────────────────────
+// 6b. Документы по броням (work_orders, acceptance_acts, order_photos, PDF).
+//     Под теми же гейтами, что tenantRouter.
+// ──────────────────────────────────────────────────────────────────────
+app.use('/api', requireAuth, requireActiveStudio, documentsRouter);
 
 // ──────────────────────────────────────────────────────────────────────
 // 7. Static frontend  (Vite-build, если есть; в dev проксирует Vite сам)

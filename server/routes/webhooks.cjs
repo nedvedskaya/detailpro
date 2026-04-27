@@ -40,6 +40,7 @@ const express = require('express');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
 const tg = require('../lib/telegram.cjs');
+const { securityLog, SEVERITY } = require('../lib/security_log.cjs');
 
 const router = express.Router();
 
@@ -348,6 +349,20 @@ router.post('/prodamus', rawParser, async (req, res) => {
     await logWebhook({
       source: 'prodamus', ip, signatureValid: false, rawBody: rawStr,
       status: 401, errorMessage: 'invalid_signature',
+    });
+    // ALERT: попытка прислать webhook с невалидной подписью. Это либо
+    // кто-то сканирует за платёжными webhook'ами и пробует подобрать,
+    // либо ротировали секрет, но не обновили его в Prodamus-кабинете.
+    // В обоих случаях — нужно посмотреть.
+    securityLog({
+      event: 'webhook.signature_invalid',
+      severity: SEVERITY.ALERT,
+      ip,
+      route: 'POST /api/webhooks/prodamus',
+      meta: {
+        body_size: rawStr.length,
+        has_sign_header: !!headerSign,
+      },
     });
     return res.status(401).send('invalid signature');
   }

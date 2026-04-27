@@ -40,10 +40,31 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-set -a
-# shellcheck source=/dev/null
-. "$ENV_FILE"
-set +a
+# Раньше использовали `set -a; . "$ENV_FILE"; set +a` — но это интерпретирует
+# .env как shell-script. Любое значение с cyrillic-символами и пробелами
+# (например `LEGAL_OPERATOR_NAME=Ольга Иванова`) ломалось:
+# `bash: Иванова: command not found` → set -e → exit.
+#
+# Берём только нужные ключи через grep — никакого shell-eval'а.
+get_env_var() {
+  # Извлекает значение KEY= из .env, обрезает inline-комментарий и
+  # пробелы вокруг. Кавычки в значениях не поддерживаем (у нас их нет).
+  local key="$1"
+  grep -E "^${key}=" "$ENV_FILE" | head -1 \
+    | cut -d= -f2- \
+    | sed -E 's/[[:space:]]*#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+DB_HOST="$(get_env_var DB_HOST)"
+DB_PORT="$(get_env_var DB_PORT)"
+DB_USER="$(get_env_var DB_USER)"
+DB_NAME="$(get_env_var DB_NAME)"
+DB_PASSWORD="$(get_env_var DB_PASSWORD)"
+DB_CA_CERT_PATH="$(get_env_var DB_CA_CERT_PATH)"
+BACKUP_DIR="$(get_env_var BACKUP_DIR)"
+BACKUP_RETENTION_DAYS="$(get_env_var BACKUP_RETENTION_DAYS)"
+AVATARS_DIR_RAW="$(get_env_var AVATARS_DIR)"
+PGSSLMODE_RAW="$(get_env_var PGSSLMODE)"
 
 # ── 2. Валидация переменных ───────────────────────────────────────────
 : "${DB_HOST:?DB_HOST не задан}"
@@ -64,7 +85,7 @@ DUMP_FILE="$BACKUP_DIR/saas-${DATE_TAG}.dump"
 LOG_PREFIX="[$(date -Iseconds)]"
 
 # ── 3. SSL/CA для managed-кластера ────────────────────────────────────
-PGSSLMODE="${PGSSLMODE:-require}"
+PGSSLMODE="${PGSSLMODE_RAW:-require}"
 export PGSSLMODE
 if [ -n "${DB_CA_CERT_PATH:-}" ] && [ -f "$DB_CA_CERT_PATH" ]; then
   export PGSSLROOTCERT="$DB_CA_CERT_PATH"
@@ -118,7 +139,7 @@ echo "$LOG_PREFIX OK: размер $SIZE, записей в TOC $ENTRIES"
 # ── 6. Аватары пользователей ──────────────────────────────────────────
 # Не пихаем в pg_dump (раздулся бы). tar отдельным файлом, ротация общая.
 # AVATARS_DIR можно переопределить в .env, по умолчанию — стандартное место.
-AVATARS_DIR="${AVATARS_DIR:-$PROJECT_ROOT/var/avatars}"
+AVATARS_DIR="${AVATARS_DIR_RAW:-$PROJECT_ROOT/var/avatars}"
 AVATARS_TGZ="$BACKUP_DIR/avatars-${DATE_TAG}.tgz"
 if [ -d "$AVATARS_DIR" ]; then
   echo "$LOG_PREFIX tar avatars/ → $AVATARS_TGZ"
