@@ -86,8 +86,42 @@ export const api = {
     firstName?: string;
     lastName?: string;
     consents: { personal_data: boolean; terms: boolean; marketing?: boolean };
+    // Реферальный код приглашающего (если регистрация через ?ref=CODE).
+    // Невалидный код не блокирует signup — бэк игнорирует.
+    referralCode?: string | null;
+    // Сценарий «бот → сайт»: одноразовый токен из saas_meta.tg_signup_tokens.
+    // Если валиден — бэк автоматически привяжет TG-аккаунт к новому юзеру
+    // и пришлёт welcome + онбординг в TG. Если протух — signup пройдёт
+    // без линка, фронт ничего не покажет (а позже юзер сможет привязать
+    // через Профиль → Telegram).
+    tgSignupToken?: string | null;
   }) {
-    return send<{ user: any; studio: Studio }>('POST', '/auth/signup', payload);
+    return send<{ user: any; studio: Studio; tgLinked?: boolean }>('POST', '/auth/signup', payload);
+  },
+  // Валидатор TG-токена для signup-формы. Дёргается при заходе на сайт с
+  // ?tg=<token> — чтобы показать бейдж «Telegram @username будет подключён».
+  // НЕ списывает токен (consume происходит в createStudio при /auth/signup).
+  getTgSignupToken(token: string) {
+    return get<
+      | { valid: true; tg_username: string | null }
+      | { valid: false; reason: 'expired' | 'used' | 'unknown' }
+    >(`/auth/tg-signup-token?token=${encodeURIComponent(token)}`);
+  },
+  // Реферальная программа (только owner). Возвращает код, баланс,
+  // статистику и журнал событий — всё, что нужно для блока «Мои рефералы»
+  // в профиле.
+  getReferral() {
+    return get<{
+      referralCode: string;
+      bonusBalanceKop: number;
+      referralsCount: number;
+      paidReferralsCount: number;
+      totalEarnedKop: number;
+      totalSpentKop: number;
+      bonusPerReferralKop: number;
+      referrals: Array<{ id: string; displayName: string; createdAt: string; hasPaid: boolean }>;
+      events: Array<{ id: number; kind: 'credit' | 'debit'; amountKop: number; sourceStudioId: string | null; paymentOrderId: string | null; createdAt: string }>;
+    }>('/profile/referral');
   },
   login(payload: { email: string; password: string }) {
     return send<{ user: any; studio: Studio }>('POST', '/auth/login', payload);
@@ -111,6 +145,33 @@ export const api = {
   updateProfile(patch: { firstName?: string | null; lastName?: string | null; phone?: string | null }) {
     return send<{ ok: true; user: ProfileResponse['user'] }>('PATCH', '/profile', patch);
   },
+  // Реквизиты студии для PDF (только owner). Возвращает обновлённые поля
+  // студии — мерджим в data.studio локально, чтобы не дёргать /profile целиком.
+  updateStudio(patch: {
+    displayName?: string | null;
+    inn?: string | null;
+    ogrn?: string | null;
+    legalAddress?: string | null;
+    actualAddress?: string | null;
+    contactPhone?: string | null;
+    contactEmail?: string | null;
+    guaranteeText?: string | null;
+  }) {
+    return send<{
+      ok: true;
+      studio: {
+        id: string;
+        displayName: string;
+        inn: string | null;
+        ogrn: string | null;
+        legalAddress: string | null;
+        actualAddress: string | null;
+        contactPhone: string | null;
+        contactEmail: string | null;
+        guaranteeText: string | null;
+      };
+    }>('PATCH', '/profile/studio', patch);
+  },
   uploadAvatar(file: File) {
     // multipart/form-data — заголовок Content-Type выставит браузер сам.
     const fd = new FormData();
@@ -131,6 +192,56 @@ export const api = {
   },
   resumeSubscription() {
     return send<{ ok: true }>('POST', '/profile/subscription/resume');
+  },
+
+  // ────── Payment intent ──────
+  // Серверно-выпущенный токен, привязывающий платёжный URL Prodamus к
+  // authenticated студии. Без него webhook берёт studio_id из payload — что
+  // позволяло атакующему через подмену `_param_studio_id` манипулировать
+  // чужой подпиской. После получения intent фронт вшивает token как
+  // `_param_intent` в payform-URL → webhook верифицирует и берёт studio_id
+  // из сервера, а не из payload (см. server/sql/011_payment_intents.sql).
+  createPaymentIntent(plan: 'solo_month' | 'solo_year' | 'studio_month' | 'studio_year') {
+    return send<{
+      token: string;
+      expiresAt: string;
+      expectedAmountKop: number;
+      bonusKopApplied: number;
+      finalAmountRub: number;
+    }>('POST', '/profile/payment/intent', { plan });
+  },
+
+  // ────── Telegram-привязка (Фаза 1 TG-интеграции) ──────
+  // Создаёт одноразовый deep-link `https://t.me/<bot>?start=link_<token>`
+  // для текущего пользователя. UI открывает window.open(url) → бот в TG
+  // подтверждает привязку → next /api/profile вернёт tgLinked=true.
+  linkTelegram() {
+    return send<{
+      url: string;
+      botUsername: string;
+      expiresInHours: number;
+    }>('POST', '/profile/telegram/link');
+  },
+  unlinkTelegram() {
+    return send<{ ok: true }>('DELETE', '/profile/telegram');
+  },
+
+  // ────── Сброс пароля через Telegram-бот ──────
+  // request: всегда возвращает 200 (не выдаём существование email).
+  //   delivery='tg'           → ссылка отправлена в TG
+  //   delivery='no_channel'   → юзер найден, но TG не привязан (фронт показывает
+  //                              «привяжите TG или напишите в поддержку»)
+  //   delivery='tg_if_linked' → юзер не найден ИЛИ ссылка отправлена; UI всё
+  //                              равно показывает «если у вас был привязан TG —
+  //                              проверьте сообщения».
+  requestPasswordReset(email: string) {
+    return send<{
+      ok: true;
+      delivery: 'tg' | 'no_channel' | 'tg_if_linked';
+    }>('POST', '/auth/password-reset/request', { email });
+  },
+  confirmPasswordReset(token: string, newPassword: string) {
+    return send<{ ok: true }>('POST', '/auth/password-reset/confirm', { token, newPassword });
   },
 
   // ────── админка студии (role=owner) ──────
@@ -189,6 +300,13 @@ export const api = {
     return get<ActivityLogEntry[]>(`/activity-logs${qs(params)}`);
   },
 
+  // ────── analytics dashboard (only owner + plan=studio) ──────
+  // period: '3m' | '6m' | 'year' (12 мес). По умолчанию 6m.
+  // На solo/trial бэк отдаёт 402 plan_required — UI показывает плашку «доступно на тарифе Студия».
+  getAnalytics(period: '3m' | '6m' | 'year' = '6m') {
+    return get<AnalyticsResponse>(`/admin/analytics?period=${period}`);
+  },
+
   // ────── список членов студии (для дропдаунов «мастер») ──────
   getUsers() {
     return get<StudioUser[]>('/users');
@@ -209,6 +327,36 @@ export const api = {
   },
   deleteClient(id: number | string) {
     return send<void>('DELETE', `/clients/${id}`);
+  },
+  bulkImportClients(payload: {
+    rows: Array<{
+      client: {
+        name: string;
+        phone?: string | null;
+        email?: string | null;
+        notes?: string | null;
+        city?: string | null;
+        source?: string | null;
+        birth_date?: string | null;
+      };
+      vehicle?: {
+        brand?: string | null;
+        model?: string | null;
+        license_plate?: string | null;
+        color?: string | null;
+        year?: number | null;
+      } | null;
+    }>;
+    strategy: 'skip' | 'overwrite' | 'create_new';
+  }) {
+    return send<{
+      ok: true;
+      strategy: 'skip' | 'overwrite' | 'create_new';
+      created: number;
+      updated: number;
+      skipped: number;
+      errors: Array<{ row: number; reason: string }>;
+    }>('POST', '/clients/bulk', payload);
   },
 
   // ────── vehicles ──────
@@ -317,6 +465,9 @@ export const api = {
   createTag(t: any) {
     return send<any>('POST', '/tags', t);
   },
+  updateTag(id: number | string, t: any) {
+    return send<any>('PUT', `/tags/${id}`, t);
+  },
   deleteTag(id: number | string) {
     return send<void>('DELETE', `/tags/${id}`);
   },
@@ -339,4 +490,235 @@ export const api = {
   setAppData(key: string, value: any) {
     return send<any>('POST', `/app-data/${encodeURIComponent(key)}`, value);
   },
+
+  // ────── документы по броням: заказ-наряд ──────
+  // PUT — upsert: первый раз создаст, дальше обновит (UNIQUE booking_id на бэке).
+  // PDF-эндпоинты возвращают inline application/pdf — открываем через
+  // window.open(`${API_BASE}/work-orders/${id}/pdf`) с credentials:include.
+  getWorkOrder(bookingId: number | string) {
+    return get<WorkOrder>(`/work-orders/${bookingId}`);
+  },
+  saveWorkOrder(bookingId: number | string, payload: WorkOrderUpsert) {
+    return send<WorkOrder>('PUT', `/work-orders/${bookingId}`, payload);
+  },
+  workOrderPdfUrl(bookingId: number | string) {
+    return `${API_BASE}/work-orders/${bookingId}/pdf`;
+  },
+
+  // ────── документы по броням: акт приёмки ──────
+  getAcceptanceAct(bookingId: number | string) {
+    return get<AcceptanceAct>(`/acceptance-acts/${bookingId}`);
+  },
+  saveAcceptanceAct(bookingId: number | string, payload: AcceptanceActUpsert) {
+    return send<AcceptanceAct>('PUT', `/acceptance-acts/${bookingId}`, payload);
+  },
+  acceptanceActPdfUrl(bookingId: number | string) {
+    return `${API_BASE}/acceptance-acts/${bookingId}/pdf`;
+  },
+
+  // Контекст для пред-заполнения форм документов (клиент + автомобиль из карточки).
+  getDocumentContext(bookingId: number | string) {
+    return get<DocumentContext>(`/document-context/${bookingId}`);
+  },
+
+  // ────── фото к броням ──────
+  // limit 30/бронь, лимит 10 MB на upload, на бэке sharp ужимает до 1920px webp.
+  listOrderPhotos(bookingId: number | string) {
+    return get<OrderPhoto[]>(`/order-photos${qs({ bookingId })}`);
+  },
+  uploadOrderPhoto(bookingId: number | string, file: File, photoType: OrderPhotoType = 'acceptance') {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('bookingId', String(bookingId));
+    fd.append('photoType', photoType);
+    return fetch(`${API_BASE}/order-photos`, {
+      ...baseInit, method: 'POST', body: fd,
+    }).then(handleResponse<OrderPhoto>);
+  },
+  deleteOrderPhoto(id: number | string) {
+    return send<{ ok: true }>('DELETE', `/order-photos/${id}`);
+  },
+  // URL для <img src=...> — отдаёт стрим под auth-cookie (credentials: include
+  // в браузере по умолчанию для same-origin, у нас фронт и бэк на одном
+  // домене → работает без дополнительной настройки).
+  orderPhotoFileUrl(id: number | string) {
+    return `${API_BASE}/order-photos/${id}/file`;
+  },
+  orderPhotoThumbUrl(id: number | string) {
+    return `${API_BASE}/order-photos/${id}/thumb`;
+  },
 };
+
+// ──────────────────────────────────────────────────────────────────────
+// Типы документов (оставлены тут, чтобы не плодить файлы — все document-
+// специфичные DTO в одном месте).
+// ──────────────────────────────────────────────────────────────────────
+// Snapshot-данные клиента и автомобиля, сохраняются прямо в документе.
+// Используются в форме акта/наряда, чтобы дать возможность вписать данные
+// вручную, если в карточке клиента/авто их нет, и зафиксировать состояние
+// на момент оформления документа.
+export interface ClientSnapshot {
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+}
+export interface VehicleSnapshot {
+  brand: string | null;
+  model: string | null;
+  color: string | null;
+  license_plate: string | null;
+  vin: string | null;
+  year: number | null;
+}
+
+export interface DocumentContext {
+  client: { id: number; name: string; phone: string | null; email: string | null } | null;
+  vehicle: { id: number; brand: string | null; model: string | null; license_plate: string | null; vin: string | null; color?: string | null; year?: number | null } | null;
+  record: { id: number; service_name: string };
+}
+
+export type PaymentMethod = 'cash' | 'card' | 'transfer';
+
+export interface WorkOrderItem {
+  name: string;
+  quantity: number;
+  price: number;
+}
+
+export interface WorkOrder {
+  id: number;
+  booking_id: number;
+  master_id: string | null;
+  delivery_date: string | null;
+  delivery_time: string | null;
+  payment_method: PaymentMethod | null;
+  discount: string | number;        // pg numeric → строка; парсим Number() на UI
+  total: string | number;
+  items: WorkOrderItem[];
+  guarantee_text: string | null;
+  notes: string | null;
+  client_snapshot: Partial<ClientSnapshot>;
+  vehicle_snapshot: Partial<VehicleSnapshot>;
+  signature_data: string | null;     // data:image/png;base64,…
+  is_signed: boolean;
+  pdf_path: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+}
+
+export interface WorkOrderUpsert {
+  master_id?: string | null;
+  delivery_date?: string | null;
+  delivery_time?: string | null;
+  payment_method?: PaymentMethod | null;
+  discount?: number;
+  total?: number | null;
+  items?: WorkOrderItem[];
+  guarantee_text?: string | null;
+  notes?: string | null;
+  client_snapshot?: Partial<ClientSnapshot>;
+  vehicle_snapshot?: Partial<VehicleSnapshot>;
+  signature_data?: string | null;
+}
+
+export type ZoneCondition = 'ok' | 'minor' | 'damaged';
+
+export interface AcceptanceZone {
+  zone_name: string;
+  scratches: boolean;
+  dents: boolean;
+  condition: ZoneCondition;
+}
+
+export interface AcceptanceAct {
+  id: number;
+  booking_id: number;
+  master_id: string | null;
+  mileage: number | null;
+  zones: AcceptanceZone[];
+  damage_description: string | null;
+  valuables: string | null;
+  client_snapshot: Partial<ClientSnapshot>;
+  vehicle_snapshot: Partial<VehicleSnapshot>;
+  photos_count: number;
+  signature_data: string | null;
+  is_signed: boolean;
+  pdf_path: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+}
+
+export interface AcceptanceActUpsert {
+  master_id?: string | null;
+  mileage?: number | null;
+  zones?: AcceptanceZone[];
+  damage_description?: string | null;
+  valuables?: string | null;
+  client_snapshot?: Partial<ClientSnapshot>;
+  vehicle_snapshot?: Partial<VehicleSnapshot>;
+  signature_data?: string | null;
+}
+
+export type OrderPhotoType = 'acceptance' | 'progress' | 'result';
+
+export interface OrderPhoto {
+  id: number;
+  booking_id: number;
+  photo_type: OrderPhotoType;
+  file_size: number | null;
+  mime_type: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// Аналитика студии (GET /api/admin/analytics).
+// Эндпоинт доступен только role=owner на тарифе «Студия».
+// ════════════════════════════════════════════════════════════════════════
+export interface AnalyticsCurrentMonth {
+  revenue: number;
+  revenue_delta_pct: number;
+  orders: number;
+  orders_delta: number;
+  new_clients: number;
+  new_clients_delta: number;
+  avg_check: number;
+  avg_check_delta_pct: number;
+}
+export interface AnalyticsByMonth {
+  label: string;       // «Апр» — короткий русский месяц
+  month_key: string;   // ISO date «2026-04-01» — для ключей
+  revenue: number;
+  orders: number;
+  new_clients: number;
+  avg_check: number;
+}
+export interface AnalyticsCategory { name: string; revenue: number; pct: number; }
+export interface AnalyticsTopService { name: string; revenue: number; }
+export interface AnalyticsRetention {
+  total_clients: number;
+  repeat_pct: number;
+  inactive_3m: number;
+  upcoming_next_month: number;
+  avg_interval_months: number;
+  conversion_30d_pct: number;
+}
+export interface AnalyticsResponse {
+  period: '3m' | '6m' | 'year';
+  current_month: AnalyticsCurrentMonth;
+  by_month: AnalyticsByMonth[];
+  categories: AnalyticsCategory[];
+  top_services: AnalyticsTopService[];
+  retention: AnalyticsRetention;
+}
+
+// 16 зон кузова по умолчанию (см. document_templates.md). Используется
+// формой акта приёмки как стартовое заполнение.
+export const DEFAULT_ZONES: string[] = [
+  'Бампер передний', 'Капот', 'Крыло переднее левое', 'Крыло переднее правое',
+  'Дверь передняя левая', 'Дверь передняя правая', 'Дверь задняя левая',
+  'Дверь задняя правая', 'Крыша', 'Крыло заднее левое', 'Крыло заднее правое',
+  'Бампер задний', 'Крышка багажника', 'Стёкла', 'Диски (комплект)', 'Салон',
+];

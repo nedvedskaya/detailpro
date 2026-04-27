@@ -26,9 +26,21 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { pool, withTx } = require('./db.cjs');
 const { safeIdent, validateSchemaName, suggestSchemaName } = require('./tenant.cjs');
 const { hashPassword } = require('./auth.cjs');
+const { isValidEmail, assertStrongPassword } = require('./validation.cjs');
+
+// 8-символьный URL-safe код. Алфавит без I/O/0/1, чтобы не путать в наборе вручную.
+const REFERRAL_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function generateReferralCode() {
+  // 8 байт случайности, по 1 байту → индекс в алфавит длиной 32 — равномерно.
+  const buf = crypto.randomBytes(8);
+  let out = '';
+  for (let i = 0; i < 8; i++) out += REFERRAL_ALPHABET[buf[i] % REFERRAL_ALPHABET.length];
+  return out;
+}
 
 const TENANT_TEMPLATE_PATH = path.join(__dirname, '..', 'sql', '100_tenant_template.sql');
 // Триал — 3 дня для всех новых студий. Существующие не трогаем.
@@ -79,32 +91,64 @@ async function applyTenantTemplate(executor, schemaName) {
  * @param {string} [args.plan='trial'] — стартовый план.
  * @returns {Promise<{ studioId: string, userId: string, schemaName: string }>}
  */
-async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword, ownerName, ownerFirstName, ownerLastName, plan }) {
+async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword, ownerName, ownerFirstName, ownerLastName, plan, referredByCode, tgSignupToken }) {
   // Валидация на входе — до открытия транзакции.
   validateSchemaName(schemaName);
   if (!displayName || typeof displayName !== 'string') {
     const e = new Error('display_name_required'); e.code = 'DISPLAY_NAME_REQUIRED'; throw e;
   }
-  if (!ownerEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail)) {
+  if (!isValidEmail(ownerEmail)) {
     const e = new Error('email_invalid'); e.code = 'EMAIL_INVALID'; throw e;
   }
-  if (typeof ownerPassword !== 'string' || ownerPassword.length < 8) {
-    const e = new Error('password_too_short'); e.code = 'PASSWORD_TOO_SHORT'; throw e;
-  }
+  // Раннее отклонение слабого пароля — до scrypt и DDL.
+  // hashPassword() ниже тоже бы отклонил, но raw-результат пришёл бы как
+  // generic 500 в auth.cjs/signup error handler — а нам нужны коды
+  // PASSWORD_TOO_SHORT / PASSWORD_TOO_COMMON для точного сообщения.
+  assertStrongPassword(ownerPassword);
 
   const passwordHash = await hashPassword(ownerPassword); // вне транзакции — scrypt медленный
   const startPlan = plan && ['trial', 'solo', 'studio'].includes(plan) ? plan : 'trial';
   const ident = safeIdent(schemaName);
 
   return withTx(async (client) => {
-    // 1. Регистрируем студию.
-    const studioRes = await client.query(
-      `INSERT INTO saas_meta.studios (schema_name, display_name, plan, access_until, is_active)
-         VALUES ($1, $2, $3, now() + ($4 || ' days')::interval, true)
-         RETURNING id`,
-      [schemaName, displayName, startPlan, String(TRIAL_DAYS)]
-    );
-    const studioId = studioRes.rows[0].id;
+    // 0. Если signup пришёл с ?ref=CODE — находим студию-реферера.
+    //    Невалидный код не блокирует регистрацию, просто не привязываем —
+    //    лучше пустить нового клиента, чем уронить signup из-за опечатки в ref.
+    let referredById = null;
+    if (referredByCode && typeof referredByCode === 'string') {
+      const ref = await client.query(
+        'SELECT id FROM saas_meta.studios WHERE referral_code = $1',
+        [referredByCode.trim().toUpperCase()]
+      );
+      if (ref.rows[0]) referredById = ref.rows[0].id;
+    }
+
+    // Генерация уникального referral_code. Шанс коллизии 8 символов из 32-букв.
+    // алфавита (~10^12) ничтожен, но честно ретраим до 5 раз ради идемпотентности.
+    let referralCode = null;
+    let studioId = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = generateReferralCode();
+      try {
+        const studioRes = await client.query(
+          `INSERT INTO saas_meta.studios
+              (schema_name, display_name, plan, access_until, is_active,
+               referral_code, referred_by)
+             VALUES ($1, $2, $3, now() + ($4 || ' days')::interval, true, $5, $6)
+             RETURNING id`,
+          [schemaName, displayName, startPlan, String(TRIAL_DAYS), candidate, referredById]
+        );
+        studioId = studioRes.rows[0].id;
+        referralCode = candidate;
+        break;
+      } catch (err) {
+        // 23505 на uq_studios_referral_code → ретраим с новым кодом.
+        // Всё остальное (например, schema_name_taken) — пробрасываем.
+        if (err.code === '23505' && /referral_code/.test(err.constraint || '')) continue;
+        throw err;
+      }
+    }
+    if (!studioId) throw new Error('failed_to_generate_referral_code');
 
     // 2. Создаём схему. CREATE SCHEMA не принимает $-параметры → ident.
     await client.query(`CREATE SCHEMA ${ident}`);
@@ -144,6 +188,56 @@ async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword
     }
     const userId = userRes.rows[0].id;
 
+    // 4.5. Если signup пришёл с TG-токеном (сценарий «бот → сайт»), гасим
+    // токен и линкуем tg_* поля прямо в этой же транзакции. Если токен
+    // протух / уже потрачен — НЕ валим signup, просто возвращаем флаг
+    // tgLinked=false, чтобы фронт мог показать «бот можно подключить позже».
+    let tgLinked = false;
+    let tgConflict = false;        // токен ок, но этот tg_user_id уже занят другим аккаунтом
+    if (tgSignupToken && typeof tgSignupToken === 'string') {
+      const consumed = await client.query(
+        `UPDATE saas_meta.tg_signup_tokens
+            SET consumed_at = now(), consumed_user_id = $1
+          WHERE token = $2
+            AND consumed_at IS NULL
+            AND expires_at > now()
+          RETURNING tg_user_id, tg_chat_id, tg_username`,
+        [userId, tgSignupToken]
+      );
+      if (consumed.rowCount > 0) {
+        const tg = consumed.rows[0];
+        // На случай гонки (тот же tg_user_id уже привязан где-то) —
+        // ловим 23505 на UNIQUE(saas_meta.users.tg_user_id) и помечаем
+        // tgConflict=true, чтобы роут signup мог рассказать про /unlink.
+        try {
+          await client.query(
+            `UPDATE saas_meta.users
+                SET tg_user_id   = $1,
+                    tg_chat_id   = $2,
+                    tg_username  = $3,
+                    tg_linked_at = now()
+              WHERE id = $4`,
+            [tg.tg_user_id, tg.tg_chat_id, tg.tg_username, userId]
+          );
+          tgLinked = true;
+        } catch (err) {
+          if (err.code === '23505' && /tg_user_id/.test(err.constraint || '')) {
+            tgConflict = true;
+            // Не валим транзакцию: signup пройдёт без линка TG.
+            // Чтобы транзакция продолжила работать после ошибки —
+            // придётся бросить и вернуться на новый коннект... но
+            // postgres aborts transaction on any error. Поэтому здесь
+            // действительно надо бросить дальше — пусть signup упадёт
+            // и пользователь увидит понятную ошибку. См. catch выше.
+            const e = new Error('tg_already_linked'); e.code = 'TG_ALREADY_LINKED'; throw e;
+          }
+          throw err;
+        }
+      }
+      // Если consumed.rowCount === 0 — токен невалиден/просрочен.
+      // signup идёт дальше без TG-линка.
+    }
+
     // 5. Seed: дефолтные категории расходов/доходов.
     await client.query(
       `INSERT INTO ${ident}.categories (name, type, color) VALUES
@@ -153,7 +247,7 @@ async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword
          ('Расходники', 'expense', '#3b82f6')`
     );
 
-    return { studioId, userId, schemaName };
+    return { studioId, userId, schemaName, tgLinked };
   });
 }
 

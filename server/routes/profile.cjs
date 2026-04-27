@@ -28,9 +28,14 @@ const express = require('express');
 const multer = require('multer');
 const sharp = require('sharp');
 
+const crypto = require('node:crypto');
+
 const { pool } = require('../lib/db.cjs');
 const { requireAuth } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan } = require('../lib/plans.cjs');
+const { isValidEmail } = require('../lib/validation.cjs');
+const { deactivateSubscription } = require('../lib/prodamus.cjs');
+const tgClient = require('../lib/telegram.cjs');
 
 const router = express.Router();
 
@@ -95,6 +100,11 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       createdAt: userRow.created_at,
       canViewFinance: computeCanViewFinance(userRow.role, userRow.can_view_finance),
       lastLoginAt: userRow.last_login_at || null,
+      // Telegram-привязка: если tg_user_id NULL — кнопка «Подключить»,
+      // иначе показываем username и кнопку «Отвязать».
+      tgLinked: !!userRow.tg_user_id,
+      tgUsername: userRow.tg_username || null,
+      tgLinkedAt: userRow.tg_linked_at || null,
     },
     studio: {
       id: studioRow.id,
@@ -109,6 +119,21 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       // cancel_pending=true → пользователь нажал «Отменить подписку».
       // UI показывает badge «Подписка отменена, доступ до …» и кнопку «Восстановить».
       cancelPending: studioRow.cancel_pending === true,
+      // Реквизиты для шапки PDF-документов (заполняются в «Профиль → Реквизиты студии»).
+      // Все nullable — до заполнения в документах выводится «—».
+      inn:           studioRow.inn           || null,
+      ogrn:          studioRow.ogrn          || null,
+      legalAddress:  studioRow.legal_address || null,
+      actualAddress: studioRow.actual_address || null,
+      contactPhone:  studioRow.contact_phone || null,
+      contactEmail:  studioRow.contact_email || null,
+      guaranteeText: studioRow.guarantee_text || null,
+      // Реферальная программа: код у студии всегда есть после миграции 005,
+      // bonus_balance_kop — текущий баланс бонусов в копейках. UI делит на 100.
+      referralCode:   studioRow.referral_code || null,
+      bonusBalanceKop: typeof studioRow.bonus_balance_kop === 'number'
+        ? studioRow.bonus_balance_kop
+        : Number(studioRow.bonus_balance_kop || 0),
     },
     limits: {
       currentUsers,
@@ -127,10 +152,14 @@ router.get('/', requireAuth, async (req, res, next) => {
         u.id, u.email, u.role, u.name,
         u.first_name, u.last_name, u.phone, u.avatar_path,
         u.is_active, u.created_at, u.can_view_finance, u.last_login_at,
+        u.tg_user_id, u.tg_username, u.tg_linked_at,
         s.id AS studio_id, s.display_name, s.plan,
         s.is_active AS studio_active, s.access_until,
         s.created_at AS studio_created_at,
         s.cancel_pending AS studio_cancel_pending,
+        s.inn, s.ogrn, s.legal_address, s.actual_address,
+        s.contact_phone, s.contact_email, s.guarantee_text,
+        s.referral_code, s.bonus_balance_kop,
         (SELECT count(*)::int FROM saas_meta.users
           WHERE studio_id = s.id AND is_active = true) AS current_users
        FROM saas_meta.users u
@@ -145,12 +174,19 @@ router.get('/', requireAuth, async (req, res, next) => {
     id: row.id, email: row.email, role: row.role, name: row.name,
     first_name: row.first_name, last_name: row.last_name, phone: row.phone,
     avatar_path: row.avatar_path, is_active: row.is_active, created_at: row.created_at,
+    tg_user_id: row.tg_user_id, tg_username: row.tg_username, tg_linked_at: row.tg_linked_at,
   };
   const studioRow = {
     id: row.studio_id, display_name: row.display_name, plan: row.plan,
     is_active: row.studio_active, access_until: row.access_until,
     created_at: row.studio_created_at,
     cancel_pending: row.studio_cancel_pending,
+    inn: row.inn, ogrn: row.ogrn,
+    legal_address: row.legal_address, actual_address: row.actual_address,
+    contact_phone: row.contact_phone, contact_email: row.contact_email,
+    guarantee_text: row.guarantee_text,
+    referral_code: row.referral_code,
+    bonus_balance_kop: row.bonus_balance_kop,
   };
 
   res.json(shapeProfileResponse({
@@ -164,6 +200,14 @@ router.get('/', requireAuth, async (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 router.patch('/', requireAuth, async (req, res, next) => {
   try {
+    // Master — read-only по своему профилю: данные мастера правит owner
+    // через админ-панель. Без этой проверки UI на /profile у мастера показывал
+    // форму, бэк молча принимал апдейт, но иногда падал на других гардах —
+    // пользователь видел красную ошибку и не понимал, что именно не так.
+    if (req.session && req.session.role === 'master') {
+      return res.status(403).json({ error: 'master_cannot_edit' });
+    }
+
     const body = req.body || {};
     const fields = {};
 
@@ -207,11 +251,16 @@ router.patch('/', requireAuth, async (req, res, next) => {
     // Если меняем имя/фамилию — пересоберём `name` в БД (для совместимости
     // с местами кода, где ещё читают users.name напрямую).
     //
-    // ВАЖНО: если после апдейта обе части окажутся пустыми (пользователь
-    // очистил оба поля), оставляем СТАРОЕ значение users.name, чтобы UserMenu/
-    // /me не свалились на «N» из email-а. Это решает баг «после правки имени
-    // в шапке остался один инициал». COALESCE(NULLIF(..., ''), name) делает
-    // именно это: пустая строка → fallback на текущее значение колонки.
+    // Логика fallback:
+    //   1. firstName + ' ' + lastName (если хоть что-то непустое)
+    //   2. иначе split_part(email, '@', 1) — email-prefix как читаемый
+    //      идентификатор. UserMenu покажет первую букву prefix-а, а форма
+    //      «Личные данные» останется пустой — это синхронно: пользователь
+    //      сам очистил поля, шапка профиля показывает «Без имени» / email,
+    //      а не залипшую старую фамилию.
+    //
+    // Раньше тут стоял `... , name)` (старое значение). Это создавало баг
+    // десинка: пользователь стирал поля, но в шапке оставалось «Недведская».
     if ('first_name' in fields || 'last_name' in fields) {
       const fnSql = ('first_name' in fields)
         ? `$${keys.indexOf('first_name') + 1}`
@@ -220,7 +269,7 @@ router.patch('/', requireAuth, async (req, res, next) => {
         ? `$${keys.indexOf('last_name') + 1}`
         : 'last_name';
       setClauses.push(
-        `name = COALESCE(NULLIF(TRIM(COALESCE(${fnSql}, '') || ' ' || COALESCE(${lnSql}, '')), ''), name)`
+        `name = COALESCE(NULLIF(TRIM(COALESCE(${fnSql}, '') || ' ' || COALESCE(${lnSql}, '')), ''), split_part(email, '@', 1))`
       );
     }
 
@@ -252,10 +301,139 @@ router.patch('/', requireAuth, async (req, res, next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+// PATCH /api/profile/studio
+// Body: { displayName?, inn?, ogrn?, legalAddress?, actualAddress?,
+//         contactPhone?, contactEmail?, guaranteeText? }
+//
+// Только owner: реквизиты студии (для шапки PDF-документов).
+// Каждое поле опционально, '' / null → стирает значение.
+// Лимиты длин: ИНН/ОГРН ≤ 20 (цифры), email ≤ 100,
+// адрес/гарантия ≤ 500, displayName ≤ 100, телефон ≤ 40.
+// ──────────────────────────────────────────────────────────────────────
+router.patch('/studio', requireAuth, async (req, res, next) => {
+  try {
+    // Проверяем, что owner — только он может править реквизиты студии.
+    const u = await pool.query(
+      `SELECT role, studio_id FROM saas_meta.users WHERE id = $1`,
+      [req.session.userId]
+    );
+    const userRow = u.rows[0];
+    if (!userRow) return res.status(404).json({ error: 'user_not_found' });
+    if (userRow.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_edit_studio' });
+    }
+
+    const body = req.body || {};
+    const fields = {};
+
+    function takeOptionalString(key, dbField, maxLen) {
+      if (!Object.prototype.hasOwnProperty.call(body, key)) return;
+      const raw = body[key];
+      if (raw === null || raw === '') {
+        fields[dbField] = null;
+        return;
+      }
+      if (typeof raw !== 'string') {
+        const e = new Error(`${key}_must_be_string`); e.status = 400; throw e;
+      }
+      const trimmed = raw.trim();
+      if (trimmed.length > maxLen) {
+        const e = new Error(`${key}_too_long`); e.status = 400; throw e;
+      }
+      fields[dbField] = trimmed;
+    }
+
+    takeOptionalString('displayName',   'display_name',   100);
+    takeOptionalString('inn',           'inn',            20);
+    takeOptionalString('ogrn',          'ogrn',           20);
+    takeOptionalString('legalAddress',  'legal_address',  500);
+    takeOptionalString('actualAddress', 'actual_address', 500);
+    takeOptionalString('contactPhone',  'contact_phone',  40);
+    takeOptionalString('contactEmail',  'contact_email',  100);
+    takeOptionalString('guaranteeText', 'guarantee_text', 500);
+
+    // Дополнительная валидация ИНН/ОГРН/email — только цифры и нужная длина.
+    // Передний край (UI) валидирует то же самое, но клиент мог быть обойдён.
+    if (fields.inn != null) {
+      if (!/^\d+$/.test(fields.inn) || (fields.inn.length !== 10 && fields.inn.length !== 12)) {
+        const e = new Error('inn_invalid'); e.status = 400; throw e;
+      }
+    }
+    if (fields.ogrn != null) {
+      if (!/^\d+$/.test(fields.ogrn) || (fields.ogrn.length !== 13 && fields.ogrn.length !== 15)) {
+        const e = new Error('ogrn_invalid'); e.status = 400; throw e;
+      }
+    }
+    if (fields.contact_email != null) {
+      if (!isValidEmail(fields.contact_email)) {
+        const e = new Error('contact_email_invalid'); e.status = 400; throw e;
+      }
+    }
+
+    // displayName не может быть NULL (NOT NULL в схеме). Раньше пустую
+    // строку молча игнорировали — это создавало баг «не могу очистить
+    // название студии»: пользователь стирал поле, ничего не происходило,
+    // оно возвращалось к старому значению. Теперь явно отдаём 400 — UI
+    // покажет понятное сообщение, что поле нельзя оставить пустым.
+    if ('display_name' in fields && fields.display_name === null) {
+      const e = new Error('display_name_required'); e.status = 400; throw e;
+    }
+
+    const keys = Object.keys(fields);
+    if (keys.length === 0) {
+      return res.status(400).json({ error: 'no_fields_to_update' });
+    }
+
+    const setClauses = [];
+    const values = [];
+    let i = 1;
+    for (const k of keys) {
+      setClauses.push(`${k} = $${i++}`);
+      values.push(fields[k]);
+    }
+    setClauses.push(`updated_at = now()`);
+    values.push(userRow.studio_id);
+
+    const r = await pool.query(
+      `UPDATE saas_meta.studios
+          SET ${setClauses.join(', ')}
+        WHERE id = $${values.length}
+        RETURNING id, display_name, inn, ogrn, legal_address, actual_address,
+                  contact_phone, contact_email, guarantee_text`,
+      values
+    );
+    if (!r.rows[0]) return res.status(404).json({ error: 'studio_not_found' });
+
+    const s = r.rows[0];
+    res.json({
+      ok: true,
+      studio: {
+        id:            s.id,
+        displayName:   s.display_name,
+        inn:           s.inn           || null,
+        ogrn:          s.ogrn          || null,
+        legalAddress:  s.legal_address || null,
+        actualAddress: s.actual_address || null,
+        contactPhone:  s.contact_phone || null,
+        contactEmail:  s.contact_email || null,
+        guaranteeText: s.guarantee_text || null,
+      },
+    });
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
 // POST /api/profile/avatar
 // multipart/form-data: avatar=<file>
 // ──────────────────────────────────────────────────────────────────────
 router.post('/avatar', requireAuth, (req, res, next) => {
+  // Master не правит свой профиль — аватар тоже.
+  if (req.session && req.session.role === 'master') {
+    return res.status(403).json({ error: 'master_cannot_edit' });
+  }
   upload.single('avatar')(req, res, async (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -307,6 +485,9 @@ router.post('/avatar', requireAuth, (req, res, next) => {
 // DELETE /api/profile/avatar
 // ──────────────────────────────────────────────────────────────────────
 router.delete('/avatar', requireAuth, async (req, res, next) => {
+  if (req.session && req.session.role === 'master') {
+    return res.status(403).json({ error: 'master_cannot_edit' });
+  }
   const userId = req.session.userId;
   const fullPath = path.join(AVATARS_DIR, `${userId}.webp`);
 
@@ -329,16 +510,28 @@ router.delete('/avatar', requireAuth, async (req, res, next) => {
 // сохраняется до access_until. Доступно только владельцу студии и только
 // для платных тарифов (solo/studio) — на пробном отменять нечего.
 //
-// ВАЖНО: фактическое отключение списаний на стороне Prodamus делается
-// отдельно (через их API в Phase 5 либо вручную через кабинет). Этот флаг —
-// контракт нашего UI и подсказка webhook-у не продлевать access_until.
+// Двухслойная остановка списаний:
+//   1) Сначала пытаемся дёрнуть Prodamus REST setActivity (active_manager=0)
+//      — это реально отключает рекуррент на стороне платёжки.
+//   2) Затем выставляем локальный cancel_pending=true. Этот флаг работает
+//      и как контракт UI («отменена, доступ до …»), и как защита webhook-а:
+//      если Prodamus всё равно пришлёт списание, оно уйдёт в bonus_balance,
+//      а не продлит access_until.
+//
+// Шаг 1 tolerant к ошибкам — если PRODAMUS_API_BASE не задан или сеть упала,
+// шаг 2 всё равно отрабатывает, и пользователь финансово защищён.
 // ──────────────────────────────────────────────────────────────────────
 router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
   const userId = req.session.userId;
 
-  // Проверяем, что пользователь — owner своей студии
+  // Проверяем, что пользователь — owner своей студии. Заодно достаём реквизиты
+  // подписки Prodamus, чтобы вызвать setActivity и реально остановить рекуррент
+  // на стороне платёжки (а не только локальный флаг).
   const u = await pool.query(
-    `SELECT u.role, u.studio_id, s.plan, s.cancel_pending
+    `SELECT u.role, u.studio_id, s.plan, s.cancel_pending,
+            s.prodamus_subscription_id,
+            s.prodamus_subscription_phone,
+            s.prodamus_subscription_email
        FROM saas_meta.users u
        JOIN saas_meta.studios s ON s.id = u.studio_id
       WHERE u.id = $1`,
@@ -357,11 +550,47 @@ router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
     return res.json({ ok: true, alreadyCancelled: true });
   }
 
+  // ── 1. Дёргаем Prodamus REST setActivity, чтобы остановить рекуррент.
+  // Тоlerant к ошибкам: если API не сконфигурен / упал / таймаут — всё равно
+  // ставим локальный флаг cancel_pending. Защита от «призрачных» списаний в
+  // webhook'е (paid_after_cancel → бонусы) гарантирует, что деньги не пропадут
+  // даже если рекуррент не успел отключиться на стороне Prodamus.
+  let prodamusResult = null;
+  try {
+    prodamusResult = await deactivateSubscription({
+      subscriptionId: row.prodamus_subscription_id,
+      userPhone:      row.prodamus_subscription_phone,
+    });
+    if (!prodamusResult.ok) {
+      console.warn('[profile] prodamus setActivity not applied:', {
+        studioId: row.studio_id,
+        skipped: prodamusResult.skipped,
+        error:   prodamusResult.error,
+        status:  prodamusResult.status,
+      });
+    }
+  } catch (e) {
+    // На всякий случай — deactivateSubscription сам не должен throw'ить, но
+    // если что-то нештатное (например, fetch не задефинен на старой Node) —
+    // не роняем cancel.
+    console.error('[profile] prodamus setActivity threw:', e.message);
+  }
+
+  // ── 2. Локальный флаг — ставим всегда. Это контракт UI и подсказка webhook'у.
   await pool.query(
     `UPDATE saas_meta.studios SET cancel_pending = true WHERE id = $1`,
     [row.studio_id]
   );
-  res.json({ ok: true });
+
+  res.json({
+    ok: true,
+    // В прод-UI это поле не используется, но оно полезно для админ-диагностики
+    // через DevTools, если пользователь жалуется «не отменилось на Prodamus».
+    prodamus: prodamusResult ? {
+      ok: prodamusResult.ok === true,
+      skipped: prodamusResult.skipped || null,
+    } : null,
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -388,6 +617,301 @@ router.post('/subscription/resume', requireAuth, async (req, res, next) => {
     [row.studio_id]
   );
   res.json({ ok: true });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/payment/intent
+//
+// Body: { plan: 'solo_month' | 'solo_year' | 'studio_month' | 'studio_year' }
+//
+// Зачем: выпускаем серверно-подписанный токен, привязанный к authenticated
+// студии, чтобы фронт подсунул его в URL Prodamus как `_param_intent`.
+// Webhook возьмёт studio_id ИЗ ИНТЕНТА (доверенный источник из сессии),
+// игнорируя `_param_studio_id` из payload.
+//
+// Зачем не делать это на фронте через подпись JWT: JWT_SECRET был бы доступен
+// только бэку → фронт всё равно ходил бы за токеном. Проще сразу хранить
+// intent в БД с TTL — заодно одноразовость через `consumed_at`.
+//
+// Что отдаём:
+//   { token, expiresAt, expectedAmountKop, bonusKopAvailable }
+// Фронт сам конструирует payform-URL — мы только даём токен и подсказку
+// «сколько бонусов можно списать», чтобы UI показал правильную итоговую сумму.
+//
+// SECURITY:
+//   • token — 32 байта randomBytes (256 бит). Угадать нереально.
+//   • Привязан к req.session.studioId — нельзя выпустить на чужую студию.
+//   • TTL 60 минут — пользователь должен успеть оплатить.
+//   • Возможна race: юзер кликает «Оплатить», но не доходит до Prodamus →
+//     intent протухает через час, cron подчистит.
+// ──────────────────────────────────────────────────────────────────────
+const VALID_PLAN_IDS = ['solo_month', 'solo_year', 'studio_month', 'studio_year'];
+
+// Цены в копейках. Должны совпадать с TARIFF_GROUPS на фронте (ProfilePage.tsx).
+// Если разойдутся — webhook увидит discrepancy в expected_amount_kop, залогирует.
+const PLAN_PRICES_KOP = {
+  solo_month:   490000,    // 4 900 ₽
+  solo_year:   4990000,    // 49 900 ₽
+  studio_month: 890000,    // 8 900 ₽
+  studio_year: 8990000,    // 89 900 ₽
+};
+
+const PAYMENT_INTENT_TTL_MS = 60 * 60 * 1000; // 60 минут
+
+router.post('/payment/intent', requireAuth, async (req, res, next) => {
+  try {
+    const planId = String(req.body?.plan || '').trim();
+    if (!VALID_PLAN_IDS.includes(planId)) {
+      return res.status(400).json({ error: 'plan_invalid' });
+    }
+
+    // Берём бонус-баланс студии — фронт может подставить _param_bonus_kop
+    // не больше, чем юзер реально имеет. Webhook доп. проверит на стороне
+    // обработки (Math.min(used, balance)), но и здесь подскажем UI правильное
+    // значение.
+    const sRes = await pool.query(
+      `SELECT bonus_balance_kop FROM saas_meta.studios WHERE id = $1`,
+      [req.session.studioId]
+    );
+    if (sRes.rowCount === 0) {
+      return res.status(404).json({ error: 'studio_not_found' });
+    }
+    const bonusAvailable = Number(sRes.rows[0].bonus_balance_kop) || 0;
+
+    const expectedKop = PLAN_PRICES_KOP[planId];
+    // Сколько бонусов реально применить = min(balance, price - 1₽).
+    // Правило «оставить минимум 1 рубль» — Prodamus отказывает на нулевой
+    // сумме, и нужен реальный платёж чтобы webhook сработал и зафиксировал
+    // debit. Совпадает с calcBonusUsage() на фронте (ProfilePage.tsx).
+    const maxBonusUse = Math.max(0, expectedKop - 100); // -1 ₽ = 100 коп
+    const bonusKop = Math.min(bonusAvailable, maxBonusUse);
+    const finalAmountKop = expectedKop - bonusKop;
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + PAYMENT_INTENT_TTL_MS);
+
+    await pool.query(
+      `INSERT INTO saas_meta.payment_intents
+         (token, studio_id, user_id, plan_id, expected_amount_kop, bonus_kop,
+          expires_at, created_ip, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        token,
+        req.session.studioId,
+        req.session.userId,
+        planId,
+        expectedKop,
+        bonusKop,
+        expiresAt,
+        req.ip || null,
+        req.headers['user-agent'] || null,
+      ]
+    );
+
+    res.json({
+      token,
+      expiresAt: expiresAt.toISOString(),
+      expectedAmountKop: expectedKop,
+      bonusKopApplied: bonusKop,
+      // finalAmountRub — сколько фронт должен подставить в `customer_price`.
+      // Округляем вверх до целого рубля (Prodamus принимает целые ₽).
+      finalAmountRub: Math.ceil(finalAmountKop / 100),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// GET /api/profile/referral
+// Только для owner. Возвращает код, ссылку, текущий баланс бонусов и статистику:
+//   • referralsCount — сколько студий привёл (всех, не только оплативших)
+//   • paidReferralsCount — сколько из них оплатило хоть что-то
+//   • totalEarnedKop — сумма всех когда-либо начисленных credit-событий
+//   • totalSpentKop  — сумма всех debit-событий (применённых при оплате)
+//   • events[] — последние N операций для журнала: что и когда
+//   • referrals[] — список приведённых студий: имя, дата регистрации, заплатили ли
+// ──────────────────────────────────────────────────────────────────────
+router.get('/referral', requireAuth, async (req, res, next) => {
+  try {
+    if (req.session.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner' });
+    }
+    const studioId = req.session.studioId;
+
+    // Один JOIN-запрос с подзапросами — экономнее, чем 4 отдельных round-trip
+    // в N+1 стиле. statistics-агрегаты считаются на стороне БД.
+    const summary = await pool.query(
+      `SELECT
+          s.referral_code,
+          s.bonus_balance_kop,
+          (SELECT count(*)::int FROM saas_meta.studios c
+            WHERE c.referred_by = s.id) AS referrals_count,
+          (SELECT count(DISTINCT c.id)::int FROM saas_meta.studios c
+             JOIN saas_meta.payments p ON p.studio_id = c.id AND p.status = 'paid'
+            WHERE c.referred_by = s.id) AS paid_referrals_count,
+          (SELECT COALESCE(sum(amount_kop), 0)::int FROM saas_meta.referral_events
+            WHERE studio_id = s.id AND kind = 'credit') AS total_earned_kop,
+          (SELECT COALESCE(sum(amount_kop), 0)::int FROM saas_meta.referral_events
+            WHERE studio_id = s.id AND kind = 'debit') AS total_spent_kop
+         FROM saas_meta.studios s
+        WHERE s.id = $1`,
+      [studioId]
+    );
+    const row = summary.rows[0];
+    if (!row) return res.status(404).json({ error: 'studio_not_found' });
+
+    // Список приведённых студий (последние 50). display_name + дата регистрации
+    // + признак оплаты. Без раскрытия чужого email — только публичное имя.
+    const referrals = await pool.query(
+      `SELECT c.id, c.display_name, c.created_at,
+              EXISTS(SELECT 1 FROM saas_meta.payments p
+                      WHERE p.studio_id = c.id AND p.status = 'paid') AS has_paid
+         FROM saas_meta.studios c
+        WHERE c.referred_by = $1
+        ORDER BY c.created_at DESC
+        LIMIT 50`,
+      [studioId]
+    );
+
+    // Журнал операций: последние 50 для UI.
+    const events = await pool.query(
+      `SELECT id, kind, amount_kop, source_studio_id, payment_order_id, created_at
+         FROM saas_meta.referral_events
+        WHERE studio_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50`,
+      [studioId]
+    );
+
+    res.json({
+      referralCode: row.referral_code,
+      bonusBalanceKop: row.bonus_balance_kop || 0,
+      referralsCount: row.referrals_count || 0,
+      paidReferralsCount: row.paid_referrals_count || 0,
+      totalEarnedKop: row.total_earned_kop || 0,
+      totalSpentKop: row.total_spent_kop || 0,
+      // Сумма за приведённого клиента — пока константа в коде. Если когда-то
+      // захотим A/B или повышенный бонус для отдельных студий — переедет в БД.
+      bonusPerReferralKop: 125000,
+      referrals: referrals.rows.map(r => ({
+        id: r.id,
+        displayName: r.display_name,
+        createdAt: r.created_at,
+        hasPaid: r.has_paid === true,
+      })),
+      events: events.rows.map(e => ({
+        id: e.id,
+        kind: e.kind,
+        amountKop: e.amount_kop,
+        sourceStudioId: e.source_studio_id,
+        paymentOrderId: e.payment_order_id,
+        createdAt: e.created_at,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/telegram/link
+//
+// Возвращает одноразовую ссылку на бота:
+//   { url: 'https://t.me/<username>?start=link_<token>' }
+// Токен живёт 24 часа, сжигается при /start от бота.
+//
+// Если у пользователя уже привязан TG — UI должен сначала вызывать
+// DELETE telegram → потом link. Этот роут сам не отвязывает, чтобы
+// случайный клик «Подключить» не сбрасывал текущую привязку.
+// ──────────────────────────────────────────────────────────────────────
+router.post('/telegram/link', requireAuth, async (req, res, next) => {
+  try {
+    const username = tgClient.botUsername();
+    if (!username) {
+      return res.status(503).json({ error: 'telegram_not_configured' });
+    }
+
+    // Проверяем, не привязан ли уже. Если да — возвращаем «уже привязан»
+    // с username, фронт просто перерисует блок.
+    const u = await pool.query(
+      `SELECT tg_user_id, tg_username FROM saas_meta.users WHERE id = $1`,
+      [req.session.userId]
+    );
+    const cur = u.rows[0];
+    if (!cur) return res.status(404).json({ error: 'user_not_found' });
+    if (cur.tg_user_id) {
+      return res.status(409).json({
+        error: 'already_linked',
+        tgUsername: cur.tg_username || null,
+      });
+    }
+
+    // Старые незаюзанные токены чистим — у одного user не должно быть
+    // нескольких живых deep-link'ов одновременно.
+    await pool.query(
+      `DELETE FROM saas_meta.tg_link_tokens
+        WHERE user_id = $1 AND consumed_at IS NULL`,
+      [req.session.userId]
+    );
+
+    // 32 байта random → base64url. URL-safe, без padding.
+    const token = crypto.randomBytes(32).toString('base64url');
+    await pool.query(
+      `INSERT INTO saas_meta.tg_link_tokens (token, user_id, expires_at)
+       VALUES ($1, $2, now() + interval '24 hours')`,
+      [token, req.session.userId]
+    );
+
+    res.json({
+      url: `https://t.me/${username}?start=link_${token}`,
+      botUsername: username,
+      expiresInHours: 24,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// DELETE /api/profile/telegram
+// Отвязать TG. Уведомляем бота — пишем в чат «Telegram отвязан»,
+// чтобы пользователь видел действие в самом боте, а не только в CRM.
+// ──────────────────────────────────────────────────────────────────────
+router.delete('/telegram', requireAuth, async (req, res, next) => {
+  try {
+    const u = await pool.query(
+      `SELECT tg_chat_id FROM saas_meta.users WHERE id = $1`,
+      [req.session.userId]
+    );
+    const chatId = u.rows[0]?.tg_chat_id || null;
+
+    await pool.query(
+      `UPDATE saas_meta.users
+          SET tg_user_id   = NULL,
+              tg_username  = NULL,
+              tg_chat_id   = NULL,
+              tg_linked_at = NULL
+        WHERE id = $1`,
+      [req.session.userId]
+    );
+
+    // Уведомление в TG — best-effort. Если бот не настроен или TG лёг —
+    // отвязка в CRM всё равно прошла.
+    if (chatId) {
+      tgClient.sendMessage({
+        chatId, userId: req.session.userId, kind: 'unlink_via_crm',
+        text:
+          'Отвязка прошла успешно (прямо из профиля СРМ).\n' +
+          'Сюда больше не будут приходить уведомления.\n\n' +
+          'Если захочешь вернуть коннект — ты знаешь, где меня искать: Профиль → Telegram → «Подключить».',
+      }).catch(() => {});
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

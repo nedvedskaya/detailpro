@@ -24,6 +24,7 @@
 
 const crypto = require('node:crypto');
 const { pool } = require('./db.cjs');
+const { assertStrongPassword } = require('./validation.cjs');
 
 const SCRYPT_KEY_LEN = 64;        // 64 байта = 128 hex-символов на выходе
 const SALT_LEN = 16;              // 16 байт = 32 hex-символа
@@ -33,6 +34,16 @@ const SESSION_TOKEN_BYTES = 32;   // 256 бит энтропии
 // поменять без рестарта (для security-инцидентов).
 function sessionTtlMs() {
   const hours = Number(process.env.SESSION_TTL_HOURS) || 720; // 30 дней по умолчанию
+  return hours * 60 * 60 * 1000;
+}
+
+// Idle-timeout: сессия мертва, если ей не пользовались дольше N часов,
+// даже если absolute TTL ещё не истёк. Защита от украденной cookie:
+// злоумышленник без активного юзера всё равно потеряет сессию через 14 дней.
+// Активный юзер своё last_used_at двигает каждым запросом — для него
+// эффективного ограничения нет.
+function sessionIdleMs() {
+  const hours = Number(process.env.SESSION_IDLE_HOURS) || 14 * 24; // 14 дней
   return hours * 60 * 60 * 1000;
 }
 
@@ -55,9 +66,11 @@ function scryptAsync(plain, salt) {
  * @returns {Promise<string>}
  */
 async function hashPassword(plain) {
-  if (typeof plain !== 'string' || plain.length < 8) {
-    throw new Error('password_too_short'); // минимум 8 символов
-  }
+  // Единая точка проверки силы пароля. Кидает PASSWORD_TOO_SHORT (длина <8)
+  // или PASSWORD_TOO_COMMON (blocklist / repeating / sequential). Все ветки,
+  // где пароль реально сохраняется в БД (signup, change, reset, admin-create
+  // user), идут через эту функцию — поэтому проверка здесь = единая точка.
+  assertStrongPassword(plain);
   // ВАЖНО: соль передаётся в scrypt как HEX-СТРОКА, а не как Buffer.
   // Crm-new-main делает именно так (server/index.cjs:266-268), и нам нужна
   // бинарная совместимость для миграции существующих хешей. Если передать
@@ -139,7 +152,7 @@ async function verifySession(token) {
   // userName и canViewFinance пробрасываем дальше: первое — в audit-лог
   // (entity user_name), второе — в гейт «manager без финансов» в tenant.cjs.
   const { rows } = await pool.query(
-    `SELECT s.user_id, s.studio_id, s.schema_name, s.expires_at,
+    `SELECT s.user_id, s.studio_id, s.schema_name, s.expires_at, s.last_used_at,
             u.role, u.is_active, u.name, u.can_view_finance
        FROM saas_meta.sessions s
        JOIN saas_meta.users u ON u.id = s.user_id
@@ -155,7 +168,17 @@ async function verifySession(token) {
     return null;
   }
 
+  // Absolute TTL (expires_at) — жёсткий потолок.
   if (new Date(row.expires_at).getTime() <= Date.now()) {
+    await pool.query('DELETE FROM saas_meta.sessions WHERE token = $1', [token]);
+    return null;
+  }
+
+  // Idle TTL: если last_used_at старше idle-окна — считаем сессию мёртвой.
+  // Защита от давно украденной/забытой cookie: даже если absolute TTL = 30 дней,
+  // неактивная сессия живёт максимум sessionIdleMs (по дефолту 14 дней).
+  const lastUsedMs = row.last_used_at ? new Date(row.last_used_at).getTime() : 0;
+  if (lastUsedMs && Date.now() - lastUsedMs > sessionIdleMs()) {
     await pool.query('DELETE FROM saas_meta.sessions WHERE token = $1', [token]);
     return null;
   }
@@ -202,10 +225,15 @@ async function invalidateAllStudioSessions(studioId) {
 
 /**
  * Чистка протухших сессий. Запускать по cron раз в сутки.
+ * Дропает: (а) absolute-TTL истёкшие, (б) idle-TTL истёкшие.
  */
 async function cleanupExpiredSessions() {
+  const idleHours = Number(process.env.SESSION_IDLE_HOURS) || 14 * 24;
   const { rowCount } = await pool.query(
-    'DELETE FROM saas_meta.sessions WHERE expires_at <= now()'
+    `DELETE FROM saas_meta.sessions
+       WHERE expires_at <= now()
+          OR last_used_at < now() - ($1::int || ' hours')::interval`,
+    [idleHours]
   );
   return rowCount;
 }

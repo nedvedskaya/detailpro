@@ -93,12 +93,22 @@ npm ci --omit=dev
 npm run init
 EOF
 
-# Рестарт делаем ОТДЕЛЬНОЙ ssh-сессией с -t (PTY): на VPS sudoers содержит
+# Рестарт делаем ОТДЕЛЬНОЙ ssh-сессией с -tt (PTY): на VPS sudoers содержит
 # Defaults use_pty, поэтому без TTY sudo откажет даже с NOPASSWD. Отдельная
 # сессия гарантирует, что PTY не конфликтует с heredoc-stdin предыдущей.
-ssh -tt "${REMOTE}" "sudo -n /bin/systemctl restart saas-crm" </dev/null
+#
+# ВАЖНО: НЕ делаем `</dev/null` после `-tt`. -tt запрашивает PTY на удалённой
+# стороне, а перенаправление stdin от /dev/null отбирает его — sudo затем
+# отказывает с "a password is required" (use_pty не выполнен). Раньше скрипт
+# падал именно на этом и оставлял старый код на проде после rsync.
+ssh -tt "${REMOTE}" "sudo -n /bin/systemctl restart saas-crm"
 sleep 2
-ssh -tt "${REMOTE}" "sudo -n /bin/systemctl status saas-crm --no-pager --lines=10 || true" </dev/null
+# Проверка состояния — БЕЗ sudo. Раньше тут было `sudo systemctl status`, но
+# в /etc/sudoers.d/saas-crm у `deploy` разрешён ТОЛЬКО `restart saas-crm`,
+# поэтому на status sudo возвращал "a password is required" — пугающая
+# строка в логе деплоя при том, что рестарт по факту прошёл успешно.
+# `systemctl is-active` работает от имени deploy без sudo.
+ssh "${REMOTE}" "systemctl is-active saas-crm" || echo "WARNING: saas-crm не active"
 
 # ── 5. Health check ────────────────────────────────────────────────────
 log "health: ${DEPLOY_HEALTH_URL}"

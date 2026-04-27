@@ -1,0 +1,126 @@
+/**
+ * errorMessages.ts — единый словарь машинных error-кодов бэкенда → читаемые
+ * русские сообщения для пользователя.
+ *
+ * Зачем: бэкенд отдаёт коды вроде 'schema_name_taken' / 'email_already_used'
+ * прямо в поле `error` JSON-а. Раньше они показывались как есть — пользователь
+ * видел «schema_name_taken» и не понимал, что не так. Теперь все сообщения
+ * проходят через translateApiError() и возвращаются в читаемом виде.
+ *
+ * Контракт: при добавлении нового кода ошибки на бэке — добавьте перевод сюда.
+ * Если код не найден в словаре — возвращаем оригинальное сообщение (бэк часто
+ * шлёт уже русский текст в `message`), либо общий fallback.
+ */
+
+import { ApiError } from './api';
+
+// Известные коды → читаемый русский. Ключи синхронизированы с бэком
+// (см. server/routes/auth.cjs, tenant.cjs, profile.cjs, admin.cjs).
+const ERROR_TRANSLATIONS: Record<string, string> = {
+  // Авторизация / signup
+  email_invalid:           'Введите корректный email',
+  email_already_used:      'Этот email уже зарегистрирован — попробуйте войти',
+  password_too_short:      'Пароль должен быть не менее 8 символов',
+  password_too_common:     'Этот пароль слишком распространённый — придумайте надёжнее',
+  invalid_credentials:     'Неверный email или пароль',
+  consent_required:        'Подтвердите согласие с условиями',
+  display_name_required:   'Введите название студии',
+
+  // Имя схемы (генерируется автоматически из displayName)
+  schema_name_required:    'Не указано название студии',
+  schema_name_invalid:     'В названии студии должны быть буквы или цифры',
+  schema_name_reserved:    'Это название зарезервировано системой — выберите другое',
+  schema_name_taken:       'Это название уже занято — добавьте уточнение или цифру',
+
+  // Профиль / реквизиты
+  inn_invalid:             'ИНН должен содержать 10 или 12 цифр',
+  ogrn_invalid:            'ОГРН должен содержать 13 или 15 цифр',
+  contact_email_invalid:   'Введите корректный контактный email',
+  no_fields_to_update:     'Нет данных для сохранения',
+  user_not_found:          'Пользователь не найден',
+  studio_not_found:        'Студия не найдена',
+
+  // Подписка
+  only_owner_can_cancel:   'Отменить подписку может только собственник',
+  only_owner_can_resume:   'Восстановить подписку может только собственник',
+  only_owner_can_edit_studio: 'Реквизиты может править только собственник',
+  only_owner:              'Действие доступно только собственнику студии',
+  no_active_subscription:  'Активной подписки нет — отменять нечего',
+  subscription_expired:    'Подписка истекла — оформите тариф',
+  session_expired:         'Сессия истекла — войдите заново',
+
+  // Файлы
+  file_too_large:          'Файл слишком большой',
+  not_an_image:            'Это не изображение',
+  avatar_required:         'Файл аватара не выбран',
+
+  // Документы (акт приёмки / заказ-наряд)
+  signature_too_large:     'Подпись слишком тяжёлая — попробуйте перерисовать',
+  signature_invalid:       'Подпись в неверном формате',
+  zones_invalid:           'Ошибка в данных по зонам',
+  items_invalid:           'Ошибка в данных по услугам',
+
+  // Rate-limit / общие
+  too_many_attempts:       'Слишком много попыток — попробуйте через 15 минут',
+  too_many_requests:       'Слишком много запросов — попробуйте через 15 минут',
+  too_many_signups:        'Слишком много регистраций с этого адреса — попробуйте через час',
+  rate_limited:            'Слишком много запросов — подождите немного',
+
+  // Доступ / роли
+  finance_forbidden:       'Раздел «Финансы» недоступен для вашей роли',
+  forbidden_role:          'Это действие доступно только владельцу студии',
+  master_cannot_edit:      'Мастер не может изменять данные',
+  unauthenticated:         'Войдите в систему — сессия не активна',
+  session_invalid_or_expired: 'Сессия истекла — войдите заново',
+  studio_disabled:         'Студия отключена — обратитесь в поддержку',
+  forbidden:               'Действие запрещено для вашей роли',
+
+  // Транзакции / записи
+  type_invalid:            'Неверный тип операции',
+  amount_required:         'Укажите сумму',
+  invalid_id:              'Некорректный идентификатор',
+  transaction_not_found:   'Операция не найдена',
+  not_found:               'Запись не найдена',
+  name_required:           'Укажите название',
+
+  // Аналитика / тариф
+  plan_required:           'Раздел доступен на тарифе «Студия»',
+};
+
+/**
+ * Возвращает читаемое сообщение об ошибке для отображения пользователю.
+ * Принимает что угодно из catch — ApiError, обычную Error, строку.
+ *
+ * Логика:
+ *   1. Если объект — ApiError со знакомым `code` или `message` (равным коду) —
+ *      возвращаем перевод из словаря.
+ *   2. Если message уже на русском (содержит кириллицу) — возвращаем его как есть.
+ *   3. Иначе возвращаем fallback.
+ */
+export function translateApiError(err: unknown, fallback = 'Ошибка соединения с сервером'): string {
+  // Сетевые ошибки fetch — `TypeError: Failed to fetch` / `Network request failed`.
+  // Это не сообщение для пользователя: показываем fallback.
+  const isNetworkNoise = (s: string) =>
+    s.startsWith('Failed to fetch') ||
+    s.startsWith('Network request failed') ||
+    s === 'Load failed' ||
+    s.startsWith('NetworkError');
+
+  if (err instanceof ApiError) {
+    // Бэк может вернуть код в `code` ИЛИ в `message` (часто в нашем коде
+    // body.error становится message при отсутствии code).
+    const candidate = (err.code || err.message || '').trim();
+    if (candidate && ERROR_TRANSLATIONS[candidate]) return ERROR_TRANSLATIONS[candidate];
+    // message — уже русский текст? (содержит кириллицу — значит, локализован).
+    if (candidate && /[а-яёА-ЯЁ]/.test(candidate)) return candidate;
+    if (candidate && !isNetworkNoise(candidate)) return candidate;
+  } else if (typeof err === 'string') {
+    if (ERROR_TRANSLATIONS[err]) return ERROR_TRANSLATIONS[err];
+    if (!isNetworkNoise(err)) return err;
+  } else if (err instanceof Error) {
+    const m = err.message || '';
+    if (ERROR_TRANSLATIONS[m]) return ERROR_TRANSLATIONS[m];
+    if (m && /[а-яёА-ЯЁ]/.test(m)) return m;
+  }
+  return fallback;
+}

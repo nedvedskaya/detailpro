@@ -36,24 +36,20 @@ const {
 } = require('../lib/auth.cjs');
 const { requireRole } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan } = require('../lib/plans.cjs');
-const { logAction } = require('../lib/audit.cjs');
+const { logFromReq } = require('../lib/audit.cjs');
+const { isValidEmail, isValidPassword, assertStrongPassword } = require('../lib/validation.cjs');
 
 const router = express.Router();
 
-// Sugar для аудита — параметры берём из req.session.
-// userName — приходит из verifySession (lib/auth.cjs).
+// Sugar поверх logFromReq для admin-роутов: entityType всегда 'user',
+// entityId/Name удобно вытаскивать из объекта target (StudioUser-like).
+// Раньше был свой logAction-вызов с ручной распаковкой req.session — теперь
+// эта работа делается в lib/audit.cjs#logFromReq, мы добавляем только
+// admin-специфичную часть (entityType + извлечение из target).
 function audit(req, action, target, extra = {}) {
-  return logAction({
-    schemaName: req.session.schemaName,
-    userId:     req.session.userId,
-    userName:   req.session.userName,
-    action,
-    entityType: 'user',
-    entityId:   target?.id || extra.entityId || null,
-    entityName: target?.name || target?.email || extra.entityName || null,
-    details:    extra.details || null,
-    ip:         req.ip,
-  });
+  const entityId   = target?.id   || extra.entityId   || null;
+  const entityName = target?.name || target?.email    || extra.entityName || null;
+  return logFromReq(req, action, 'user', entityId, entityName, extra.details || null);
 }
 
 // Генератор временного пароля (для admin-reset). 12 символов base64url —
@@ -134,11 +130,15 @@ router.get('/users', async (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 router.post('/users', async (req, res, next) => {
   const { email, password, name, firstName, lastName, phone, role, can_view_finance } = req.body || {};
-  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'email_invalid' });
   }
-  if (typeof password !== 'string' || password.length < 8) {
-    return res.status(400).json({ error: 'password_too_short' });
+  // Раннее отклонение: слабый пароль или слишком короткий → 400 со специфическим
+  // кодом, чтобы фронт мог показать «придумайте надёжнее» вместо generic ошибки.
+  try {
+    assertStrongPassword(password);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
   // Через эту ручку owner создавать нельзя — он один на студию (см. signup).
   const finalRole = CREATABLE_ROLES.includes(role) ? role : 'master';
@@ -189,8 +189,10 @@ router.post('/users', async (req, res, next) => {
     if (err.code === '23505') return res.status(409).json({ error: 'email_already_used' });
     throw err;
   }
+  // Пишем details на русском, чтобы UI не пришлось расшифровывать машинные коды.
+  const ROLE_RU = { owner: 'Собственник', manager: 'Менеджер', master: 'Мастер' };
   audit(req, 'create', r.rows[0], {
-    details: `role=${finalRole}, finance=${finalFinance}`,
+    details: `роль: ${ROLE_RU[finalRole] || finalRole}, финансы: ${finalFinance ? 'да' : 'нет'}`,
   });
   res.status(201).json(r.rows[0]);
 });
@@ -252,13 +254,16 @@ router.put('/users/:id', async (req, res, next) => {
     [newName, newRole, newActive, newFinance, id, req.session.studioId]
   );
 
-  // Diff для аудита: что реально поменялось.
+  // Diff для аудита: что реально поменялось. Все строки сразу на русском —
+  // чтобы UI выводил их as-is, без машинных значений.
+  const ROLE_RU = { owner: 'Собственник', manager: 'Менеджер', master: 'Мастер' };
+  const yn = (b) => (b ? 'да' : 'нет');
   const changes = [];
-  if (newName !== target.name) changes.push(`name: "${target.name}" → "${newName}"`);
-  if (newRole !== target.role) changes.push(`role: ${target.role} → ${newRole}`);
-  if (newActive !== target.is_active) changes.push(`active: ${target.is_active} → ${newActive}`);
+  if (newName !== target.name) changes.push(`имя: «${target.name}» → «${newName}»`);
+  if (newRole !== target.role) changes.push(`роль: ${ROLE_RU[target.role] || target.role} → ${ROLE_RU[newRole] || newRole}`);
+  if (newActive !== target.is_active) changes.push(`активен: ${yn(target.is_active)} → ${yn(newActive)}`);
   if (newFinance !== (target.can_view_finance !== false)) {
-    changes.push(`finance: ${target.can_view_finance !== false} → ${newFinance}`);
+    changes.push(`финансы: ${yn(target.can_view_finance !== false)} → ${yn(newFinance)}`);
   }
   if (changes.length > 0) {
     audit(req, 'update', r.rows[0], { details: changes.join('; ') });
@@ -361,6 +366,302 @@ router.delete('/users/:id', async (req, res, next) => {
   // (денормализация) останется. entity_id="<deleted-uuid>" сохранит ID.
   audit(req, 'delete', target);
   res.json({ ok: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// GET /api/admin/analytics?period=3m|6m|year
+//
+// Дашборд аналитики студии. Доступен только role=owner (стоит на routerе)
+// И ТОЛЬКО на тарифе «Студия» — на solo/trial/cancelled возвращаем 402,
+// чтобы фронт показал плашку «доступно на тарифе Студия».
+//
+// Все цифры считаем по client_records (фактические записи о работе) — это
+// первичная сущность учёта; bookings — лишь слот в календаре. Ср. чек =
+// revenue / orders. Categories тянем через cr.category_id → categories.name;
+// если client_records.category_id NULL — попадает в «Без категории».
+//
+// «Новые клиенты» — clients.created_at в текущем месяце. Дельты — к
+// предыдущему месяцу (для процентов: round((cur−prev)/max(prev,1)·100)).
+//
+// Период определяет глубину истории на графиках (3/6/12 месяцев), но
+// «Выручка за месяц» в карточках — всегда календарный текущий месяц.
+// ══════════════════════════════════════════════════════════════════════
+router.get('/analytics', async (req, res, next) => {
+  try {
+    // 1. Гейтим по тарифу.
+    const plan = await fetchStudioPlan(req.session.studioId);
+    if (plan !== 'studio') {
+      return res.status(402).json({
+        error: 'plan_required',
+        plan,
+        requiredPlan: 'studio',
+        message: 'Аналитика доступна на тарифе «Студия». Повысьте тариф в Профиле.',
+      });
+    }
+
+    // 2. Период: 3m | 6m | year (12 мес). По умолчанию 6m.
+    const periodInput = String(req.query.period || '6m').toLowerCase();
+    const months = periodInput === '3m' ? 3 : periodInput === 'year' || periodInput === '12m' ? 12 : 6;
+
+    const schema = req.session.schemaName;
+    const { queryInSchema } = require('../lib/db.cjs');
+
+    // ── Карточки: текущий vs предыдущий календарный месяц ──
+    // Источник денежных метрик (revenue) — таблица `transactions` с
+    // type='income'. В неё попадают:
+    //   • авто-операции от заказов (advance/full payment, привязка
+    //     client_record_id) — генерятся при сохранении client_records;
+    //   • ручные income-операции из раздела «Финансы».
+    // Дублей нет: каждая авто-операция вставляется один раз. Раньше
+    // источник был client_records.amount → ручные «Финансы» в аналитику не
+    // попадали, что и было багом.
+    //
+    // Количество заказов (orders) и средний чек считаем по client_records:
+    // это про работу студии, а не про деньги — отдельная семантика.
+    const cardsRes = await queryInSchema(schema, `
+      WITH bounds AS (
+        SELECT date_trunc('month', CURRENT_DATE)::date AS this_start,
+               (date_trunc('month', CURRENT_DATE) + interval '1 month')::date AS next_start,
+               (date_trunc('month', CURRENT_DATE) - interval '1 month')::date AS prev_start
+      ),
+      rev AS (
+        SELECT
+          COALESCE(SUM(t.amount) FILTER (WHERE t.date >= b.this_start AND t.date < b.next_start), 0)::numeric AS revenue_cur,
+          COALESCE(SUM(t.amount) FILTER (WHERE t.date >= b.prev_start AND t.date < b.this_start), 0)::numeric AS revenue_prev
+        FROM bounds b
+        LEFT JOIN {{schema}}.transactions t
+               ON t.type = 'income'
+              AND t.date >= b.prev_start AND t.date < b.next_start
+      ),
+      ord AS (
+        SELECT
+          COUNT(*) FILTER (WHERE cr.date >= b.this_start AND cr.date < b.next_start)::int AS orders_cur,
+          COUNT(*) FILTER (WHERE cr.date >= b.prev_start AND cr.date < b.this_start)::int AS orders_prev
+        FROM bounds b
+        LEFT JOIN {{schema}}.client_records cr ON cr.date >= b.prev_start AND cr.date < b.next_start
+      )
+      SELECT rev.revenue_cur, rev.revenue_prev, ord.orders_cur, ord.orders_prev
+        FROM rev, ord
+    `);
+    const card = cardsRes.rows[0];
+
+    // Новые клиенты по created_at — отдельный запрос, чтобы не плодить JOIN.
+    const newClientsRes = await queryInSchema(schema, `
+      SELECT
+        COUNT(*) FILTER (WHERE created_at >= date_trunc('month', CURRENT_DATE))::int AS new_cur,
+        COUNT(*) FILTER (
+          WHERE created_at >= date_trunc('month', CURRENT_DATE) - interval '1 month'
+            AND created_at <  date_trunc('month', CURRENT_DATE)
+        )::int AS new_prev
+        FROM {{schema}}.clients
+    `);
+    const nc = newClientsRes.rows[0];
+
+    const revenueCur  = Number(card.revenue_cur);
+    const revenuePrev = Number(card.revenue_prev);
+    const ordersCur   = Number(card.orders_cur);
+    const ordersPrev  = Number(card.orders_prev);
+    const avgCur      = ordersCur  > 0 ? revenueCur  / ordersCur  : 0;
+    const avgPrev     = ordersPrev > 0 ? revenuePrev / ordersPrev : 0;
+
+    const pctDelta = (cur, prev) => {
+      if (!prev) return cur > 0 ? 100 : 0;
+      return Math.round(((cur - prev) / prev) * 100);
+    };
+
+    // ── По месяцам: revenue/orders/avg_check/new_clients за last N месяцев ──
+    // Генерим ось месяцев через generate_series, чтобы не было дыр в графике.
+    // revenue — из transactions(income), orders — из client_records (см.
+    // комментарий к карточкам выше).
+    const byMonthRes = await queryInSchema(schema, `
+      WITH months AS (
+        SELECT generate_series(
+          date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month',
+          date_trunc('month', CURRENT_DATE),
+          interval '1 month'
+        )::date AS m
+      ),
+      rev AS (
+        SELECT date_trunc('month', t.date)::date AS m,
+               COALESCE(SUM(t.amount), 0)::numeric AS revenue
+        FROM {{schema}}.transactions t
+        WHERE t.type = 'income'
+          AND t.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+        GROUP BY 1
+      ),
+      orders AS (
+        SELECT date_trunc('month', cr.date)::date AS m,
+               COUNT(*)::int AS orders
+        FROM {{schema}}.client_records cr
+        WHERE cr.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+        GROUP BY 1
+      ),
+      newc AS (
+        SELECT date_trunc('month', c.created_at)::date AS m,
+               COUNT(*)::int AS new_clients
+        FROM {{schema}}.clients c
+        WHERE c.created_at >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')
+        GROUP BY 1
+      )
+      SELECT m.m AS month_date,
+             COALESCE(r.revenue, 0)::numeric AS revenue,
+             COALESCE(o.orders, 0)::int AS orders,
+             COALESCE(n.new_clients, 0)::int AS new_clients
+      FROM months m
+      LEFT JOIN rev    r ON r.m = m.m
+      LEFT JOIN orders o ON o.m = m.m
+      LEFT JOIN newc   n ON n.m = m.m
+      ORDER BY m.m ASC
+    `, [months]);
+
+    const monthLabelsRu = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+    const byMonth = byMonthRes.rows.map((r) => {
+      const d = new Date(r.month_date);
+      const revenue = Number(r.revenue);
+      const orders  = Number(r.orders);
+      return {
+        label: monthLabelsRu[d.getMonth()],
+        month_key: r.month_date,
+        revenue,
+        orders,
+        new_clients: Number(r.new_clients),
+        avg_check: orders > 0 ? Math.round(revenue / orders) : 0,
+      };
+    });
+
+    // ── Структура выручки по категориям (за период) ──
+    // По transactions(income): category_id у авто-операций приходит из
+    // client_records.category_id (см. App.tsx#addTransaction), у ручных —
+    // из формы. category_id может быть NULL → группа «Без категории».
+    const categoriesRes = await queryInSchema(schema, `
+      SELECT COALESCE(c.name, t.category, 'Без категории') AS name,
+             COALESCE(SUM(t.amount), 0)::numeric AS revenue
+        FROM {{schema}}.transactions t
+        LEFT JOIN {{schema}}.categories c ON c.id = t.category_id
+        WHERE t.type = 'income'
+          AND t.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+        GROUP BY COALESCE(c.name, t.category, 'Без категории')
+        HAVING SUM(t.amount) > 0
+        ORDER BY revenue DESC
+        LIMIT 10
+    `, [months]);
+    const categoriesRaw = categoriesRes.rows.map((r) => ({ name: r.name, revenue: Number(r.revenue) }));
+    const categoriesTotal = categoriesRaw.reduce((s, c) => s + c.revenue, 0) || 1;
+    const categories = categoriesRaw.map((c) => ({
+      ...c,
+      pct: Math.round((c.revenue / categoriesTotal) * 100),
+    }));
+
+    // ── Топ-5 услуг по выручке (по service_name, денормализованному в client_records) ──
+    const topRes = await queryInSchema(schema, `
+      SELECT cr.service_name AS name, COALESCE(SUM(cr.amount), 0)::numeric AS revenue
+        FROM {{schema}}.client_records cr
+        WHERE cr.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+          AND cr.service_name IS NOT NULL AND cr.service_name <> ''
+        GROUP BY cr.service_name
+        HAVING SUM(cr.amount) > 0
+        ORDER BY revenue DESC
+        LIMIT 5
+    `, [months]);
+    const topServices = topRes.rows.map((r) => ({ name: r.name, revenue: Number(r.revenue) }));
+
+    // ── Клиентская база: total / repeat / inactive / avg_interval ──
+    const retentionRes = await queryInSchema(schema, `
+      WITH stats AS (
+        SELECT c.id,
+               COUNT(cr.id)::int AS order_count,
+               MAX(cr.date)      AS last_visit
+        FROM {{schema}}.clients c
+        LEFT JOIN {{schema}}.client_records cr ON cr.client_id = c.id
+        GROUP BY c.id
+      )
+      SELECT
+        COUNT(*)::int                                                           AS total_clients,
+        COUNT(*) FILTER (WHERE order_count >= 2)::int                           AS repeat_clients,
+        COUNT(*) FILTER (WHERE last_visit IS NOT NULL
+                          AND last_visit < CURRENT_DATE - INTERVAL '90 days')::int
+                                                                                AS inactive_3m
+      FROM stats
+    `);
+    const retRow = retentionRes.rows[0] || { total_clients: 0, repeat_clients: 0, inactive_3m: 0 };
+
+    // Средний интервал между заказами (среди клиентов с 2+) — в месяцах.
+    const intervalRes = await queryInSchema(schema, `
+      WITH ordered AS (
+        SELECT client_id, date,
+               LEAD(date) OVER (PARTITION BY client_id ORDER BY date) AS next_date
+        FROM {{schema}}.client_records
+      )
+      SELECT COALESCE(AVG((next_date - date))::numeric, 0) AS avg_days
+      FROM ordered
+      WHERE next_date IS NOT NULL
+    `);
+    const avgDays = Number(intervalRes.rows[0]?.avg_days || 0);
+    const avgIntervalMonths = avgDays > 0 ? Math.round((avgDays / 30.4375) * 10) / 10 : 0;
+
+    // Записей на следующий календарный месяц (bookings — будущие слоты).
+    const upcomingRes = await queryInSchema(schema, `
+      SELECT COUNT(*)::int AS upcoming
+        FROM {{schema}}.bookings
+        WHERE date >= (date_trunc('month', CURRENT_DATE) + interval '1 month')::date
+          AND date <  (date_trunc('month', CURRENT_DATE) + interval '2 months')::date
+    `);
+    const upcomingNextMonth = Number(upcomingRes.rows[0]?.upcoming || 0);
+
+    // Конверсия в повторный визит за 30 дней (клиенты, у которых второй заказ
+    // случился в течение 30 дней после первого, среди когорты с >= 1 заказом).
+    const convRes = await queryInSchema(schema, `
+      WITH first_visits AS (
+        SELECT client_id, MIN(date) AS first_date
+        FROM {{schema}}.client_records GROUP BY client_id
+      ),
+      pairs AS (
+        SELECT fv.client_id, fv.first_date,
+               (SELECT MIN(date) FROM {{schema}}.client_records cr2
+                  WHERE cr2.client_id = fv.client_id AND cr2.date > fv.first_date) AS second_date
+        FROM first_visits fv
+      )
+      SELECT
+        COUNT(*)::int AS first_count,
+        COUNT(*) FILTER (
+          WHERE second_date IS NOT NULL AND (second_date - first_date) <= 30
+        )::int AS converted
+      FROM pairs
+    `);
+    const convRow = convRes.rows[0] || { first_count: 0, converted: 0 };
+    const conversion30dPct = convRow.first_count > 0
+      ? Math.round((convRow.converted / convRow.first_count) * 100)
+      : 0;
+
+    res.json({
+      period: months === 3 ? '3m' : months === 12 ? 'year' : '6m',
+      current_month: {
+        revenue: Math.round(revenueCur),
+        revenue_delta_pct: pctDelta(revenueCur, revenuePrev),
+        orders: ordersCur,
+        orders_delta: ordersCur - ordersPrev,
+        new_clients: Number(nc.new_cur),
+        new_clients_delta: Number(nc.new_cur) - Number(nc.new_prev),
+        avg_check: Math.round(avgCur),
+        avg_check_delta_pct: pctDelta(avgCur, avgPrev),
+      },
+      by_month: byMonth,
+      categories,
+      top_services: topServices,
+      retention: {
+        total_clients: Number(retRow.total_clients),
+        repeat_pct: retRow.total_clients > 0
+          ? Math.round((Number(retRow.repeat_clients) / Number(retRow.total_clients)) * 100)
+          : 0,
+        inactive_3m: Number(retRow.inactive_3m),
+        upcoming_next_month: upcomingNextMonth,
+        avg_interval_months: avgIntervalMonths,
+        conversion_30d_pct: conversion30dPct,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;

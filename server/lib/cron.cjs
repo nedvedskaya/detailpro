@@ -24,11 +24,15 @@
 
 const { pool } = require('./db.cjs');
 const { cleanupExpiredSessions } = require('./auth.cjs');
+const reminders = require('./reminders.cjs');
 
 const ACTIVITY_RETENTION_DAYS = Number(process.env.ACTIVITY_RETENTION_DAYS) || 90;
 const CRON_INTERVAL_MS = Number(process.env.CRON_INTERVAL_MS) || 24 * 60 * 60 * 1000;
+// Тикер TG-напоминаний. 5 минут — окна 9:00-9:09 и 55-65 мин его покрывают.
+const REMINDERS_INTERVAL_MS = Number(process.env.REMINDERS_INTERVAL_MS) || 5 * 60 * 1000;
 
 let timer = null;
+let remindersTimer = null;
 
 /**
  * Сносит строки activity_logs старше N дней во всех studio_* схемах.
@@ -80,11 +84,34 @@ function quoteIdent(name) {
 }
 
 /**
+ * Чистка протухших payment_intents — двухпроходная стратегия:
+ *   • token живёт 60 минут (см. routes/profile.cjs#PAYMENT_INTENT_TTL_MS)
+ *   • после истечения держим ещё 7 дней для аудита (вдруг webhook опоздал
+ *     и придёт «после смерти»; тогда лог покажет, что мы его видели и не
+ *     консьюмнули)
+ *   • по истечении 7 дней — DELETE
+ *
+ * Использованные intent (consumed_at IS NOT NULL) держим 30 дней — они
+ * связаны с конкретным order_id, удобны для расследования.
+ */
+async function cleanupPaymentIntents() {
+  const r = await pool.query(
+    `DELETE FROM saas_meta.payment_intents
+       WHERE (consumed_at IS NULL AND expires_at < now() - interval '7 days')
+          OR (consumed_at IS NOT NULL AND consumed_at < now() - interval '30 days')`
+  );
+  if (r.rowCount > 0) {
+    console.log(`[cron] payment_intents: deleted ${r.rowCount} rows`);
+  }
+  return r.rowCount;
+}
+
+/**
  * Прогон всех jobs «один раз». Используется и таймером, и для ручного запуска.
  */
 async function runOnce() {
   const startedAt = Date.now();
-  const result = { activityLogs: 0, sessions: 0, errors: [] };
+  const result = { activityLogs: 0, sessions: 0, paymentIntents: 0, errors: [] };
 
   try {
     result.activityLogs = await cleanupActivityLogs();
@@ -101,6 +128,13 @@ async function runOnce() {
   } catch (err) {
     console.error('[cron] cleanupExpiredSessions failed:', err.message);
     result.errors.push({ job: 'sessions', message: err.message });
+  }
+
+  try {
+    result.paymentIntents = await cleanupPaymentIntents();
+  } catch (err) {
+    console.error('[cron] cleanupPaymentIntents failed:', err.message);
+    result.errors.push({ job: 'paymentIntents', message: err.message });
   }
 
   console.log(`[cron] runOnce finished in ${Date.now() - startedAt}ms`);
@@ -122,12 +156,29 @@ function start() {
   // на SIGTERM, не дожидаясь следующего тика.
   if (typeof timer.unref === 'function') timer.unref();
   console.log(`[cron] scheduled every ${Math.round(CRON_INTERVAL_MS / 60000)} min, retention ${ACTIVITY_RETENTION_DAYS} days`);
+
+  // Отдельный таймер для напоминаний — частый тик, не смешиваем с тяжёлым
+  // cleanup'ом раз в сутки. Идемпотентность гарантирует UNIQUE-индексы
+  // в saas_meta.tg_sent_reminders, поэтому случайное двойное срабатывание
+  // (e.g. из-за overlap'а тиков) не приведёт к дублям.
+  if (!remindersTimer) {
+    remindersTimer = setInterval(() => {
+      reminders.runOnce().catch((err) =>
+        console.error('[cron] reminders.runOnce uncaught:', err.message));
+    }, REMINDERS_INTERVAL_MS);
+    if (typeof remindersTimer.unref === 'function') remindersTimer.unref();
+    console.log(`[cron] reminders scheduled every ${Math.round(REMINDERS_INTERVAL_MS / 60000)} min`);
+  }
 }
 
 function stop() {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (remindersTimer) {
+    clearInterval(remindersTimer);
+    remindersTimer = null;
   }
 }
 

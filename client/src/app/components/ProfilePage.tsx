@@ -44,13 +44,44 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '@/utils/api';
+import { ChevronDown } from 'lucide-react';
+import { api } from '@/utils/api';
+import { translateApiError } from '@/utils/errorMessages';
 import { getRoleName } from '@/utils/constants';
 import { patchCachedUser } from '@/utils/auth';
+import {
+  canEditStudio,
+  canEditOwnProfile,
+  canManageSubscription,
+  canManageReferrals,
+  canManageServices,
+  canEditEntities,
+} from '@/utils/permissions';
+import { handleApiError } from '@/utils/stateHelpers';
+import { isValidEmail } from '@/utils/validation';
+import { parseDbDate, formatDateRu } from '@/utils/helpers';
+import { ServicesManager } from '@/app/components/ServicesManager';
+import { ClientsImport } from '@/app/components/ClientsImport';
 import type { ProfileResponse, Role } from '@/utils/types';
 
 // Кому пишет пользователь, чтобы изменить email или связаться по биллингу.
 const SUPPORT_EMAIL = 'nedwedskaya@yandex.ru';
+
+// ИНН: 10 цифр (юрлицо) или 12 (ИП). ОГРН: 13 (юрлицо) или 15 (ИП).
+// Возвращаем читаемый текст ошибки или null если всё ок.
+function validateInn(v: string): string | null {
+  if (!/^\d+$/.test(v)) return 'Только цифры';
+  if (v.length !== 10 && v.length !== 12) return 'ИНН — 10 цифр (юрлицо) или 12 (ИП)';
+  return null;
+}
+function validateOgrn(v: string): string | null {
+  if (!/^\d+$/.test(v)) return 'Только цифры';
+  if (v.length !== 13 && v.length !== 15) return 'ОГРН — 13 цифр (юрлицо) или 15 (ОГРНИП)';
+  return null;
+}
+function validateEmail(v: string): string | null {
+  return isValidEmail(v) ? null : 'Некорректный email';
+}
 
 interface ProfilePageProps {
   onBack: () => void;
@@ -95,8 +126,9 @@ const TARIFF_GROUPS: TariffGroup[] = [
     features: [
       '1 пользователь (только собственник)',
       'Клиенты, задачи, календарь',
+      'Документы по приёмке авто',
+      'Заказ-наряды',
       'Финансовый учёт и аналитика',
-      'Загрузка фото детейлинга',
     ],
     monthly: {
       id: 'solo_month',
@@ -190,39 +222,6 @@ function formatRub(amount: number): string {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// formatDateRu — устойчивый парсер дат:
-//   • ISO с «T»:           «2026-04-26T11:28:31.968Z»
-//   • Postgres timestamp:  «2026-04-26 11:28:31.968692+00»
-//   • date-only:           «2026-04-26»
-// → «26 апреля 2026»
-// (стандартный helpers.formatDate ломается на postgres-формате с пробелом)
-// ──────────────────────────────────────────────────────────────────────
-function formatDateRu(value: string | null | undefined): string {
-  if (!value) return '—';
-  let d: Date;
-  if (typeof value === 'string') {
-    if (value.includes('T')) {
-      d = new Date(value);
-    } else if (/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(value)) {
-      d = new Date(value.replace(' ', 'T'));
-    } else if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      const [y, m, day] = value.split('-').map(Number);
-      d = new Date(y, m - 1, day, 12, 0, 0);
-    } else {
-      d = new Date(value);
-    }
-  } else {
-    return '—';
-  }
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
-// ──────────────────────────────────────────────────────────────────────
 // Маска телефона +7 (XXX) XXX-XX-XX (не блокирующая, только подсказка ввода)
 // ──────────────────────────────────────────────────────────────────────
 function formatPhone(raw: string): string {
@@ -256,14 +255,8 @@ function pluralizeDays(n: number): string {
 
 function describeAccessUntil(accessUntil: string | null | undefined): { text: string; tone: 'ok' | 'warn' | 'expired' } {
   if (!accessUntil) return { text: 'дата не указана', tone: 'warn' };
-  // Тот же устойчивый парсинг, что и в formatDateRu
-  let target: Date;
-  if (typeof accessUntil === 'string' && /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(accessUntil)) {
-    target = new Date(accessUntil.replace(' ', 'T'));
-  } else {
-    target = new Date(accessUntil);
-  }
-  if (isNaN(target.getTime())) return { text: 'дата некорректна', tone: 'warn' };
+  const target = parseDbDate(accessUntil);
+  if (!target) return { text: 'дата не указана', tone: 'warn' };
   const now = new Date();
   const ms = target.getTime() - now.getTime();
   const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
@@ -277,20 +270,87 @@ function describeAccessUntil(accessUntil: string | null | undefined): { text: st
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Типизированное поле формы (имя/фамилия/телефон) с inline-сохранением
+// Сворачиваемая секция: заголовок-кнопка + раскрывающееся содержимое.
+// Применяется ко всем блокам Профиля кроме «Тариф» (там CTA должны быть
+// видны сразу — иначе пользователь не увидит, что подписка заканчивается).
 // ──────────────────────────────────────────────────────────────────────
-type EditableKey = 'firstName' | 'lastName' | 'phone';
+interface CollapsibleSectionProps {
+  title: string;
+  subtitle?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}
 
-interface EditableFieldProps {
+const CollapsibleSection = ({ title, subtitle, defaultOpen = false, children }: CollapsibleSectionProps) => {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full px-6 pt-5 pb-4 flex items-start justify-between gap-3 text-left hover:bg-zinc-50/60 transition-colors"
+        aria-expanded={open}
+      >
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium text-zinc-700 block">{title}</span>
+          {subtitle && (
+            <p className="text-xs text-zinc-400 mt-1">{subtitle}</p>
+          )}
+        </div>
+        <ChevronDown
+          size={18}
+          className={`text-zinc-400 shrink-0 mt-0.5 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div className="divide-y divide-zinc-100 border-t border-zinc-100">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// Типизированное поле формы с inline-сохранением.
+// Generic по ключу: используется и для user (firstName/lastName/phone),
+// и для studio (inn/ogrn/legalAddress/...) — onSave типобезопасно
+// привязан к нужному набору ключей со стороны вызова.
+//
+// validate: если возвращает строку — это текст ошибки, поле не сохраняется.
+// digitsOnly: ввод фильтруется до цифр (используется для ИНН/ОГРН).
+// ──────────────────────────────────────────────────────────────────────
+type UserFieldKey = 'firstName' | 'lastName' | 'phone';
+type StudioFieldKey =
+  | 'displayName'
+  | 'inn'
+  | 'ogrn'
+  | 'legalAddress'
+  | 'actualAddress'
+  | 'contactPhone'
+  | 'contactEmail'
+  | 'guaranteeText';
+
+interface EditableFieldProps<K extends string> {
   label: string;
-  fieldKey: EditableKey;
+  fieldKey: K;
   value: string;
   placeholder?: string;
   format?: (raw: string) => string;
-  onSave: (key: EditableKey, value: string) => Promise<void>;
+  multiline?: boolean;
+  digitsOnly?: boolean;
+  validate?: (value: string) => string | null;
+  onSave: (key: K, value: string) => Promise<void>;
+  // readOnly=true — поле показывается, но input/textarea дизейблится. Это
+  // нужно для master'a (он профиль не правит) и для не-owner'ов на
+  // реквизитах студии. Без этого master видел поле, тыкал «Сохранить»,
+  // получал 403 и краснело сообщение об ошибке.
+  readOnly?: boolean;
 }
 
-const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: EditableFieldProps) => {
+const EditableField = <K extends string>({
+  label, fieldKey, value, placeholder, format, multiline, digitsOnly, validate, onSave, readOnly,
+}: EditableFieldProps<K>) => {
   const [draft, setDraft] = useState(value);
   const [savingState, setSavingState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -299,7 +359,9 @@ const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: 
   useEffect(() => { setDraft(value); }, [value]);
 
   const handleChange = (raw: string) => {
-    const v = format ? format(raw) : raw;
+    let v = raw;
+    if (digitsOnly) v = v.replace(/\D/g, '');
+    if (format) v = format(v);
     setDraft(v);
     if (savingState !== 'idle') setSavingState('idle');
   };
@@ -307,6 +369,16 @@ const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: 
   const handleBlur = async () => {
     const trimmed = draft.trim();
     if (trimmed === (value || '').trim()) return; // ничего не поменялось
+    // Валидация (для ИНН/ОГРН/...). Для пустого значения validate не вызываем —
+    // пустую строку всегда можно сохранить (= очистить поле).
+    if (trimmed && validate) {
+      const err = validate(trimmed);
+      if (err) {
+        setSavingState('error');
+        setErrorMsg(err);
+        return;
+      }
+    }
     setSavingState('saving');
     setErrorMsg('');
     try {
@@ -322,15 +394,33 @@ const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: 
   return (
     <div className="px-6 py-4">
       <label className="text-xs text-zinc-400 block mb-1">{label}</label>
-      <div className="flex items-center gap-2">
-        <input
-          type="text"
-          value={draft}
-          placeholder={placeholder}
-          onChange={(e) => handleChange(e.target.value)}
-          onBlur={handleBlur}
-          className="flex-1 bg-transparent text-zinc-900 outline-none border-b border-transparent focus:border-zinc-300 transition-colors"
-        />
+      <div className={multiline ? 'flex items-start gap-2' : 'flex items-center gap-2'}>
+        {multiline ? (
+          <textarea
+            value={draft}
+            placeholder={readOnly ? '—' : placeholder}
+            rows={2}
+            disabled={readOnly}
+            onChange={(e) => handleChange(e.target.value)}
+            onBlur={handleBlur}
+            className={`flex-1 bg-transparent outline-none border-b border-transparent transition-colors resize-none leading-snug ${
+              readOnly ? 'text-zinc-500 cursor-default' : 'text-zinc-900 focus:border-zinc-300'
+            }`}
+          />
+        ) : (
+          <input
+            type="text"
+            value={draft}
+            placeholder={readOnly ? '—' : placeholder}
+            inputMode={digitsOnly ? 'numeric' : undefined}
+            disabled={readOnly}
+            onChange={(e) => handleChange(e.target.value)}
+            onBlur={handleBlur}
+            className={`flex-1 bg-transparent outline-none border-b border-transparent transition-colors ${
+              readOnly ? 'text-zinc-500 cursor-default' : 'text-zinc-900 focus:border-zinc-300'
+            }`}
+          />
+        )}
         {savingState === 'saving' && (
           <span className="text-xs text-zinc-400">сохраняем…</span>
         )}
@@ -346,17 +436,63 @@ const EditableField = ({ label, fieldKey, value, placeholder, format, onSave }: 
 };
 
 // ──────────────────────────────────────────────────────────────────────
-// Сборка URL для Prodamus с проброшенными параметрами.
-//   _param_studio_id — Prodamus вернёт его в webhook как поле studio_id
-//   _param_plan      — то же, как поле plan ('solo_month' | ...)
-//   customer_email   — Prodamus подставит на чекауте, чтобы клиенту не вводить
+// Расчёт сколько бонусов применится — нужен ТОЛЬКО для UI-превью (старая
+// перечёркнутая цена + строка «Применятся бонусы: до X»). Реальное значение,
+// которое уйдёт в Prodamus, считает сервер при выдаче intent — фронт
+// никогда не отправляет этот расчёт «на доверии».
+//
+// Правило: применить весь баланс, но не больше чем (priceRub - 1) — нужен
+// минимум 1 ₽ оплаты, иначе Prodamus откажет на нулевой сумме и webhook
+// не сработает. Бэк дублирует это правило в server/routes/profile.cjs
+// (intent endpoint).
 // ──────────────────────────────────────────────────────────────────────
-function buildPayformUrl(option: TariffOption, studioId: string, email: string): string {
+function calcBonusUsage(priceRub: number, balanceKop: number): { useKop: number; finalRub: number } {
+  if (!balanceKop || balanceKop <= 0) return { useKop: 0, finalRub: priceRub };
+  const maxApplyKop = Math.max(0, (priceRub - 1) * 100); // оставить минимум 1 ₽
+  const useKop = Math.min(balanceKop, maxApplyKop);
+  const finalRub = Math.max(1, Math.ceil(priceRub - useKop / 100));
+  return { useKop, finalRub };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Стартовать оплату: получить intent → построить payform-URL → открыть.
+//
+// До этой функции фронт строил URL сам (с `_param_studio_id` из своей
+// сессии). Атакующий мог поменять studio_id в devtools на чужой UUID и
+// через webhook манипулировать чужой подпиской (см. webhooks.cjs).
+//
+// Теперь:
+//   1. POST /api/profile/payment/intent { plan } → сервер выпускает
+//      одноразовый token, привязанный к req.session.studioId.
+//   2. Подставляем token как `_param_intent` (плюс _param_plan и
+//      customer_email — они для UX чекаута, не для security).
+//   3. Бонусы — берём `bonusKopApplied` и `finalAmountRub` ИЗ ОТВЕТА
+//      сервера, не считаем на фронте: сервер источник истины, чтобы
+//      на чекауте сумма совпала с ожиданием webhook'а.
+//
+// Открываем через window.open(url, '_blank'). Может быть заблокировано
+// pop-up-блокером, если вызвано НЕ из синхронного user-gesture
+// контекста — но fetch до open укладывается в 200-300мс, и браузеры
+// обычно пропускают такой sequence (особенно если показать пользователю
+// loading-индикатор, чтобы он не успел переключить вкладку).
+// ──────────────────────────────────────────────────────────────────────
+async function startPaymentFlow(
+  option: TariffOption,
+  email: string,
+): Promise<void> {
+  const intent = await api.createPaymentIntent(option.id);
   const u = new URL(option.payformUrl);
-  u.searchParams.set('_param_studio_id', studioId);
+  u.searchParams.set('_param_intent', intent.token);
   u.searchParams.set('_param_plan', option.id);
   if (email) u.searchParams.set('customer_email', email);
-  return u.toString();
+  if (intent.bonusKopApplied > 0) {
+    u.searchParams.set('_param_bonus_kop', String(intent.bonusKopApplied));
+    u.searchParams.set('customer_price', String(intent.finalAmountRub));
+  }
+  // _blank: оплата открывается в новой вкладке, текущая остаётся на
+  // профиле — после возврата usePaymentReturn хук подхватит ?payment=success
+  // и обновит UI.
+  window.open(u.toString(), '_blank', 'noopener,noreferrer');
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -365,13 +501,36 @@ function buildPayformUrl(option: TariffOption, studioId: string, email: string):
 interface TariffCardViewProps {
   group: TariffGroup;
   isCurrent: boolean;
-  studioId: string;
   email: string;
+  // Баланс бонусов — для UI-превью скидки и подсказки «будет применено X ₽».
+  bonusBalanceKop?: number;
 }
 
-const TariffCardView = ({ group, isCurrent, studioId, email }: TariffCardViewProps) => {
-  const monthlyUrl = buildPayformUrl(group.monthly, studioId, email);
-  const yearlyUrl  = buildPayformUrl(group.yearly,  studioId, email);
+const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0 }: TariffCardViewProps) => {
+  // Состояние «идёт запрос intent'а» — чтобы заблокировать кнопку и
+  // не дать создать два intent'а параллельно (каждый одноразовый,
+  // второй пропадёт впустую).
+  const [busy, setBusy] = useState<TariffId | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePay = async (option: TariffOption) => {
+    if (busy) return;
+    setBusy(option.id);
+    setError(null);
+    try {
+      await startPaymentFlow(option, email);
+    } catch (err) {
+      setError(translateApiError(err, 'Не удалось начать оплату'));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // UI-превью: сколько применится бонусов на месячном/годовом — для
+  // перечёркнутой цены и подписи внизу карточки. Реальное значение
+  // считает сервер при создании intent'а.
+  const monthlyUse = calcBonusUsage(group.monthly.priceRub, bonusBalanceKop);
+  const yearlyUse  = calcBonusUsage(group.yearly.priceRub,  bonusBalanceKop);
 
   // Студия: оранжевая рамка + лёгкий tint, бейдж «ПОПУЛЯРНО».
   // Соло: нейтральная рамка.
@@ -419,22 +578,31 @@ const TariffCardView = ({ group, isCurrent, studioId, email }: TariffCardViewPro
       */}
 
       {/* Кнопка «Оплатить на 1 месяц» */}
-      <a
-        href={monthlyUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-white border border-orange-300 text-orange-700 hover:bg-orange-50 active:bg-orange-100 transition-colors"
+      <button
+        type="button"
+        onClick={() => handlePay(group.monthly)}
+        disabled={busy !== null}
+        className="mt-2 flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-white border border-orange-300 text-orange-700 hover:bg-orange-50 active:bg-orange-100 transition-colors disabled:opacity-50 disabled:cursor-wait"
       >
-        <span className="text-xs">Оплатить на 1 месяц</span>
-        <span className="mt-0.5 text-lg font-bold">{formatRub(group.monthly.priceRub)}</span>
-      </a>
+        <span className="text-xs">{busy === 'solo_month' || busy === 'studio_month' ? 'Открываем…' : 'Оплатить на 1 месяц'}</span>
+        {monthlyUse.useKop > 0 ? (
+          <span className="mt-0.5 text-lg font-bold">
+            <span className="line-through text-zinc-400 text-sm font-normal mr-2">
+              {formatRub(group.monthly.priceRub)}
+            </span>
+            {formatRub(monthlyUse.finalRub)}
+          </span>
+        ) : (
+          <span className="mt-0.5 text-lg font-bold">{formatRub(group.monthly.priceRub)}</span>
+        )}
+      </button>
 
       {/* Кнопка «Оплатить на 12 месяцев» с ribbon-бейджем скидки сбоку */}
-      <a
-        href={yearlyUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-3 relative flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm"
+      <button
+        type="button"
+        onClick={() => handlePay(group.yearly)}
+        disabled={busy !== null}
+        className="mt-3 relative flex flex-col items-center justify-center w-full px-4 py-3 rounded-xl bg-orange-500 text-white hover:bg-orange-600 active:bg-orange-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-wait"
       >
         {group.yearly.savePct && (
           <span
@@ -444,14 +612,246 @@ const TariffCardView = ({ group, isCurrent, studioId, email }: TariffCardViewPro
             −{group.yearly.savePct}%
           </span>
         )}
-        <span className="text-xs opacity-90">Оплатить на 12 месяцев</span>
-        <span className="mt-0.5 text-lg font-bold">{formatRub(group.yearly.priceRub)}</span>
-      </a>
+        <span className="text-xs opacity-90">{busy === 'solo_year' || busy === 'studio_year' ? 'Открываем…' : 'Оплатить на 12 месяцев'}</span>
+        {yearlyUse.useKop > 0 ? (
+          <span className="mt-0.5 text-lg font-bold">
+            <span className="line-through opacity-70 text-sm font-normal mr-2">
+              {formatRub(group.yearly.priceRub)}
+            </span>
+            {formatRub(yearlyUse.finalRub)}
+          </span>
+        ) : (
+          <span className="mt-0.5 text-lg font-bold">{formatRub(group.yearly.priceRub)}</span>
+        )}
+      </button>
+
+      {error && (
+        <p className="mt-2 text-xs text-red-500 text-center">{error}</p>
+      )}
+
+      {(monthlyUse.useKop > 0 || yearlyUse.useKop > 0) && (
+        <p className="mt-2 text-[11px] text-emerald-700 text-center">
+          Применятся бонусы: до {formatRub(Math.max(monthlyUse.useKop, yearlyUse.useKop) / 100)}
+        </p>
+      )}
 
       {group.yearly.perMonthRub && (
         <p className="mt-2 text-[11px] text-zinc-500 text-center">
           ≈ {formatRub(group.yearly.perMonthRub)}/мес · экономия {formatRub(group.yearly.saveRub || 0)} за год
         </p>
+      )}
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// ReferralSection — блок «Моя реферальная программа» в профиле.
+//
+// Что показываем:
+//   • Персональная ссылка с кнопкой «Скопировать».
+//   • Текущий баланс бонусов + сколько всего получили / потратили.
+//   • Сетка статистики: приглашений / оплативших.
+//   • Список приведённых студий (имя + дата + бейдж «оплатили»).
+//   • Журнал начислений/списаний.
+//
+// Данные загружаем лениво (api.getReferral) при первом маунте секции.
+// Раздельный эндпоинт от /api/profile, чтобы не утяжелять основную загрузку
+// (агрегаты по referral_events недёшевые на больших объёмах).
+// ──────────────────────────────────────────────────────────────────────
+interface ReferralSectionProps {
+  referralCode: string | null;
+  bonusBalanceKop: number;
+}
+
+const ReferralSection = ({ referralCode, bonusBalanceKop }: ReferralSectionProps) => {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.getReferral>> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await api.getReferral();
+        if (mounted) setData(res);
+      } catch (e) {
+        if (mounted) setErr(translateApiError(e, 'Не удалось загрузить статистику'));
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  // Ссылка собирается из кода. Для прода — domain из window.location.origin.
+  // Для dev (localhost) тоже сработает, просто будет http://localhost:5173/?ref=…
+  const code = data?.referralCode || referralCode || '';
+  const link = code
+    ? `${typeof window !== 'undefined' ? window.location.origin : 'https://detailprocrm.ru'}/?ref=${code}`
+    : '';
+
+  const handleCopy = async () => {
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (_) {
+      // фолбэк для старых браузеров — выделение и Ctrl+C
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); setCopied(true); setTimeout(() => setCopied(false), 1500); }
+      catch (_) { /* noop */ }
+      document.body.removeChild(ta);
+    }
+  };
+
+  // Используем серверный balance (data.bonusBalanceKop), если успели загрузить —
+  // он точнее, чем мог быть на момент открытия профиля.
+  const balanceKop = data ? data.bonusBalanceKop : bonusBalanceKop;
+  const totalEarnedKop = data?.totalEarnedKop || 0;
+  const totalSpentKop  = data?.totalSpentKop  || 0;
+  const refCount = data?.referralsCount || 0;
+  const paidCount = data?.paidReferralsCount || 0;
+  const bonusPerKop = data?.bonusPerReferralKop || 125000;
+
+  return (
+    <div className="px-6 py-5 space-y-5">
+      {/* Заглушка пока грузим — но код у нас уже есть, можно показать ссылку сразу */}
+      {/* ── Реферальная ссылка ─────────────────────────────────────── */}
+      <div>
+        <div className="text-xs font-medium text-zinc-500 mb-1.5">Ваша персональная ссылка</div>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            value={link}
+            readOnly
+            onFocus={(e) => e.currentTarget.select()}
+            className="flex-1 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2 text-sm text-zinc-700 font-mono outline-none focus:border-zinc-300"
+          />
+          <button
+            type="button"
+            onClick={handleCopy}
+            disabled={!link}
+            className="px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-colors disabled:opacity-50"
+          >
+            {copied ? 'Скопировано' : 'Скопировать'}
+          </button>
+        </div>
+        <p className="mt-2 text-[11px] text-zinc-500 leading-relaxed">
+          Делитесь ссылкой с коллегами. За каждую студию, оплатившую любой тариф,
+          вам начислят <span className="font-semibold text-orange-600">{formatRub(bonusPerKop / 100)}</span> бонусами.
+          Бонусы автоматически применяются при оплате вашего тарифа. Снять нельзя.
+        </p>
+      </div>
+
+      {/* ── Балансы ────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+          <div className="text-[10px] uppercase tracking-wide text-emerald-700 font-semibold">Доступно</div>
+          <div className="mt-1 text-base sm:text-lg font-bold text-emerald-900">
+            {formatRub(balanceKop / 100)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-zinc-200 p-3">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Всего начислено</div>
+          <div className="mt-1 text-base sm:text-lg font-bold text-zinc-900">
+            {formatRub(totalEarnedKop / 100)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-zinc-200 p-3">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Потрачено</div>
+          <div className="mt-1 text-base sm:text-lg font-bold text-zinc-900">
+            {formatRub(totalSpentKop / 100)}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Статистика приглашений ─────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+        <div className="rounded-xl border border-zinc-200 p-3">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Регистраций</div>
+          <div className="mt-1 text-lg font-bold text-zinc-900">{refCount}</div>
+        </div>
+        <div className="rounded-xl border border-zinc-200 p-3">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Оплатили</div>
+          <div className="mt-1 text-lg font-bold text-zinc-900">{paidCount}</div>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="text-xs text-zinc-400">Загружаем статистику…</div>
+      )}
+      {err && !loading && (
+        <div className="text-xs text-red-500">{err}</div>
+      )}
+
+      {/* ── Список приведённых студий ──────────────────────────────── */}
+      {data && data.referrals.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-zinc-500 mb-2">Приведённые студии</div>
+          <div className="rounded-xl border border-zinc-200 divide-y divide-zinc-100">
+            {data.referrals.map((r) => (
+              <div key={r.id} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-900 truncate">{r.displayName}</div>
+                  <div className="text-[11px] text-zinc-400">
+                    Зарегистрирован {formatDateRu(r.createdAt)}
+                  </div>
+                </div>
+                <span
+                  className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
+                    r.hasPaid
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-zinc-100 text-zinc-500'
+                  }`}
+                >
+                  {r.hasPaid ? 'оплатил' : 'без оплаты'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Журнал операций ─────────────────────────────────────────── */}
+      {data && data.events.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-zinc-500 mb-2">История операций</div>
+          <div className="rounded-xl border border-zinc-200 divide-y divide-zinc-100">
+            {data.events.map((e) => (
+              <div key={e.id} className="px-3 py-2.5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-900">
+                    {e.kind === 'credit' ? 'Начисление' : 'Списание при оплате'}
+                  </div>
+                  <div className="text-[11px] text-zinc-400">
+                    {formatDateRu(e.createdAt)}
+                  </div>
+                </div>
+                <div
+                  className={`shrink-0 text-sm font-bold ${
+                    e.kind === 'credit' ? 'text-emerald-700' : 'text-zinc-500'
+                  }`}
+                >
+                  {e.kind === 'credit' ? '+' : '−'}
+                  {formatRub(e.amountKop / 100)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data && data.referrals.length === 0 && (
+        <div className="rounded-xl border border-dashed border-zinc-200 p-4 text-center">
+          <p className="text-sm text-zinc-600">Пока никто не зарегистрировался по вашей ссылке.</p>
+          <p className="mt-1 text-[11px] text-zinc-400">
+            Поделитесь ссылкой выше — и сразу увидите здесь первого приглашённого.
+          </p>
+        </div>
       )}
     </div>
   );
@@ -467,6 +867,21 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarVersion, setAvatarVersion] = useState<number>(() => Date.now());
   const [subscriptionBusy, setSubscriptionBusy] = useState(false);
+  // Чекбокс согласия с офертой: по дефолту включён (по 437/438 ГК РФ
+  // оплата = акцепт оферты, поэтому пользователь видит подтверждённое
+  // состояние, но может снять галочку — оплата при этом не блокируется).
+  const [acceptOffer, setAcceptOffer] = useState(true);
+  // Telegram-привязка. tgBusy блокирует обе кнопки (Подключить/Отключить).
+  // tgWaiting=true → пользователь нажал «Подключить», deep-link открыт в новой
+  // вкладке; ждём подтверждения от бота. Кнопка превращается в «Я подтвердил
+  // в Telegram», по клику дёргаем loadProfile() и проверяем tgLinked.
+  const [tgBusy, setTgBusy] = useState(false);
+  const [tgWaiting, setTgWaiting] = useState(false);
+  const [tgError, setTgError] = useState('');
+  // Модалка импорта клиентов из xlsx — открывается из секции «Студия».
+  // Доступна owner+manager (см. canEditEntities); сервер всё равно перепроверяет
+  // в /clients/bulk через requireRole('owner','manager').
+  const [importOpen, setImportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -479,24 +894,47 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
       setError('');
       const res = await api.getProfile();
       setData(res);
-    } catch (err: any) {
-      const msg = err instanceof ApiError ? err.message : (err?.message || 'Ошибка при загрузке профиля');
-      setError(msg);
+    } catch (err) {
+      setError(translateApiError(err, 'Ошибка при загрузке профиля'));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSaveField = async (key: EditableKey, value: string) => {
+  const handleSaveField = async (key: UserFieldKey, value: string) => {
     const patch: Record<string, string | null> = { [key]: value === '' ? null : value };
-    const res = await api.updateProfile(patch);
-    setData((prev) => prev ? { ...prev, user: res.user } : prev);
-    patchCachedUser({
-      firstName: res.user.firstName ?? null,
-      lastName: res.user.lastName ?? null,
-      phone: res.user.phone ?? null,
-      name: res.user.name,
-    });
+    try {
+      const res = await api.updateProfile(patch);
+      setData((prev) => prev ? { ...prev, user: res.user } : prev);
+      patchCachedUser({
+        firstName: res.user.firstName ?? null,
+        lastName: res.user.lastName ?? null,
+        phone: res.user.phone ?? null,
+        name: res.user.name,
+      });
+    } catch (err) {
+      handleApiError(err, 'Не удалось сохранить — проверьте соединение', 'updateProfile');
+    }
+  };
+
+  // Реквизиты студии для PDF: только owner. Мерджим обновлённые поля
+  // в локальный state.studio, чтобы не перезагружать /profile целиком.
+  const handleSaveStudioField = async (key: StudioFieldKey, value: string) => {
+    const patch: Record<string, string | null> = { [key]: value === '' ? null : value };
+    try {
+      const res = await api.updateStudio(patch);
+      setData((prev) => prev ? {
+        ...prev,
+        studio: { ...prev.studio, ...res.studio },
+      } : prev);
+    } catch (err) {
+      // Перебрасываем дальше в EditableField, чтобы оно показало красную
+      // подсказку прямо под полем (через translateApiError → русский текст).
+      // Раньше ошибку «съедал» handleApiError → пользователь не понимал, почему
+      // например название студии не получается стереть.
+      const message = translateApiError(err, 'Не удалось сохранить реквизиты');
+      throw new Error(message);
+    }
   };
 
   const handleAvatarPick = () => {
@@ -517,9 +955,8 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
       } : prev);
       setAvatarVersion(Date.now());
       patchCachedUser({ avatarPath });
-    } catch (err: any) {
-      const msg = err instanceof ApiError ? err.message : (err?.message || 'Не удалось загрузить аватар');
-      alert(`Ошибка: ${msg}`);
+    } catch (err) {
+      handleApiError(err, 'Не удалось загрузить аватар', 'uploadAvatar');
     } finally {
       setAvatarBusy(false);
     }
@@ -533,9 +970,8 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
       await api.deleteAvatar();
       setData((prev) => prev ? { ...prev, user: { ...prev.user, avatarPath: null } } : prev);
       patchCachedUser({ avatarPath: null });
-    } catch (err: any) {
-      const msg = err instanceof ApiError ? err.message : (err?.message || 'Не удалось удалить аватар');
-      alert(`Ошибка: ${msg}`);
+    } catch (err) {
+      handleApiError(err, 'Не удалось удалить аватар', 'deleteAvatar');
     } finally {
       setAvatarBusy(false);
     }
@@ -546,16 +982,14 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     const confirmText =
       'Отменить подписку?\n\n' +
       'Доступ к CRM сохранится до ' + formatDateRu(data.studio.accessUntil) + '. ' +
-      'После этой даты автопродления не будет.\n\n' +
-      'Чек об оплате уже пришёл от Prodamus при покупке — отдельно отменять там ничего не нужно.';
+      'После этой даты автопродления и списаний больше не будет.';
     if (!window.confirm(confirmText)) return;
     setSubscriptionBusy(true);
     try {
       await api.cancelSubscription();
       setData((prev) => prev ? { ...prev, studio: { ...prev.studio, cancelPending: true } } : prev);
-    } catch (err: any) {
-      const msg = err instanceof ApiError ? err.message : (err?.message || 'Не удалось отменить подписку');
-      alert(`Ошибка: ${msg}`);
+    } catch (err) {
+      handleApiError(err, 'Не удалось отменить подписку', 'cancelSubscription');
     } finally {
       setSubscriptionBusy(false);
     }
@@ -567,11 +1001,77 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     try {
       await api.resumeSubscription();
       setData((prev) => prev ? { ...prev, studio: { ...prev.studio, cancelPending: false } } : prev);
-    } catch (err: any) {
-      const msg = err instanceof ApiError ? err.message : (err?.message || 'Не удалось восстановить подписку');
-      alert(`Ошибка: ${msg}`);
+    } catch (err) {
+      handleApiError(err, 'Не удалось восстановить подписку', 'resumeSubscription');
     } finally {
       setSubscriptionBusy(false);
+    }
+  };
+
+  // ── Telegram: подключение ────────────────────────────────────────
+  // 1) дёргаем POST /profile/telegram/link → одноразовый deep-link
+  // 2) открываем его в новой вкладке (window.open + target=_blank)
+  // 3) переключаем UI в состояние «ждём» с кнопкой «Я подтвердил»
+  // 4) по клику или через 1.5с после возврата — loadProfile().
+  const handleTelegramLink = async () => {
+    if (tgBusy) return;
+    setTgBusy(true);
+    setTgError('');
+    try {
+      const { url } = await api.linkTelegram();
+      // window.open в click-обработчике → не блокируется браузером.
+      const w = window.open(url, '_blank', 'noopener,noreferrer');
+      if (!w) {
+        // Поп-ап заблокирован — даём пользователю явный фолбек: копируем ссылку
+        // и показываем подсказку.
+        setTgError('Окно заблокировано браузером. Откройте бот по ссылке в новой вкладке.');
+        return;
+      }
+      setTgWaiting(true);
+    } catch (err) {
+      setTgError(translateApiError(err, 'Не удалось создать ссылку для Telegram'));
+    } finally {
+      setTgBusy(false);
+    }
+  };
+
+  // Кнопка «Я подтвердил в Telegram» — ручная перепроверка профиля.
+  // Если бэк уже зафиксировал привязку, getProfile вернёт tgLinked=true,
+  // и мы выйдем из tgWaiting. Если нет — оставим режим ожидания.
+  const handleTelegramRecheck = async () => {
+    setTgBusy(true);
+    setTgError('');
+    try {
+      const res = await api.getProfile();
+      setData(res);
+      if (res.user.tgLinked) {
+        setTgWaiting(false);
+      } else {
+        setTgError('Пока не вижу привязки. Откройте бот в Telegram и нажмите Start.');
+      }
+    } catch (err) {
+      setTgError(translateApiError(err, 'Не удалось обновить профиль'));
+    } finally {
+      setTgBusy(false);
+    }
+  };
+
+  const handleTelegramUnlink = async () => {
+    if (tgBusy) return;
+    if (!window.confirm('Отключить Telegram?\n\nПосле отключения бот перестанет присылать уведомления, а ссылка на сброс пароля будет недоступна.')) return;
+    setTgBusy(true);
+    setTgError('');
+    try {
+      await api.unlinkTelegram();
+      setData((prev) => prev ? {
+        ...prev,
+        user: { ...prev.user, tgLinked: false, tgUsername: null, tgLinkedAt: null },
+      } : prev);
+      setTgWaiting(false);
+    } catch (err) {
+      setTgError(translateApiError(err, 'Не удалось отключить Telegram'));
+    } finally {
+      setTgBusy(false);
     }
   };
 
@@ -599,7 +1099,11 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
 
   const { user, studio, limits } = data;
   const role = (user.role as Role) || 'master';
-  const fullName = (`${user.firstName || ''} ${user.lastName || ''}`).trim() || user.name || 'Без имени';
+  // Имя в шапке профиля строго синхронизировано с полями «Имя»/«Фамилия»
+  // ниже. Если оба пустые — показываем «Без имени» (а не user.name из
+  // /profile, который бэк держит как email-prefix для UserMenu —
+  // в этой шапке такой фолбек выглядел бы как «залипшая» старая фамилия).
+  const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Без имени';
 
   const avatarSrc = user.avatarPath ? `${user.avatarPath}?v=${avatarVersion}` : null;
 
@@ -633,13 +1137,22 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
   })() : 0;
 
   // Можно ли отменить подписку: только owner на платном тарифе
-  const canCancel = role === 'owner' && (studio.plan === 'solo' || studio.plan === 'studio');
+  const canCancel = canManageSubscription(role) && (studio.plan === 'solo' || studio.plan === 'studio');
 
   return (
-    // h-full + overflow-y-auto — корневой #root в App.tsx имеет overflow:hidden,
-    // поэтому min-h-screen режет нижнюю часть страницы. Делаем внутренний
-    // скролл с overscroll-contain, чтобы скролл не «пробивал» наружу.
-    <div className="h-full bg-zinc-50 overflow-y-auto overscroll-contain">
+    // position: fixed inset: 0 — приколачиваем к viewport, чтобы НЕ
+    // зависеть от height-цепочки html→body→#root. На iPhone Safari
+    // h-full здесь раньше «не находил» однозначной высоты родителя
+    // (из-за квирков с -webkit-fill-available / 100dvh при показанном
+    // адресном баре), и тач-скролл не работал.
+    <div
+      className="bg-zinc-50 overflow-y-auto overscroll-contain"
+      style={{
+        position: 'fixed',
+        top: 0, left: 0, right: 0, bottom: 0,
+        WebkitOverflowScrolling: 'touch',
+      }}
+    >
       <div className="max-w-3xl mx-auto p-4 sm:p-6 pb-20">
         {/* Верхняя кнопка «Назад» */}
         <button
@@ -651,39 +1164,56 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
         </button>
 
         {/* ── 1. Шапка: аватар + ФИО + роль ───────────────────────── */}
+        {/*
+          Master свой аватар не меняет — кнопка/бейдж выбора файла спрятаны,
+          сама аватарка отображается как картинка-плашка без onClick.
+          (Бэк это тоже подтверждает 403 'master_cannot_edit'.)
+        */}
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 p-6 mb-4">
           <div className="flex flex-col items-center">
             <div className="relative">
-              <button
-                type="button"
-                onClick={handleAvatarPick}
-                disabled={avatarBusy}
-                className="w-28 h-28 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden border-2 border-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
-                title={avatarSrc ? 'Заменить фото' : 'Загрузить фото'}
-              >
-                {avatarSrc ? (
-                  <img src={avatarSrc} alt="Аватар" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="text-zinc-400"><UserSilhouette /></div>
-                )}
-              </button>
-              {/* Камера-бейдж — кликабельный, открывает тот же диалог */}
-              <button
-                type="button"
-                onClick={handleAvatarPick}
-                disabled={avatarBusy}
-                className="absolute bottom-0 right-0 bg-zinc-900 text-white rounded-full p-2 shadow-md hover:bg-orange-600 transition-colors disabled:opacity-50"
-                title={avatarSrc ? 'Заменить фото' : 'Загрузить фото'}
-              >
-                <CameraIcon />
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleAvatarChange}
-              />
+              {canEditOwnProfile(role) ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleAvatarPick}
+                    disabled={avatarBusy}
+                    className="w-28 h-28 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden border-2 border-white shadow-sm hover:opacity-90 transition-opacity disabled:opacity-50"
+                    title={avatarSrc ? 'Заменить фото' : 'Загрузить фото'}
+                  >
+                    {avatarSrc ? (
+                      <img src={avatarSrc} alt="Аватар" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="text-zinc-400"><UserSilhouette /></div>
+                    )}
+                  </button>
+                  {/* Камера-бейдж — кликабельный, открывает тот же диалог */}
+                  <button
+                    type="button"
+                    onClick={handleAvatarPick}
+                    disabled={avatarBusy}
+                    className="absolute bottom-0 right-0 bg-zinc-900 text-white rounded-full p-2 shadow-md hover:bg-orange-600 transition-colors disabled:opacity-50"
+                    title={avatarSrc ? 'Заменить фото' : 'Загрузить фото'}
+                  >
+                    <CameraIcon />
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleAvatarChange}
+                  />
+                </>
+              ) : (
+                <div className="w-28 h-28 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden border-2 border-white shadow-sm">
+                  {avatarSrc ? (
+                    <img src={avatarSrc} alt="Аватар" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="text-zinc-400"><UserSilhouette /></div>
+                  )}
+                </div>
+              )}
             </div>
 
             <h1 className="mt-4 text-xl font-semibold text-zinc-900">{fullName}</h1>
@@ -692,8 +1222,8 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
               {getRoleName(role)}
             </span>
 
-            {/* Удалить — только если фото уже есть. Не дублируем «Загрузить фото». */}
-            {user.avatarPath && (
+            {/* Удалить — только если фото уже есть И его можно править. */}
+            {user.avatarPath && canEditOwnProfile(role) && (
               <button
                 type="button"
                 onClick={handleAvatarDelete}
@@ -707,74 +1237,347 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
         </div>
 
         {/* ── 2. Личные данные ──────────────────────────────────── */}
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4">
-          <div className="px-6 pt-5 pb-2 text-sm font-medium text-zinc-700">Личные данные</div>
-          <div className="divide-y divide-zinc-100">
-            <EditableField
-              label="Имя"
-              fieldKey="firstName"
-              value={user.firstName || ''}
-              placeholder="Например, Ольга"
-              onSave={handleSaveField}
-            />
-            <EditableField
-              label="Фамилия"
-              fieldKey="lastName"
-              value={user.lastName || ''}
-              placeholder="Например, Недведская"
-              onSave={handleSaveField}
-            />
-            <EditableField
-              label="Телефон"
-              fieldKey="phone"
-              value={user.phone || ''}
-              placeholder="+7 (___) ___-__-__"
-              format={formatPhone}
-              onSave={handleSaveField}
-            />
-            <div className="px-6 py-4">
-              <span className="text-xs text-zinc-400 block mb-1">Email</span>
-              <span className="text-zinc-900">{user.email}</span>
-              <p className="text-xs text-zinc-400 mt-1">
-                Чтобы изменить email, напишите на{' '}
-                <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
-              </p>
-            </div>
+        {/*
+          Для master'a поля ФИО/телефон показываем в режиме просмотра — его
+          данные правит owner через админ-панель. См. canEditOwnProfile().
+        */}
+        <CollapsibleSection title="Личные данные" defaultOpen>
+          <EditableField
+            label="Имя"
+            fieldKey="firstName"
+            value={user.firstName || ''}
+            placeholder="Например, Ольга"
+            onSave={handleSaveField}
+            readOnly={!canEditOwnProfile(role)}
+          />
+          <EditableField
+            label="Фамилия"
+            fieldKey="lastName"
+            value={user.lastName || ''}
+            placeholder="Например, Недведская"
+            onSave={handleSaveField}
+            readOnly={!canEditOwnProfile(role)}
+          />
+          <EditableField
+            label="Телефон"
+            fieldKey="phone"
+            value={user.phone || ''}
+            placeholder="+7 (___) ___-__-__"
+            format={formatPhone}
+            onSave={handleSaveField}
+            readOnly={!canEditOwnProfile(role)}
+          />
+          <div className="px-6 py-4">
+            <span className="text-xs text-zinc-400 block mb-1">Email</span>
+            <span className="text-zinc-900">{user.email}</span>
+            <p className="text-xs text-zinc-400 mt-1">
+              Чтобы изменить email, напишите на{' '}
+              <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+            </p>
           </div>
-        </div>
+          <div className="px-6 py-4">
+            <span className="text-xs text-zinc-400 block mb-1">Дата регистрации</span>
+            <span className="text-zinc-900">{formatDateRu(user.createdAt)}</span>
+          </div>
+        </CollapsibleSection>
+
+        {/* ── 2a. Telegram ─────────────────────────────────────────
+            Привязка к боту @crmdetailpro_bot. Используется как канал для:
+              • сброса пароля (без e-mail/SMTP)
+              • уведомлений об оплате (Phase 2)
+              • быстрого доступа к рефке/балансу (Phase 3)
+              • уведомлений о новых записях клиентов на тарифе «Студия» (Phase 4)
+            Видна всем ролям — каждому пользователю полезно, хотя бы для reset. */}
+        <CollapsibleSection
+          title="Telegram"
+          subtitle={
+            user.tgLinked
+              ? (user.tgUsername ? `подключён как @${user.tgUsername}` : 'подключён')
+              : 'не подключён'
+          }
+          defaultOpen={!user.tgLinked}
+        >
+          <div className="px-6 py-5">
+            {user.tgLinked ? (
+              <>
+                <p className="text-sm text-zinc-700 mb-1">
+                  Бот {user.tgUsername ? <span className="font-medium">@{user.tgUsername}</span> : 'Telegram'} подключён.
+                </p>
+                {user.tgLinkedAt && (
+                  <p className="text-xs text-zinc-400 mb-4">
+                    Привязан {formatDateRu(user.tgLinkedAt)}
+                  </p>
+                )}
+                <p className="text-xs text-zinc-500 mb-4 leading-relaxed">
+                  Через бот придёт ссылка для сброса пароля и уведомления об оплатах.
+                  Команды: <span className="font-mono">/help</span>, <span className="font-mono">/referral</span>, <span className="font-mono">/balance</span>.
+                </p>
+                {tgError && <p className="text-sm text-red-500 mb-3">{tgError}</p>}
+                <button
+                  type="button"
+                  onClick={handleTelegramUnlink}
+                  disabled={tgBusy}
+                  className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50 transition-colors"
+                >
+                  {tgBusy ? 'Отключаем…' : 'Отключить Telegram'}
+                </button>
+              </>
+            ) : tgWaiting ? (
+              <>
+                <p className="text-sm text-zinc-700 mb-2">
+                  Бот открыт в Telegram. Нажмите в нём кнопку <span className="font-medium">Start</span> — и вернитесь сюда.
+                </p>
+                <p className="text-xs text-zinc-500 mb-4">
+                  Ссылка действует 24 часа и одноразовая.
+                </p>
+                {tgError && <p className="text-sm text-amber-600 mb-3">{tgError}</p>}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTelegramRecheck}
+                    disabled={tgBusy}
+                    className="px-4 py-2 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                  >
+                    {tgBusy ? 'Проверяем…' : 'Я подтвердил в Telegram'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setTgWaiting(false); setTgError(''); }}
+                    disabled={tgBusy}
+                    className="px-4 py-2 rounded-xl text-sm text-zinc-600 hover:text-zinc-900 disabled:opacity-50 transition-colors"
+                  >
+                    Отмена
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-zinc-600 mb-4 leading-relaxed">
+                  Подключите бота, чтобы получать ссылку для сброса пароля,
+                  уведомления об оплатах и о новых записях клиентов.
+                </p>
+                {tgError && <p className="text-sm text-red-500 mb-3">{tgError}</p>}
+                <button
+                  type="button"
+                  onClick={handleTelegramLink}
+                  disabled={tgBusy}
+                  className="px-4 py-2 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                >
+                  {tgBusy ? 'Готовим ссылку…' : 'Подключить Telegram'}
+                </button>
+              </>
+            )}
+          </div>
+        </CollapsibleSection>
 
         {/* ── 3. Студия ──────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4">
-          <div className="px-6 pt-5 pb-2 text-sm font-medium text-zinc-700">Студия</div>
-          <div className="divide-y divide-zinc-100">
+        <CollapsibleSection title="Студия">
+          {canEditStudio(role) ? (
+            <EditableField
+              label="Название"
+              fieldKey="displayName"
+              value={studio.displayName}
+              placeholder="Например, DetailPro"
+              onSave={handleSaveStudioField}
+            />
+          ) : (
             <div className="px-6 py-4">
               <span className="text-xs text-zinc-400 block mb-1">Название</span>
               <span className="text-zinc-900">{studio.displayName}</span>
             </div>
+          )}
+          <div className="px-6 py-4">
+            <span className="text-xs text-zinc-400 block mb-1">Дата регистрации</span>
+            <span className="text-zinc-900">{formatDateRu(studio.createdAt)}</span>
+          </div>
+
+          {/*
+            Импорт базы клиентов из xlsx. Доступен owner+manager (canEditEntities).
+            Master сюда вообще не попадает по бизнес-правилу: импортировать клиентов
+            может только тот, кто их же и создаёт в обычном CRUD-флоу. Сервер
+            перепроверяет на роли в POST /clients/bulk.
+          */}
+          {canEditEntities(role) && (
             <div className="px-6 py-4">
-              <span className="text-xs text-zinc-400 block mb-1">Дата регистрации</span>
-              <span className="text-zinc-900">{formatDateRu(studio.createdAt)}</span>
+              <span className="text-xs text-zinc-400 block mb-2">База клиентов</span>
+              <button
+                type="button"
+                onClick={() => setImportOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-semibold transition-colors min-h-[44px]"
+              >
+                Импортировать клиентов из Excel
+              </button>
+              <p className="text-xs text-zinc-500 mt-2 leading-relaxed">
+                Загрузите готовый список клиентов (xlsx) — мы создадим карточки одним
+                массовым импортом. Сначала скачайте шаблон, заполните своими данными,
+                потом загрузите обратно.
+              </p>
             </div>
-          </div>
-        </div>
+          )}
+        </CollapsibleSection>
 
-        {/* ── 4. Тариф: текущий план + слоты + 2 карточки (Соло, Студия) ──
-            Видна ТОЛЬКО собственнику. Менеджер/мастер — это сотрудники студии,
-            биллинг к ним не относится. */}
-        {role === 'owner' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4">
-          <div className="px-6 pt-5 pb-3 flex items-center justify-between">
-            <span className="text-sm font-medium text-zinc-700">Тариф</span>
-            <span className="text-xs text-zinc-400">
-              сейчас: {studio.planLabel}
-            </span>
+        {/* ── 3a. Реквизиты для документов (owner only) ────────────
+            Подставляются в шапку акта приёмки и заказ-наряда.
+            Заполняется один раз; пустые поля в PDF выводятся как «—». */}
+        {canEditStudio(role) && (
+        <CollapsibleSection
+          title="Реквизиты для документов"
+          subtitle="Используются в шапке актов приёмки авто и заказ-нарядов"
+        >
+          <EditableField
+            label="ИНН"
+            fieldKey="inn"
+            value={studio.inn || ''}
+            placeholder="10 цифр (юрлицо) или 12 (ИП)"
+            digitsOnly
+            validate={validateInn}
+            onSave={handleSaveStudioField}
+          />
+          <EditableField
+            label="ОГРН / ОГРНИП"
+            fieldKey="ogrn"
+            value={studio.ogrn || ''}
+            placeholder="13 или 15 цифр"
+            digitsOnly
+            validate={validateOgrn}
+            onSave={handleSaveStudioField}
+          />
+          <EditableField
+            label="Юридический адрес"
+            fieldKey="legalAddress"
+            value={studio.legalAddress || ''}
+            placeholder="Москва, ул. Примерная, д. 1, оф. 2"
+            multiline
+            onSave={handleSaveStudioField}
+          />
+          <EditableField
+            label="Фактический адрес студии"
+            fieldKey="actualAddress"
+            value={studio.actualAddress || ''}
+            placeholder="Если совпадает с юридическим — оставьте пустым"
+            multiline
+            onSave={handleSaveStudioField}
+          />
+          <EditableField
+            label="Телефон студии"
+            fieldKey="contactPhone"
+            value={studio.contactPhone || ''}
+            placeholder="+7 (___) ___-__-__"
+            format={formatPhone}
+            onSave={handleSaveStudioField}
+          />
+          <EditableField
+            label="Email студии"
+            fieldKey="contactEmail"
+            value={studio.contactEmail || ''}
+            placeholder="info@example.com"
+            validate={validateEmail}
+            onSave={handleSaveStudioField}
+          />
+          <EditableField
+            label="Текст гарантии"
+            fieldKey="guaranteeText"
+            value={studio.guaranteeText || ''}
+            placeholder="Гарантия на выполненные работы — 14 календарных дней с даты выдачи"
+            multiline
+            onSave={handleSaveStudioField}
+          />
+        </CollapsibleSection>
+        )}
+
+        {/* ── 3b. Прайс-лист услуг (owner + manager) ───────────────────
+            Услуги используются в выпадашке «Из прайса» при создании
+            заказ-наряда. Master видит этот раздел в режиме чтения. */}
+        <CollapsibleSection
+          title="Прайс-лист услуг"
+          subtitle="Используются при создании заказ-наряда"
+        >
+          <ServicesManager canEdit={canManageServices(role)} />
+        </CollapsibleSection>
+
+        {/* ── 4+5. Подписка (объединена с тарифами) ────────────────
+            Видна ТОЛЬКО собственнику. Менеджер/мастер — сотрудники студии,
+            биллинг к ним не относится.
+
+            Раньше были две отдельные секции: «Тариф» (карточки оплаты) и
+            «Подписка» (countdown + кнопка отмены). По UX-фидбэку объединили
+            в одну сворачиваемую секцию «Подписка»: сначала статус доступа +
+            управление подпиской, ниже — выбор тарифа со всеми CTA.
+            Секция стартует свёрнутой — её редко открывают, а заметку
+            «сейчас: Студия / Соло / Триал» видно прямо в подзаголовке. */}
+        {canManageSubscription(role) && (
+        <CollapsibleSection
+          title="Подписка"
+          subtitle={`сейчас: ${studio.planLabel}`}
+        >
+          {/* ── Статус доступа + управление подпиской ───────────────
+              CollapsibleSection ставит divide-y между прямыми детьми,
+              поэтому разделитель между блоками появится автоматически. */}
+          <div className="px-6 py-5">
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs text-zinc-400">Доступ до</span>
+              <span className="text-zinc-900">{formatDateRu(studio.accessUntil)}</span>
+            </div>
+            <p className={
+              'mt-2 text-sm ' +
+              (access.tone === 'expired' ? 'text-red-500'
+                : access.tone === 'warn' ? 'text-amber-600'
+                : 'text-zinc-500')
+            }>
+              {access.text}
+            </p>
+
+            {/* Состояние «отмена принята» — баннер вместо кнопки «Отменить» */}
+            {studio.cancelPending && (
+              <div className="mt-4 p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+                <p className="text-sm text-emerald-800 font-medium">
+                  Подписка остановлена
+                </p>
+                <p className="mt-1 text-xs text-emerald-700">
+                  Списаний больше не будет. Доступ к CRM сохраняется до {formatDateRu(studio.accessUntil)}.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleResumeSubscription}
+                  disabled={subscriptionBusy}
+                  className="mt-3 inline-flex items-center justify-center px-3 py-1.5 rounded-md bg-white border border-emerald-300 text-emerald-800 text-xs font-medium hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                >
+                  {subscriptionBusy ? 'Восстанавливаем…' : 'Возобновить подписку'}
+                </button>
+              </div>
+            )}
+
+            {/* Обычное состояние — кнопка «Отменить» (только для owner на платном тарифе).
+                Делаем компактной и неброской: для UX и маркетинга важно, чтобы ключевое
+                действие (продление/апгрейд) визуально доминировало над отменой. */}
+            {!studio.cancelPending && canCancel && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={handleCancelSubscription}
+                  disabled={subscriptionBusy}
+                  className="text-xs text-zinc-400 hover:text-zinc-600 underline underline-offset-2 disabled:opacity-50 transition-colors"
+                >
+                  {subscriptionBusy ? 'Отменяем…' : 'Отменить подписку'}
+                </button>
+              </div>
+            )}
+
+            {!studio.cancelPending && !canCancel && canManageSubscription(role) && studio.plan === 'trial' && (
+              <p className="mt-3 text-xs text-zinc-400">
+                Сейчас активен пробный период. Когда оформите тариф — здесь появится кнопка «Отменить подписку».
+              </p>
+            )}
           </div>
 
-          {/* Триал-баннер: сколько дней осталось. Если триал ещё активен — */}
-          {/* оранжевый градиент с большой цифрой; если завершился — алый      */}
-          {/* «истёк» без цифры, чтобы не выглядеть нелепо «0».                */}
+          {/* ── Тарифы: триал-баннер + слот-каунтер + 2 карточки ─────
+              Обёрнуты в один div, чтобы divide-y CollapsibleSection не
+              разрывал баннер/каунтер/карточки лишними линиями. */}
+          <div>
+
+          {/* Триал-баннер: сколько дней осталось. */}
           {isTrial && trialDaysLeft > 0 && (
-            <div className="mx-4 sm:mx-6 mb-4 p-4 rounded-xl bg-gradient-to-r from-orange-500 to-orange-400 text-white">
+            <div className="mx-4 sm:mx-6 mt-4 p-4 rounded-xl bg-gradient-to-r from-orange-500 to-orange-400 text-white">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold">Пробный период</p>
@@ -792,7 +1595,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             </div>
           )}
           {isTrial && trialDaysLeft === 0 && (
-            <div className="mx-4 sm:mx-6 mb-4 p-4 rounded-xl bg-red-50 border border-red-200">
+            <div className="mx-4 sm:mx-6 mt-4 p-4 rounded-xl bg-red-50 border border-red-200">
               <p className="text-sm font-semibold text-red-700">Пробный период завершён</p>
               <p className="mt-1 text-xs text-red-600">
                 Чтобы вернуть доступ к CRM, оформите тариф ниже.
@@ -801,7 +1604,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           )}
 
           {/* Слот-каунтер «Сотрудников: N из M» */}
-          <div className="px-6 pb-4">
+          <div className="px-6 pt-4 pb-4">
             <div className="flex items-center justify-between text-xs text-zinc-500 mb-1">
               <span>Сотрудников</span>
               <span>{limits.currentUsers} из {limits.maxUsers}</span>
@@ -830,11 +1633,45 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                   key={group.id}
                   group={group}
                   isCurrent={currentGroup === group.id}
-                  studioId={studio.id}
                   email={user.email}
+                  bonusBalanceKop={studio.bonusBalanceKop || 0}
                 />
               ))}
             </div>
+            {/* Согласие с офертой — обязательная подпись под тарифами по 437/438 ГК РФ.
+                Чекбокс по дефолту включён: оплата = акцепт оферты, флажок отражает это
+                визуально. Пользователь может снять галочку, но это не блокирует оплату
+                (юридически акцепт всё равно фиксируется фактом оплаты). */}
+            <label className="flex items-start gap-2 mt-4 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={acceptOffer}
+                onChange={(e) => setAcceptOffer(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-orange-600 focus:ring-orange-500 cursor-pointer"
+              />
+              <span className="text-[11px] text-zinc-500 leading-relaxed">
+                Оплачивая тариф, я принимаю условия{' '}
+                <a
+                  href="/legal/offer.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-zinc-900 underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  публичной оферты
+                </a>
+                {' '}и{' '}
+                <a
+                  href="/legal/privacy-policy"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-zinc-900 underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  политики конфиденциальности
+                </a>.
+              </span>
+            </label>
           </div>
 
           {/* Подсказка про апгрейд Соло → Студия */}
@@ -856,96 +1693,40 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           )}
           {!currentGroup && isTrial && <div className="pb-3" />}
           {currentGroup === 'studio' && <div className="pb-3" />}
-        </div>
-        )}
-
-        {/* ── 5. Подписка ──────────────────────────────────────────
-            Видна ТОЛЬКО собственнику. */}
-        {role === 'owner' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4">
-          <div className="px-6 pt-5 pb-2 text-sm font-medium text-zinc-700">Подписка</div>
-          <div className="px-6 pb-5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs text-zinc-400">Доступ до</span>
-              <span className="text-zinc-900">{formatDateRu(studio.accessUntil)}</span>
-            </div>
-            <p className={
-              'mt-2 text-sm ' +
-              (access.tone === 'expired' ? 'text-red-500'
-                : access.tone === 'warn' ? 'text-amber-600'
-                : 'text-zinc-500')
-            }>
-              {access.text}
-            </p>
-
-            {/* Состояние «отмена принята» — баннер вместо кнопки «Отменить» */}
-            {studio.cancelPending && (
-              <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200">
-                <p className="text-sm text-amber-800 font-medium">
-                  Подписка отменена
-                </p>
-                <p className="mt-1 text-xs text-amber-700">
-                  Автопродления не будет. Вы пользуетесь CRM до {formatDateRu(studio.accessUntil)},
-                  затем доступ закроется.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleResumeSubscription}
-                  disabled={subscriptionBusy}
-                  className="mt-3 inline-flex items-center justify-center px-3 py-1.5 rounded-md bg-white border border-amber-300 text-amber-800 text-xs font-medium hover:bg-amber-100 transition-colors disabled:opacity-50"
-                >
-                  {subscriptionBusy ? 'Восстанавливаем…' : 'Восстановить подписку'}
-                </button>
-              </div>
-            )}
-
-            {/* Обычное состояние — кнопка «Отменить» (только для owner на платном тарифе) */}
-            {!studio.cancelPending && canCancel && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleCancelSubscription}
-                  disabled={subscriptionBusy}
-                  className="mt-4 inline-flex items-center justify-center w-full px-4 py-2.5 rounded-lg border border-zinc-200 text-zinc-600 text-sm hover:bg-zinc-50 transition-colors disabled:opacity-50"
-                >
-                  {subscriptionBusy ? 'Отменяем…' : 'Отменить подписку'}
-                </button>
-                <p className="mt-2 text-xs text-zinc-400">
-                  Доступ сохранится до конца оплаченного периода. Деньги назад не возвращаются.
-                </p>
-              </>
-            )}
-
-            {/* Не-owner либо trial — отдельные подсказки вместо кнопки */}
-            {!studio.cancelPending && !canCancel && role !== 'owner' && (
-              <p className="mt-3 text-xs text-zinc-400">
-                Управление подпиской доступно только собственнику студии.
-              </p>
-            )}
-            {!studio.cancelPending && !canCancel && role === 'owner' && studio.plan === 'trial' && (
-              <p className="mt-3 text-xs text-zinc-400">
-                Сейчас активен пробный период. Когда оформите тариф — здесь появится кнопка «Отменить подписку».
-              </p>
-            )}
           </div>
-        </div>
+        </CollapsibleSection>
         )}
 
-        {/* ── 6. Реферальная программа — заглушка ──────────────────
-            Видна ТОЛЬКО собственнику. */}
-        {role === 'owner' && (
-        <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 mb-4 opacity-70">
-          <div className="px-6 py-5">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-zinc-700">Реферальная программа</span>
-              <span className="text-xs text-zinc-400">Скоро</span>
-            </div>
-            <p className="mt-2 text-xs text-zinc-500">
-              Будете получать вознаграждение за каждую студию, пришедшую по вашей ссылке.
-            </p>
-          </div>
-        </div>
+        {/* ── 6. Реферальная программа ──────────────────────────────
+            Видна ТОЛЬКО собственнику. Загружает свои данные лениво
+            при разворачивании секции — чтобы не дёргать /referral
+            у всех владельцев на каждом открытии профиля. */}
+        {canManageReferrals(role) && (
+          <CollapsibleSection
+            title="Реферальная программа"
+            subtitle={
+              studio.bonusBalanceKop > 0
+                ? `Бонусов: ${formatRub(studio.bonusBalanceKop / 100)}`
+                : 'Приведите студию — получите 1 250 ₽ бонусами'
+            }
+          >
+            <ReferralSection
+              referralCode={studio.referralCode}
+              bonusBalanceKop={studio.bonusBalanceKop || 0}
+            />
+          </CollapsibleSection>
         )}
+
+        {/*
+          Модалка импорта клиентов. Рендерим всегда (по флагу isOpen),
+          чтобы её состояние не сбрасывалось при коллапсе секции «Студия».
+          После закрытия — onImported может прийти, но мы только закрываем:
+          в ClientDetails-листе клиенты подтянутся при следующем заходе.
+        */}
+        <ClientsImport
+          isOpen={importOpen}
+          onClose={() => setImportOpen(false)}
+        />
       </div>
     </div>
   );
