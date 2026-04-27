@@ -105,6 +105,12 @@ export interface ProfileResponse {
     contactPhone: string | null;
     contactEmail: string | null;
     guaranteeText: string | null;
+    // Время утренней Telegram-сводки (миграция 011). 'HH:MM' (МСК или
+    // часовой пояс студии — бот сам ресолвит) или null = «не присылать».
+    // dailySummaryTimeSet — true, если owner явно выбрал значение через
+    // бота или CRM-профиль. False для старых студий → бот переспросит.
+    dailySummaryTime: string | null;
+    dailySummaryTimeSet: boolean;
     // Реферальная программа: уникальный 8-символьный код студии и текущий
     // баланс бонусов в копейках. Подробности — в saas-crm/server/sql/005.
     referralCode: string | null;

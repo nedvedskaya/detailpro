@@ -168,6 +168,10 @@ export const api = {
     contactPhone?: string | null;
     contactEmail?: string | null;
     guaranteeText?: string | null;
+    // 'HH:MM' или null (= «не присылать сводку»). Когда owner меняет это
+    // поле, бэк ставит daily_summary_time_set = TRUE — бот в Telegram
+    // больше не переспрашивает время после следующего входа.
+    dailySummaryTime?: string | null;
   }) {
     return send<{
       ok: true;
@@ -181,6 +185,8 @@ export const api = {
         contactPhone: string | null;
         contactEmail: string | null;
         guaranteeText: string | null;
+        dailySummaryTime: string | null;
+        dailySummaryTimeSet: boolean;
       };
     }>('PATCH', '/profile/studio', patch);
   },

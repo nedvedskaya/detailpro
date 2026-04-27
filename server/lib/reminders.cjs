@@ -56,6 +56,19 @@ function timeToMinutes(t) {
   return h * 60 + m;
 }
 
+// Проверяет, попадает ли «локальное сейчас» в 10-минутное окно от
+// studio.daily_summary_time (TIME 'HH:MM:SS' или null).
+//   • null      → сводка отключена явно, окно никогда не активно
+//   • '09:00'   → окно 09:00..09:09 (включительно нижнюю границу)
+// 10 минут — потому что cron-тик 5 мин: гарантированно попадаем
+// хотя бы одним тиком, идемпотентность (ON CONFLICT) защищает от дублей.
+function isInDailyWindow(local, dailyTimeStr) {
+  if (!dailyTimeStr) return false;
+  const target = timeToMinutes(dailyTimeStr);
+  const now = local.hh * 60 + local.mm;
+  return now >= target && now < target + 10;
+}
+
 function formatTime(t) {
   return String(t).slice(0, 5); // 'HH:MM:SS' → 'HH:MM'
 }
@@ -79,8 +92,11 @@ async function getActiveStudios() {
   // фактически бот напоминает всем, у кого подключён TG. Оплачен ли
   // тариф — отдельный вопрос; «бесплатной» функцию делает не cron,
   // а наличие tg_chat_id у пользователя.
+  //
+  // daily_summary_time может быть NULL — тогда сводка по этой студии
+  // отключена явно (owner выбрал «Не присылать»). hour-before остаётся.
   const r = await pool.query(
-    `SELECT id, schema_name, timezone
+    `SELECT id, schema_name, timezone, daily_summary_time
        FROM saas_meta.studios
       WHERE schema_name IS NOT NULL
         AND is_active = TRUE
@@ -97,6 +113,40 @@ async function getStudioUsers(studioId) {
         AND tg_chat_id IS NOT NULL
         AND is_active = TRUE`,
     [studioId]
+  );
+  return r.rows;
+}
+
+// Активные задачи на сегодня + просроченные (только pending/in_progress).
+//   • urgent сверху, потом high, medium, low (DESC по приоритету)
+//   • внутри приоритета — по due_time NULLS LAST, затем по id
+//
+// assigned_to IS NULL означает «общая задача студии» — попадает к owner/manager,
+// но не к конкретному мастеру (мастер видит только то, что назначено лично).
+async function getTasksForDate(schema, dateStr) {
+  const r = await queryInSchema(schema,
+    `SELECT t.id,
+            t.title,
+            t.priority,
+            t.due_date,
+            t.due_time,
+            t.assigned_to,
+            (t.due_date < $1) AS is_overdue
+       FROM {{schema}}.tasks t
+      WHERE t.status IN ('pending', 'in_progress')
+        AND t.due_date IS NOT NULL
+        AND t.due_date <= $1
+      ORDER BY (t.due_date < $1) DESC,        -- просроченные сверху
+               CASE t.priority
+                 WHEN 'urgent' THEN 0
+                 WHEN 'high'   THEN 1
+                 WHEN 'medium' THEN 2
+                 WHEN 'low'    THEN 3
+                 ELSE 4
+               END,
+               t.due_time ASC NULLS LAST,
+               t.id ASC`,
+    [dateStr]
   );
   return r.rows;
 }
@@ -183,30 +233,75 @@ function formatBookingLine(b) {
   return `<b>${time}</b> · ${client}${carPart}${platePart}${service}${phoneLine}`;
 }
 
+// Текстовая метка приоритета. Без эмодзи (минимализм).
+function priorityLabel(priority) {
+  switch (priority) {
+    case 'urgent': return 'срочно';
+    case 'high':   return 'важно';
+    default:       return null; // medium / low — без метки
+  }
+}
+
+function formatTaskLine(t) {
+  const title = tg.escapeHtml(t.title || 'без названия');
+  const tag   = priorityLabel(t.priority);
+  const tagPart = tag ? ` <i>· ${tag}</i>` : '';
+  return `• ${title}${tagPart}`;
+}
+
+// Форматирует блок задач для дневной сводки. Возвращает '' если задач нет.
+function formatTasksSection(tasks) {
+  if (!tasks.length) return '';
+  const overdue = tasks.filter((t) => t.is_overdue);
+  const today   = tasks.filter((t) => !t.is_overdue);
+
+  let out = '';
+  if (today.length) {
+    const word = pluralize(today.length, 'задача', 'задачи', 'задач');
+    out += `\n\n📋 На сегодня (${today.length} ${word}):\n` +
+           today.map(formatTaskLine).join('\n');
+  }
+  if (overdue.length) {
+    const word = pluralize(overdue.length, 'задача', 'задачи', 'задач');
+    out += `\n\n⚠️ Просрочено (${overdue.length} ${word}):\n` +
+           overdue.map(formatTaskLine).join('\n');
+  }
+  return out;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Отправители — каждый с claim'ом, чтобы не дублировать.
 // ──────────────────────────────────────────────────────────────────────
 
-async function sendDailySummary(user, dateStr, bookings, isMasterOwn) {
+async function sendDailySummary(user, dateStr, bookings, tasks, isMasterOwn) {
   // Сначала «забронировали» — потом шлём. Если БД уже видела отправку,
   // вторая попытка из соседнего тика просто получит false и тихо выйдет.
   if (!(await claimDaily(user.id, dateStr))) return;
 
   const greetName = user.name ? tg.escapeHtml(user.name) : '';
   const greetWith = greetName ? `, ${greetName}` : '';
+  const tasksSection = formatTasksSection(tasks);
 
   let text;
   if (!bookings.length) {
-    if (user.role === 'master') {
-      // Master без записей — не дёргаем (нет смысла).
-      // Но claim уже сделан — это ок, дубля точно не будет, а пустой шум не уйдёт.
+    if (user.role === 'master' && !tasks.length) {
+      // Master без записей и без задач — не дёргаем (нет смысла).
+      // Claim уже сделан — это ок, дубля точно не будет, а пустой шум не уйдёт.
       return;
     }
-    text = applyGender(
-      `☀️ Доброе утро${greetWith}\n\n` +
-      `Сегодня записей в студии нет, можно выдохнуть и закрыть накопленные дела.`,
-      user.gender
-    );
+    if (!tasks.length) {
+      text = applyGender(
+        `☀️ Доброе утро${greetWith}\n\n` +
+        `Сегодня записей в студии нет, можно выдохнуть и закрыть накопленные дела.`,
+        user.gender
+      );
+    } else {
+      // Записей нет, но есть задачи — короткий интро + блок задач.
+      const intro = isMasterOwn
+        ? `☀️ Доброе утро${greetWith}\nЗаписей сегодня нет, но есть дела:`
+        : `☀️ Доброе утро${greetWith}\nЗаписей в студии нет, но есть задачи:`;
+      text = `${intro}${tasksSection}`;
+    }
   } else {
     const n = bookings.length;
     const word = pluralize(n, 'запись', 'записи', 'записей');
@@ -214,7 +309,7 @@ async function sendDailySummary(user, dateStr, bookings, isMasterOwn) {
     const intro = isMasterOwn
       ? `☀️ Доброе утро${greetWith}\nСегодня у тебя ${n} ${word}:`
       : `☀️ Доброе утро${greetWith}\nСегодня в студии ${n} ${word}:`;
-    text = `${intro}\n\n${lines}\n\nХорошего дня 🔥`;
+    text = `${intro}\n\n${lines}${tasksSection}\n\nХорошего дня 🔥`;
   }
 
   await tg.sendMessage({
@@ -252,16 +347,8 @@ async function processStudio(studio, now) {
     return;
   }
 
-  const inDailyWindow = local.hh === 9 && local.mm < 10;
   const nowMin = local.hh * 60 + local.mm;
-
-  // Если ни одно окно не активно — даже не дёргаем БД.
-  // Hour-before требует выборки по дате; пропустить можно, если нет записей в
-  // ±2 часа, но всё равно дешевле выбрать один SELECT.
-  if (!inDailyWindow) {
-    // быстрый skip нулевой нагрузки: ночью никого не дёргаем.
-    // (всё равно проверяем hour_before — там фильтр по delta).
-  }
+  const inDailyWindow = isInDailyWindow(local, studio.daily_summary_time);
 
   const users = await getStudioUsers(studio.id);
   if (!users.length) return;
@@ -279,14 +366,29 @@ async function processStudio(studio, now) {
     return;
   }
 
-  // ── 1) Daily summary 9:00-9:09 локального ────────────────────────
+  // ── 1) Daily summary в выбранное owner-ом время (окно 10 мин) ──────
+  // Если studio.daily_summary_time === NULL → owner отключил сводку,
+  // inDailyWindow = false, секцию пропускаем.
   if (inDailyWindow) {
+    let allTasks;
+    try {
+      allTasks = await getTasksForDate(studio.schema_name, local.dateStr);
+    } catch (e) {
+      console.error(`[reminders] getTasks failed for ${studio.schema_name}:`, e.message);
+      allTasks = []; // fail-soft: сводка пойдёт без задач
+    }
+
     for (const u of users) {
       const userBookings = (u.role === 'master')
         ? bookings.filter((b) => b.master_id === u.id)
         : bookings; // owner / manager — все
+      // master видит только задачи, назначенные лично; owner/manager — все
+      // активные задачи студии (включая «без исполнителя»).
+      const userTasks = (u.role === 'master')
+        ? allTasks.filter((t) => t.assigned_to === u.id)
+        : allTasks;
       try {
-        await sendDailySummary(u, local.dateStr, userBookings, u.role === 'master');
+        await sendDailySummary(u, local.dateStr, userBookings, userTasks, u.role === 'master');
       } catch (e) {
         console.error(`[reminders] daily failed for user ${u.id}:`, e.message);
       }
@@ -348,4 +450,7 @@ module.exports = {
   pluralize,
   timeToMinutes,
   formatBookingLine,
+  formatTaskLine,
+  formatTasksSection,
+  isInDailyWindow,
 };

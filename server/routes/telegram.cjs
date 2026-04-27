@@ -236,6 +236,37 @@ function buildTimezoneInline() {
   return { inline_keyboard: rows };
 }
 
+// Inline-клавиатура выбора времени утренней сводки. Owner-only.
+//   dailytime:07:00..10:00 — фиксированные варианты
+//   dailytime:custom        — переведёт в state 'awaiting_daily_time',
+//                             следующее текстовое сообщение распарсим как HH:MM
+//   dailytime:off           — daily_summary_time = NULL, сводка отключена
+const DAILY_TIME_INLINE = {
+  inline_keyboard: [
+    [
+      { text: '7:00',  callback_data: 'dailytime:07:00' },
+      { text: '8:00',  callback_data: 'dailytime:08:00' },
+      { text: '9:00',  callback_data: 'dailytime:09:00' },
+      { text: '10:00', callback_data: 'dailytime:10:00' },
+    ],
+    [{ text: 'Своё время', callback_data: 'dailytime:custom' }],
+    [{ text: 'Не присылать', callback_data: 'dailytime:off' }],
+  ],
+};
+
+// Парсит «8:30» / «08:30» / «8.30» в строку 'HH:MM:SS' для PG TIME.
+// Возвращает null если ввод невалидный (вне 00:00–23:59).
+function parseHHMM(input) {
+  const m = String(input || '').trim().match(/^(\d{1,2})[:.\s](\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  if (h < 0 || h > 23) return null;
+  if (min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`;
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Тексты приветствия.
 // ──────────────────────────────────────────────────────────────────────
@@ -321,7 +352,8 @@ async function findLinkedUser(tgUserId) {
     `SELECT u.id, u.email, u.name, u.role, u.studio_id, u.tg_chat_id, u.gender,
             s.referral_code, s.bonus_balance_kop,
             s.display_name AS studio_name, s.plan, s.access_until,
-            s.timezone, s.timezone_set
+            s.timezone, s.timezone_set,
+            s.daily_summary_time, s.daily_summary_time_set
        FROM saas_meta.users u
        LEFT JOIN saas_meta.studios s ON s.id = u.studio_id
       WHERE u.tg_user_id = $1`,
@@ -649,6 +681,12 @@ async function runOnboardingChecks(chatId, linked) {
     await askTimezoneQuestion(chatId, linked.id);
     return;
   }
+  // 3) Owner и время утренней сводки ещё не выбрано явно → спрашиваем.
+  //    Только у owner-а: время одно на студию, остальные пользуются им же.
+  if (linked.role === 'owner' && linked.daily_summary_time_set === false) {
+    await askDailySummaryTimeQuestion(chatId, linked.id);
+    return;
+  }
   // Иначе — всё ок, ничего не делаем (меню уже показано выше).
 }
 
@@ -671,6 +709,17 @@ async function askTimezoneQuestion(chatId, userId) {
       `Выбери часовой пояс студии, по нему я буду присылать утреннюю ` +
       `сводку и напоминания за час до записи. Если города нет в списке, ` +
       `выбирай ближайший с тем же смещением.`,
+  });
+}
+
+async function askDailySummaryTimeQuestion(chatId, userId) {
+  await tg.sendMessage({
+    chatId, userId, kind: 'ask_daily_time',
+    replyMarkup: DAILY_TIME_INLINE,
+    text:
+      `Во сколько присылать утреннюю сводку с записями и задачами на день? ` +
+      `Можно выбрать готовый вариант или задать своё время. ` +
+      `Поменять можно командой /время.`,
   });
 }
 
@@ -789,6 +838,72 @@ async function dispatchCallback(cb) {
       text: `Готово, часовой пояс студии: <b>${tg.escapeHtml(label)}</b>.`,
     });
     // Сюда попадаем только если linked.role === 'owner' (см. проверку выше).
+    // Следующий шаг онбординга — время утренней сводки.
+    const fresh = await findLinkedUser(tgUser.id);
+    if (fresh?.daily_summary_time_set === false) {
+      await askDailySummaryTimeQuestion(chatId, linked.id);
+    } else {
+      await sendOnboardingDone(chatId, linked.id, 'owner');
+    }
+    return;
+  }
+
+  // ── dailytime:HH:MM | dailytime:custom | dailytime:off ─────────────
+  if (data.startsWith('dailytime:')) {
+    if (linked.role !== 'owner') {
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'dailytime_not_owner',
+        text: 'Время утренней сводки настраивает только владелец.',
+      });
+      return;
+    }
+    const choice = data.slice('dailytime:'.length);
+    await tg.editMessageReplyMarkup(chatId, messageId, null).catch(() => {});
+
+    if (choice === 'custom') {
+      // Переводим юзера в state ожидания текстового ввода. Следующее
+      // сообщение будет распарсено как HH:MM в dispatchMessage.
+      await setState(tgUser.id, 'awaiting_daily_time');
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'dailytime_custom_prompt',
+        text: 'Напиши время в формате <b>ЧЧ:ММ</b>, например 8:30.',
+      });
+      return;
+    }
+
+    if (choice === 'off') {
+      await pool.query(
+        `UPDATE saas_meta.studios
+            SET daily_summary_time = NULL, daily_summary_time_set = TRUE
+          WHERE id = $1`,
+        [linked.studio_id]
+      );
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'dailytime_off',
+        text:
+          'Принято, утреннюю сводку присылать не буду. ' +
+          'Включить обратно — командой /время.',
+      });
+      await sendOnboardingDone(chatId, linked.id, 'owner');
+      return;
+    }
+
+    // Фиксированный вариант '07:00' / '08:00' / '09:00' / '10:00'.
+    const parsed = parseHHMM(choice);
+    if (!parsed) {
+      // Подделка callback_data — игнорим.
+      return;
+    }
+    await pool.query(
+      `UPDATE saas_meta.studios
+          SET daily_summary_time = $1, daily_summary_time_set = TRUE
+        WHERE id = $2`,
+      [parsed, linked.studio_id]
+    );
+    await tg.sendMessage({
+      chatId, userId: linked.id, kind: 'dailytime_set',
+      text: `Готово, утренняя сводка будет приходить в <b>${tg.escapeHtml(parsed.slice(0, 5))}</b>.`,
+    });
     await sendOnboardingDone(chatId, linked.id, 'owner');
     return;
   }
@@ -1196,20 +1311,27 @@ async function dispatchMessage(message) {
     return dispatchCommand(message, buttonCmd, '');
   }
 
-  // 3) /command [args]
-  const m = text.match(/^\/(\w+)(?:@\w+)?(?:\s+(.+))?$/);
+  // 3) /command [args] — \p{L} ловит и кириллицу (/время = /time).
+  //    Telegram официально принимает только латиницу, но если юзер сам
+  //    наберёт «/время» в чат, мы тоже распарсим его как команду.
+  const m = text.match(/^\/([\p{L}_][\p{L}\p{N}_]*)(?:@\w+)?(?:\s+(.+))?$/u);
   if (m) {
-    await clearState(tgUser.id);
     const cmd = m[1].toLowerCase();
     const args = m[2] ? m[2].trim() : '';
+    // ВАЖНО: clearState ДО проверки awaiting_daily_time — иначе текстовая
+    // команда «/time» внутри ожидания HH:MM никогда не выйдет из state'а.
+    await clearState(tgUser.id);
     return dispatchCommand(message, cmd, args);
   }
 
-  // 4) Активный режим «жду сообщение в поддержку» — текст идёт в support.
+  // 4) Активные режимы (FSM).
   const state = await getActiveState(tgUser.id);
   if (state === 'awaiting_support_message') {
     const linked = await findLinkedUser(tgUser.id);
     return handleSupportMessage(message, linked);
+  }
+  if (state === 'awaiting_daily_time') {
+    return handleDailyTimeInput(message, text);
   }
 
   // 5) Иначе — приветствие/меню.
@@ -1226,8 +1348,76 @@ async function dispatchCommand(message, cmd, args) {
     case 'referral': return handleReferral(message);
     case 'tariffs':  return handleTariffs(message);
     case 'balance':  return handleTariffs(message); // alias: бонусы внутри тарифов
+    case 'time':                                     // официальная (латиница)
+    case 'время':    return handleDailyTimeCommand(message);
     default:         return handleUnknown(message);
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// /время — настройка времени утренней сводки. Только для owner-а.
+// Просто переоткрывает inline-выбор; сама обработка callback'ов общая.
+// ──────────────────────────────────────────────────────────────────────
+async function handleDailyTimeCommand(message) {
+  const tgId = message.from?.id;
+  const linked = await findLinkedUser(tgId);
+  if (!linked) {
+    await tg.sendMessage({
+      chatId: message.chat.id, kind: 'dailytime_unlinked',
+      replyMarkup: REGISTER_INLINE,
+      text:
+        'Сначала привяжи аккаунт СРМ: Профиль → Telegram → «Подключить». ' +
+        'После этого смогу настроить время утренней сводки.',
+    });
+    return;
+  }
+  if (linked.role !== 'owner') {
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'dailytime_not_owner',
+      text:
+        'Время утренней сводки настраивает только владелец студии. ' +
+        'Сводка приходит всем сотрудникам в одно и то же время.',
+    });
+    return;
+  }
+  await askDailySummaryTimeQuestion(message.chat.id, linked.id);
+}
+
+// Обработка текстового ввода в state 'awaiting_daily_time'.
+// Юзер нажал «Своё время» → бот попросил ввести HH:MM → юзер пишет «8:30».
+async function handleDailyTimeInput(message, text) {
+  const tgId = message.from?.id;
+  const linked = await findLinkedUser(tgId);
+  if (!linked || linked.role !== 'owner') {
+    await clearState(tgId);
+    return;
+  }
+
+  const parsed = parseHHMM(text);
+  if (!parsed) {
+    // Не уходим из state — даём попробовать ещё раз.
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'dailytime_invalid',
+      text:
+        'Не понял время. Напиши в формате <b>ЧЧ:ММ</b>, например <code>8:30</code> или <code>09:00</code>. ' +
+        'Или нажми /время чтобы выбрать готовый вариант.',
+    });
+    return;
+  }
+
+  await pool.query(
+    `UPDATE saas_meta.studios
+        SET daily_summary_time = $1, daily_summary_time_set = TRUE
+      WHERE id = $2`,
+    [parsed, linked.studio_id]
+  );
+  await clearState(tgId);
+
+  await tg.sendMessage({
+    chatId: message.chat.id, userId: linked.id, kind: 'dailytime_set',
+    text: `Готово, утренняя сводка будет приходить в <b>${tg.escapeHtml(parsed.slice(0, 5))}</b>.`,
+  });
+  await sendOnboardingDone(message.chat.id, linked.id, 'owner');
 }
 
 // ──────────────────────────────────────────────────────────────────────

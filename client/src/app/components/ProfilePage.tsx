@@ -438,6 +438,128 @@ const EditableField = <K extends string>({
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// DailySummaryTimeField — поле «во сколько присылать утреннюю сводку».
+//
+// Зачем отдельный компонент (а не EditableField): тут две связанные
+// вещи — само время И флаг «вообще присылать?». В одно текстовое поле
+// это плохо ложится. Поэтому показываем <input type="time"> + ссылку
+// «Не присылать»; если сводка отключена — текст «Сводка отключена» и
+// ссылку «Включить».
+//
+// Сохранение:
+//   • Изменили время → onSave('HH:MM') (только если включено)
+//   • Нажали «Не присылать» → onSave(null)
+//   • Нажали «Включить» → onSave(time) — берём ранее введённое время
+//     (или дефолт '09:00')
+//
+// readOnly=true для не-owner-ов: показываем текущее значение, инпут
+// дизейблен, ссылок нет.
+// ──────────────────────────────────────────────────────────────────────
+interface DailySummaryTimeFieldProps {
+  value: string | null;
+  onSave: (next: string | null) => Promise<void>;
+  readOnly?: boolean;
+}
+
+const DailySummaryTimeField = ({ value, onSave, readOnly }: DailySummaryTimeFieldProps) => {
+  // localTime хранит время даже когда сводка выключена — чтобы при
+  // повторном включении не сбрасывать выбор пользователя.
+  const [localTime, setLocalTime] = useState(value || '09:00');
+  const [savingState, setSavingState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (value) setLocalTime(value);
+  }, [value]);
+
+  const enabled = value !== null;
+
+  const persist = async (next: string | null) => {
+    setSavingState('saving');
+    setErrorMsg('');
+    try {
+      await onSave(next);
+      setSavingState('saved');
+      setTimeout(() => setSavingState('idle'), 2000);
+    } catch (e: any) {
+      setSavingState('error');
+      setErrorMsg(e?.message || 'Не удалось сохранить');
+    }
+  };
+
+  const handleTimeChange = (raw: string) => {
+    setLocalTime(raw);
+    if (savingState !== 'idle') setSavingState('idle');
+  };
+
+  // Сохраняем по blur — не дёргаем сервер на каждом клике секундомера.
+  // Если значение не поменялось или сводка выключена — ничего не шлём.
+  const handleTimeBlur = () => {
+    if (!enabled) return;
+    // <input type="time"> обычно отдаёт 'HH:MM'. На всякий случай
+    // нормализуем — если пришло пустое значение, не пытаемся сохранить.
+    if (!/^\d{2}:\d{2}$/.test(localTime)) return;
+    if (localTime === (value || '')) return;
+    persist(localTime);
+  };
+
+  const handleDisable = () => persist(null);
+  const handleEnable  = () => persist(localTime || '09:00');
+
+  return (
+    <div className="px-6 py-4">
+      <label className="text-xs text-zinc-400 block mb-1">Время утренней сводки</label>
+      <div className="flex items-center gap-3 flex-wrap">
+        <input
+          type="time"
+          value={enabled ? localTime : ''}
+          disabled={readOnly || !enabled}
+          onChange={(e) => handleTimeChange(e.target.value)}
+          onBlur={handleTimeBlur}
+          className={`bg-transparent outline-none border-b border-transparent transition-colors px-1 py-0.5 ${
+            readOnly || !enabled ? 'text-zinc-400 cursor-default' : 'text-zinc-900 focus:border-zinc-300'
+          }`}
+        />
+        {!readOnly && enabled && (
+          <button
+            type="button"
+            onClick={handleDisable}
+            className="text-xs text-zinc-400 hover:text-zinc-700 underline underline-offset-2 transition-colors"
+          >
+            Не присылать
+          </button>
+        )}
+        {!readOnly && !enabled && (
+          <>
+            <span className="text-sm text-zinc-500">Сводка отключена</span>
+            <button
+              type="button"
+              onClick={handleEnable}
+              className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2 transition-colors"
+            >
+              Включить
+            </button>
+          </>
+        )}
+        {savingState === 'saving' && (
+          <span className="text-xs text-zinc-400">сохраняем…</span>
+        )}
+        {savingState === 'saved' && (
+          <span className="text-xs text-emerald-600">сохранено</span>
+        )}
+      </div>
+      {savingState === 'error' && (
+        <p className="mt-1 text-xs text-red-500">{errorMsg}</p>
+      )}
+      <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
+        В это время бот пришлёт в Telegram список записей и задач на день.
+        Время одно на всю студию — меняет только владелец.
+      </p>
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────
 // Расчёт сколько бонусов применится — нужен ТОЛЬКО для UI-превью (старая
 // перечёркнутая цена + строка «Применятся бонусы: до X»). Реальное значение,
 // которое уйдёт в Prodamus, считает сервер при выдаче intent — фронт
@@ -1048,6 +1170,22 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     }
   };
 
+  // Время утренней сводки в Telegram. Отдельный хендлер от
+  // handleSaveStudioField, потому что значение может быть null
+  // (сводка отключена), а handleSaveStudioField заточен под string.
+  const handleSaveDailySummaryTime = async (next: string | null) => {
+    try {
+      const res = await api.updateStudio({ dailySummaryTime: next });
+      setData((prev) => prev ? {
+        ...prev,
+        studio: { ...prev.studio, ...res.studio },
+      } : prev);
+    } catch (err) {
+      const message = translateApiError(err, 'Не удалось сохранить время');
+      throw new Error(message);
+    }
+  };
+
   const handleAvatarPick = () => {
     if (avatarBusy) return;
     fileInputRef.current?.click();
@@ -1614,6 +1752,28 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             placeholder="Гарантия на выполненные работы — 14 календарных дней с даты выдачи"
             multiline
             onSave={handleSaveStudioField}
+          />
+        </CollapsibleSection>
+        )}
+
+        {/* ── 3a-bis. Утренняя сводка в Telegram (owner only) ──────────
+            Время одно на студию (см. миграцию 011_daily_summary_time.sql),
+            меняет только владелец. Бот в Telegram задаёт тот же вопрос
+            при онбординге командой /время. Этот блок дублирует ту же
+            настройку в CRM — для тех, кто живёт в десктопе и не хочет
+            копаться в боте. */}
+        {canEditStudio(role) && (
+        <CollapsibleSection
+          title="Утренняя сводка в Telegram"
+          subtitle={
+            studio.dailySummaryTime
+              ? `Каждый день в ${studio.dailySummaryTime}`
+              : 'Сводка отключена'
+          }
+        >
+          <DailySummaryTimeField
+            value={studio.dailySummaryTime}
+            onSave={handleSaveDailySummaryTime}
           />
         </CollapsibleSection>
         )}

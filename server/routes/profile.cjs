@@ -95,6 +95,34 @@ function computeCanViewFinance(role, flag) {
   return flag !== false;
 }
 
+/**
+ * PG TIME → 'HH:MM' (или null). Драйвер pg отдаёт TIME без TZ как строку
+ * 'HH:MM:SS' (а у нас иногда 'HH:MM:SS.ffffff'). Для UI и <input type="time">
+ * нужен формат 'HH:MM' — отрезаем секунды и микросекунды.
+ *
+ * NULL → null (UI покажет «Не присылать», бот молчит для этой студии).
+ */
+function formatDailySummaryTime(value) {
+  if (value == null) return null;
+  const str = String(value);
+  const m = str.match(/^(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : null;
+}
+
+/**
+ * 'HH:MM' / 'H:MM' / 'HH:MM:SS' → 'HH:MM:SS' для записи в PG TIME.
+ * Возвращает null, если строка невалидна — вызывающий бросит 400.
+ */
+function parseDailySummaryTime(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+}
+
 function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
   const meta = planMeta(studioRow.plan);
   const maxUsers = maxUsersForPlan(studioRow.plan);
@@ -141,6 +169,11 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       contactPhone:  studioRow.contact_phone || null,
       contactEmail:  studioRow.contact_email || null,
       guaranteeText: studioRow.guarantee_text || null,
+      // Время утренней Telegram-сводки (миграция 011). PG отдаёт TIME как
+      // 'HH:MM:SS' — урезаем до 'HH:MM' для UI (чтобы <input type="time">
+      // принял без переформатирования). NULL = «не присылать студии».
+      dailySummaryTime:    formatDailySummaryTime(studioRow.daily_summary_time),
+      dailySummaryTimeSet: studioRow.daily_summary_time_set === true,
       // Реферальная программа: код у студии всегда есть после миграции 005,
       // bonus_balance_kop — текущий баланс бонусов в копейках. UI делит на 100.
       referralCode:   studioRow.referral_code || null,
@@ -179,6 +212,7 @@ router.get('/', requireAuth, async (req, res, next) => {
         s.cancel_pending AS studio_cancel_pending,
         s.inn, s.ogrn, s.legal_address, s.actual_address,
         s.contact_phone, s.contact_email, s.guarantee_text,
+        s.daily_summary_time, s.daily_summary_time_set,
         s.referral_code, s.bonus_balance_kop,
         (SELECT count(*)::int FROM saas_meta.users
           WHERE studio_id = s.id AND is_active = true) AS current_users
@@ -205,6 +239,8 @@ router.get('/', requireAuth, async (req, res, next) => {
     legal_address: row.legal_address, actual_address: row.actual_address,
     contact_phone: row.contact_phone, contact_email: row.contact_email,
     guarantee_text: row.guarantee_text,
+    daily_summary_time: row.daily_summary_time,
+    daily_summary_time_set: row.daily_summary_time_set,
     referral_code: row.referral_code,
     bonus_balance_kop: row.bonus_balance_kop,
   };
@@ -372,6 +408,27 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
     takeOptionalString('contactEmail',  'contact_email',  100);
     takeOptionalString('guaranteeText', 'guarantee_text', 500);
 
+    // dailySummaryTime — особый случай: НЕ строка-как-другие, а время.
+    //   • '' / null  → daily_summary_time = NULL ⇒ «не присылать сводку»
+    //   • 'HH:MM'    → парсим в 'HH:MM:SS' для PG TIME
+    //   • невалид    → 400, UI покажет ошибку
+    // Когда owner явно меняет время через UI, ставим _set = TRUE,
+    // чтобы бот при следующем входе не переспрашивал «во сколько?».
+    if (Object.prototype.hasOwnProperty.call(body, 'dailySummaryTime')) {
+      const raw = body.dailySummaryTime;
+      if (raw === null || raw === '') {
+        fields.daily_summary_time = null;
+        fields.daily_summary_time_set = true;
+      } else {
+        const parsed = parseDailySummaryTime(raw);
+        if (!parsed) {
+          const e = new Error('daily_summary_time_invalid'); e.status = 400; throw e;
+        }
+        fields.daily_summary_time = parsed;
+        fields.daily_summary_time_set = true;
+      }
+    }
+
     // Дополнительная валидация ИНН/ОГРН/email — только цифры и нужная длина.
     // Передний край (UI) валидирует то же самое, но клиент мог быть обойдён.
     if (fields.inn != null) {
@@ -419,7 +476,8 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
           SET ${setClauses.join(', ')}
         WHERE id = $${values.length}
         RETURNING id, display_name, inn, ogrn, legal_address, actual_address,
-                  contact_phone, contact_email, guarantee_text`,
+                  contact_phone, contact_email, guarantee_text,
+                  daily_summary_time, daily_summary_time_set`,
       values
     );
     if (!r.rows[0]) return res.status(404).json({ error: 'studio_not_found' });
@@ -437,6 +495,8 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
         contactPhone:  s.contact_phone || null,
         contactEmail:  s.contact_email || null,
         guaranteeText: s.guarantee_text || null,
+        dailySummaryTime:    formatDailySummaryTime(s.daily_summary_time),
+        dailySummaryTimeSet: s.daily_summary_time_set === true,
       },
     });
   } catch (err) {
