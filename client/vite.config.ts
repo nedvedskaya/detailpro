@@ -38,7 +38,20 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    target: 'es2020',
+    // target: явно перечисляем минимальные версии движков, которые мы
+    // обещаем поддерживать. Базис «последние 3 года» (с апреля 2023):
+    //   Chrome 109 / Edge 109 — январь 2023
+    //   Safari 16.3            — январь 2023 (iOS 16.3)
+    //   Firefox 109            — январь 2023
+    // Все четыре поддерживают полный ES2022 (top-level await, class fields,
+    // .at(), Object.hasOwn, error.cause), поэтому esbuild не транспилирует
+    // эти фичи в downlevel-полифилы — бандл получается компактнее, JS
+    // парсится быстрее. iOS 15 и более старые Android-Chrome обновляются
+    // через системный WebView; устройства старше 3 лет (iPhone 7 на iOS 15
+    // и т.п.) уйдут на «упрощённый режим» с возможной ошибкой парсинга —
+    // это сознательный trade-off: лучше явный fail, чем тащить полифилы
+    // ради ~1% старых устройств.
+    target: ['chrome109', 'edge109', 'safari16', 'firefox109'],
     minify: 'terser',
     terserOptions: {
       compress: {

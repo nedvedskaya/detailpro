@@ -30,5 +30,11 @@
   },
   "overrides": {
     "uuid": "^14.0.0"
-  }
+  },
+  "browserslist": [
+    "last 3 years",
+    "not dead",
+    "not op_mini all",
+    "not ie 11"
+  ]
 }
