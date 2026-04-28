@@ -18,6 +18,9 @@ interface ClientsViewProps {
   categories?: any[];
   tags?: any[];
   users?: any[];
+  // Прайс-лист услуг — для ServicesPicker внутри AppointmentInputs в форме
+  // создания клиента (там ClientForm рендерит «+ Бронь» с услугами).
+  priceList?: any[];
   isOnline?: boolean;
   // canEdit=false → master-режим: скрываем «+», «Редактировать», «Удалить».
   // Тап по карточке всё равно открывает ClientDetails в режиме просмотра.
@@ -40,6 +43,7 @@ export const ClientsView = ({
   categories = [],
   tags = [],
   users = [],
+  priceList = [],
   isOnline = true,
   canEdit = true,
 }: ClientsViewProps) => {
@@ -96,6 +100,7 @@ export const ClientsView = ({
           categories={categories}
           tags={tags}
           users={users}
+          priceList={priceList}
         />
       )}
       
