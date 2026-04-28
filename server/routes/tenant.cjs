@@ -565,7 +565,8 @@ router.get('/transactions', txAccessControl, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT id, type, amount, category_id, category, description, date, time,
-            booking_id, client_record_id, client_id, created_by, tags, created_at
+            booking_id, client_record_id, client_id, client_name,
+            created_by, tags, created_at
        FROM {{schema}}.transactions
        ${where}
       ORDER BY date DESC, created_at DESC`
@@ -584,17 +585,34 @@ router.post('/transactions', canWrite, txAccessControl, async (req, res, next) =
   let normalizedTags;
   try { normalizedTags = normalizeTags(tags); }
   catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
+  // Денормализация имени клиента (см. transactions.client_name): если
+  // привязка к клиенту есть — копируем его имя на момент платежа,
+  // чтобы аналитика финансов не теряла контекст после удаления клиента.
+  // Один лишний SELECT, ~5 мс — приемлемо для редкой операции (создание
+  // транзакции, не hot-path).
+  let clientNameSnapshot = null;
+  const safeClientId = badId(client_id);
+  if (safeClientId) {
+    const cr = await queryInSchema(
+      req.session.schemaName,
+      `SELECT name FROM {{schema}}.clients WHERE id = $1`,
+      [safeClientId]
+    );
+    clientNameSnapshot = cr.rows[0]?.name || null;
+  }
+
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.transactions
-       (type, amount, category_id, category, description, date, time, booking_id, client_record_id, client_id, created_by, tags)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb) RETURNING *`,
+       (type, amount, category_id, category, description, date, time, booking_id, client_record_id, client_id, client_name, created_by, tags)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb) RETURNING *`,
     [
       type, amount,
       badId(category_id), category || null,
       description || null,
       date || new Date().toISOString().slice(0, 10), time || null,
-      badId(booking_id), badId(client_record_id), badId(client_id),
+      badId(booking_id), badId(client_record_id), safeClientId, clientNameSnapshot,
       req.session.userId,
       JSON.stringify(normalizedTags),
     ]

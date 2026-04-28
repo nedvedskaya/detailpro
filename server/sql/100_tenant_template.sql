@@ -214,6 +214,13 @@ CREATE TABLE IF NOT EXISTS {{schema}}.transactions (
     booking_id        INTEGER REFERENCES {{schema}}.bookings(id) ON DELETE SET NULL,
     client_record_id  INTEGER REFERENCES {{schema}}.client_records(id) ON DELETE SET NULL,
     client_id         INTEGER REFERENCES {{schema}}.clients(id) ON DELETE SET NULL,
+    -- Денормализованное имя клиента на момент создания транзакции. Нужно
+    -- чтобы в финансовой аналитике сохранялся контекст «кому была работа»
+    -- даже после удаления клиента (когда client_id уходит в NULL по
+    -- ON DELETE SET NULL). Заполняется в POST/PUT /transactions из
+    -- clients.name. Если клиент потом переименован — здесь остаётся
+    -- старое имя на момент платежа, что корректно для бухгалтерии.
+    client_name       VARCHAR(255),
     created_by        UUID    REFERENCES saas_meta.users(id) ON DELETE SET NULL,
     tags              JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_demo           BOOLEAN NOT NULL DEFAULT FALSE,
@@ -466,3 +473,20 @@ ALTER TABLE {{schema}}.bookings        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN 
 ALTER TABLE {{schema}}.client_records  ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.transactions    ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.tasks           ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Денормализация client_name в транзакциях. Если клиент удалён —
+-- ON DELETE SET NULL на client_id обнулит ссылку, но имя останется
+-- здесь и в аналитике юзер увидит «8000₽ — Иван Петров (удалён)»
+-- вместо «8000₽ — без клиента».
+ALTER TABLE {{schema}}.transactions    ADD COLUMN IF NOT EXISTS client_name VARCHAR(255);
+
+-- Backfill: для уже существующих транзакций, у которых client_id есть,
+-- но client_name не заполнен (NULL — добавлено только что или
+-- историческая запись), копируем имя из clients. Идемпотентно: при
+-- повторном прогоне меняет только NULL-ы. Не трогает строки, где
+-- client_name уже зафиксирован (на случай если клиента переименовали).
+UPDATE {{schema}}.transactions t
+   SET client_name = c.name
+  FROM {{schema}}.clients c
+ WHERE c.id = t.client_id
+   AND t.client_name IS NULL;
