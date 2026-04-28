@@ -437,9 +437,18 @@ const App = () => {
   // юзер сможет посмотреть тарифы и оплатить.
   const [subscriptionLocked, setSubscriptionLocked] = useState(false);
   useEffect(() => {
-    const handler = () => setSubscriptionLocked(true);
-    window.addEventListener('app:subscription-lock', handler);
-    return () => window.removeEventListener('app:subscription-lock', handler);
+    const onLock = () => setSubscriptionLocked(true);
+    // Снимаем замок только когда бэк реально вернул 200 на ЗАЩИЩЁННЫЙ
+    // роут (то есть из-за requireActiveStudio мы получили бы 402, но
+    // получили 200 — подписка свежая, можно работать). api.ts диспатчит
+    // app:subscription-active с этим условием.
+    const onUnlock = () => setSubscriptionLocked(false);
+    window.addEventListener('app:subscription-lock', onLock);
+    window.addEventListener('app:subscription-active', onUnlock);
+    return () => {
+      window.removeEventListener('app:subscription-lock', onLock);
+      window.removeEventListener('app:subscription-active', onUnlock);
+    };
   }, []);
   const [clients, setClients] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
@@ -1403,7 +1412,7 @@ const App = () => {
               Доступ к CRM приостановлен. Все ваши данные сохранены — оформите тариф, чтобы продолжить работу.
             </p>
             <button
-              onClick={() => { setSubscriptionLocked(false); setShowProfile(true); }}
+              onClick={() => setShowProfile(true)}
               className="w-full bg-orange-500 hover:bg-orange-600 active:scale-[0.98] text-white font-bold py-3 rounded-xl transition-all"
             >
               Перейти к тарифам

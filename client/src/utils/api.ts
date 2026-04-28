@@ -33,6 +33,18 @@ class ApiError extends Error {
   reason?: string;
 }
 
+// Whitelist путей, которые работают БЕЗ requireActiveStudio (т.е. 200 от
+// них не означает «подписка активна»). Совпадает с whitelist'ом в app.cjs.
+function isWhitelistedPath(url: string): boolean {
+  try {
+    const path = new URL(url, 'http://x').pathname;
+    return path.startsWith('/api/auth')
+      || path.startsWith('/api/profile')
+      || path.startsWith('/api/webhooks')
+      || path.startsWith('/api/telegram');
+  } catch (_) { return true; }
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (response.status === 401) {
     await logout();
@@ -52,6 +64,15 @@ async function handleResponse<T>(response: Response): Promise<T> {
       window.dispatchEvent(new CustomEvent('app:subscription-lock', { detail: body }));
     } catch (_) { /* SSR/older browsers — best-effort */ }
     throw new ApiError(body.error || 'Подписка истекла', 402, 'subscription_expired');
+  }
+  // Если защищённый роут вернул 200 — подписка точно активна. Снимаем
+  // LockScreen, если он висел (актуально после оплаты: webhook обновил
+  // access_until, юзер обновил страницу или сделал любой запрос — UI
+  // должен сам разлочиться, не требуя нашего ручного сброса).
+  if (response.ok && response.url && !isWhitelistedPath(response.url)) {
+    try {
+      window.dispatchEvent(new CustomEvent('app:subscription-active'));
+    } catch (_) { /* best-effort */ }
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Request failed' }));
