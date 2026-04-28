@@ -132,6 +132,12 @@ function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, custom
   // 28.04.2026: для нашего аккаунта sys = 'yalokontent'.
   u.searchParams.set('sys', 'yalokontent');
 
+  // do=pay — обязательный параметр для прямого открытия платёжной
+  // страницы. Без него Prodamus показывает витрину с дефолтным товаром
+  // из настроек, игнорируя products[0][...] из URL. По их инструкции:
+  // do = 'link' (вернуть ссылку через REST) | 'pay' (открыть форму).
+  u.searchParams.set('do', 'pay');
+
   // Описываем товар в URL. Цена в рублях, как требует Prodamus.
   // products[0][...] — синтаксис, который Express/PHP-style парсеры
   // на стороне Prodamus распарсят как массив объектов.
