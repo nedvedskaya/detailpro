@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Временная иконка-плейсхолдер: оранжевый квадрат с буквами «ДП» (Детейл Про).
+  Цвет #f97316 — тот же, что в manifest.json theme_color и в брендовых
+  оранжевых акцентах CRM (.app-loader логотип, кнопки документов).
+
+  Заменить на финальный лого: положить готовый PNG/SVG/ICO с тем же
+  именем (favicon.svg или favicon.ico) в client/public/ — и пересобрать
+  фронт. Размер — рекомендуется 64×64 или больше, читаемый в 16×16.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#f97316"/>
+  <text x="50%" y="54%"
+        text-anchor="middle"
+        dominant-baseline="middle"
+        font-family="Inter, Arial, sans-serif"
+        font-size="30"
+        font-weight="900"
+        fill="#ffffff"
+        letter-spacing="-1">ДП</text>
+</svg>
