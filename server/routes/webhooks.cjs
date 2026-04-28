@@ -297,6 +297,31 @@ router.post('/prodamus', rawParser, async (req, res) => {
   const signatureValid = verifySignatureProdamus(payload, headerSign, secret);
 
   if (!signatureValid) {
+    // TEMP DIAG (удалить после починки): пересчитываем подпись локально
+    // и логируем префиксы expected/received хешей + хешируемый JSON,
+    // чтобы понять, в каком именно месте payload расходится с тем, что
+    // подписывал PHP-код Prodamus.
+    try {
+      const { prodamusHmac } = require('../lib/webhook_signing.cjs');
+      const cleaned = { ...payload };
+      delete cleaned.signature; delete cleaned.sign;
+      const expected = secret ? prodamusHmac(payload, secret) : '<no_secret>';
+      const sortedJson = JSON.stringify((function deepSort(v){
+        if (Array.isArray(v)) return v.map(deepSort);
+        if (v && typeof v === 'object') { const ks = Object.keys(v).sort(); const o={}; for (const k of ks) o[k]=deepSort(v[k]); return o; }
+        return v;
+      })(cleaned));
+      console.error('[webhook-diag]', JSON.stringify({
+        expected_prefix: String(expected).slice(0, 16),
+        received_prefix: String(headerSign).slice(0, 16),
+        received_len: String(headerSign).length,
+        sign_header_keys: Object.keys(req.headers).filter(h => /sign/i.test(h)),
+        json_signed: sortedJson,
+        json_signed_len: sortedJson.length,
+      }));
+    } catch (diagErr) {
+      console.error('[webhook-diag] failed:', diagErr.message);
+    }
     await logWebhook({
       source: 'prodamus', ip, signatureValid: false, rawBody: rawStr,
       status: 401, errorMessage: 'invalid_signature',
