@@ -907,11 +907,6 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
         <p className="mt-2 text-xs text-red-500 text-center">{error}</p>
       )}
 
-      {(proratedMonthlyRub > 0 || proratedYearlyRub > 0) && (
-        <p className="mt-2 text-[11px] text-orange-700 text-center font-semibold">
-          Зачёт за неиспользованные дни Соло: до {formatRub(Math.max(proratedMonthlyRub, proratedYearlyRub))}
-        </p>
-      )}
       {(monthlyUse.useKop > 0 || yearlyUse.useKop > 0) && (
         <p className="mt-1 text-[11px] text-emerald-700 text-center">
           Применятся бонусы: до {formatRub(Math.max(monthlyUse.useKop, yearlyUse.useKop) / 100)}
