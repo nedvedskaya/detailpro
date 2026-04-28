@@ -1918,7 +1918,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
         {/* Утренняя сводка — фича тарифа «Студия». На trial/solo секция
             спрятана, гейтинг дублируется в PATCH /api/profile/studio
             (server) и в processStudio в reminders.cjs (cron). */}
-        {canEditStudio(role) && studio.plan === 'studio' && (
+        {/* Сводка доступна на «Студия» И на «Пробный» (даём попробовать
+            фичу за trial-период, апсельный аргумент за Студию). Solo —
+            без сводки. Бэк гейтит ту же логику в planHasDailySummary. */}
+        {canEditStudio(role) && (studio.plan === 'studio' || studio.plan === 'trial') && (
         <CollapsibleSection
           title="Утренняя сводка в Telegram"
           subtitle={

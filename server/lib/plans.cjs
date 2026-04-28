@@ -32,15 +32,18 @@ function isUpgradeable(plan) {
   return planMeta(plan).upgradeable;
 }
 
-// Утренняя сводка в Telegram — фича тарифа «Студия». На trial/solo
-// сводка не настраивается через UI, не шлётся ботом и не запрашивается
-// при онбординге. Гейтинг применяется в:
-//   • PATCH /api/profile/studio  — отказ менять время не-studio-плану
+// Утренняя сводка в Telegram — доступна на «Студия» И на «Пробный».
+// На trial даём попробовать максимум фич — это апсельный аргумент за
+// Студия. Solo осознанно без сводки (для одиночек напоминания не так
+// критичны, и это сохраняет дельту между Solo и Студия).
+//
+// Гейтинг применяется в:
+//   • PATCH /api/profile/studio  — отказ менять время не-studio/trial-плану
 //   • reminders.cjs              — фильтр в processStudio (cron-тик)
-//   • telegram.cjs onboarding    — не спрашивать время и блокировать /время
-//   • ProfilePage UI             — секция «Утренняя сводка» спрятана
+//   • telegram.cjs onboarding    — спрашивать время только нужным
+//   • ProfilePage UI             — секция «Утренняя сводка» видна нужным
 function planHasDailySummary(plan) {
-  return plan === 'studio';
+  return plan === 'studio' || plan === 'trial';
 }
 
 module.exports = { PLANS, planMeta, maxUsersForPlan, isUpgradeable, planHasDailySummary };
