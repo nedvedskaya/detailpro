@@ -822,6 +822,12 @@ router.post('/prodamus', rawParser, async (req, res) => {
     // ещё раз. Запускаем ПОСЛЕ коммита транзакции, best-effort: ошибка
     // отправки не должна вернуть 500 → Prodamus ретраить не будет.
     if (!result.duplicate && status === 'paid' && studioId) {
+      // Помечаем первую оплату — основа сегмента «купившие vs не-купившие»
+      // в воронке прогрева.
+      try {
+        const { markFirstEvent } = require('../lib/funnel.cjs');
+        void markFirstEvent(studioId, 'first_paid_at');
+      } catch (_) { /* не валим webhook из-за маркера */ }
       // Не await: ответ Prodamus'у ждать не надо. Если TG ляжет на 30 сек —
       // не задерживаем webhook-acknowledge.
       void notifyOwnerOnPayment({

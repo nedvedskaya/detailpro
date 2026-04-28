@@ -32,6 +32,7 @@ const { parseId, assertString, assertOptionalString, assertArrayOfStrings, parse
 const { assertUserInStudio } = require('../lib/tenant_security.cjs');
 const birthdays = require('../lib/birthdays.cjs');
 const { resolveServices } = require('../lib/services_resolver.cjs');
+const { markFirstEvent } = require('../lib/funnel.cjs');
 
 const router = express.Router();
 
@@ -112,6 +113,8 @@ router.post('/clients', canWrite, async (req, res, next) => {
     [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null]
   );
   logAction(req, 'create', 'client', r.rows[0].id, r.rows[0].name);
+  // Помечаем первое создание клиента для воронки прогрева (no-op для повторных).
+  void markFirstEvent(req.session.studioId, 'first_client_at');
 
   // Если у клиента указан ДР=сегодня — сразу создаём задачу-напоминание,
   // чтобы юзер не ждал cron'а до следующих суток (best-effort, ошибка
@@ -646,6 +649,7 @@ router.post('/transactions', canWrite, txAccessControl, async (req, res, next) =
   // Лог на русском: entity_name = «Доход»/«Расход», details = «5000 ₽».
   const TX_TYPE_RU = { income: 'Доход', expense: 'Расход' };
   logAction(req, 'create', 'transaction', r.rows[0].id, TX_TYPE_RU[type] || type, `${amount} ₽`);
+  void markFirstEvent(req.session.studioId, 'first_transaction_at');
   res.status(201).json(r.rows[0]);
 });
 
@@ -847,6 +851,7 @@ router.post('/client-records', canWrite, async (req, res, next) => {
     ]
   );
   logAction(req, 'create', 'client_record', r.rows[0].id, finalServiceName);
+  void markFirstEvent(req.session.studioId, 'first_record_at');
   res.status(201).json(r.rows[0]);
 });
 

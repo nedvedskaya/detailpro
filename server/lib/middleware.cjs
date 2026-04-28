@@ -55,6 +55,12 @@ async function requireAuth(req, res, next) {
     }
     req.session = session;
     req.sessionToken = token;
+    // Не блокирующее: помечаем «студия активна сегодня» для воронки прогрева.
+    // Throttled внутри funnel.cjs до 1 раза в 5 мин, чтоб не дёргать БД на каждый запрос.
+    try {
+      const { touchLastActive } = require('./funnel.cjs');
+      void touchLastActive(session.studioId);
+    } catch (_) { /* funnel-хуки не должны влиять на auth */ }
     next();
   } catch (err) {
     next(err);

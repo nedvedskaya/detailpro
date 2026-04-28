@@ -40,6 +40,7 @@ const sharp = require('sharp');
 
 const { pool, queryInSchema } = require('../lib/db.cjs');
 const { requireRole } = require('../lib/middleware.cjs');
+const { markFirstEvent } = require('../lib/funnel.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
 const {
   parseId,
@@ -608,6 +609,7 @@ router.put('/work-orders/:bookingId', canWrite, async (req, res, next) => {
       console.warn('[work-orders] backfill skipped:', e?.message || e);
     }
 
+    void markFirstEvent(req.session.studioId, 'first_workorder_at');
     res.json(r.rows[0]);
   } catch (err) {
     // Новые валидаторы (validateItems/validateZones/sanitize*) кидают
@@ -766,6 +768,7 @@ router.put('/acceptance-acts/:bookingId', canWrite, async (req, res, next) => {
       console.warn('[acceptance-acts] backfill skipped:', e?.message || e);
     }
 
+    void markFirstEvent(req.session.studioId, 'first_acceptance_at');
     res.json(upd.rows[0] || r.rows[0]);
   } catch (err) {
     if (err.status === 400) return res.status(400).json({ error: err.message });
