@@ -233,15 +233,29 @@ export const api = {
   // Создаёт одноразовый deep-link `https://t.me/<bot>?start=link_<token>`
   // для текущего пользователя. UI открывает window.open(url) → бот в TG
   // подтверждает привязку → next /api/profile вернёт tgLinked=true.
-  linkTelegram() {
+  // crossBorderConsent ОБЯЗАТЕЛЕН — без него бэк отдаст 400. ФЗ-152 ч. 4
+  // ст. 12: трансграничная передача требует отдельного согласия. Запись
+  // в consents идёт в этом же endpoint'е.
+  linkTelegram(crossBorderConsent: boolean) {
     return send<{
       url: string;
       botUsername: string;
       expiresInHours: number;
-    }>('POST', '/profile/telegram/link');
+    }>('POST', '/profile/telegram/link', { crossBorderConsent });
   },
   unlinkTelegram() {
     return send<{ ok: true }>('DELETE', '/profile/telegram');
+  },
+
+  // Запрос на удаление аккаунта по 152-ФЗ. Toggle: первый вызов выставляет
+  // дату; повторный (или с cancel:true) — отменяет. Реальное удаление —
+  // через 30 дней по cron'у.
+  requestAccountDeletion(cancel = false) {
+    return send<{
+      ok: true;
+      deletionRequestedAt: string | null;
+      deletionEffectiveAt: string | null;
+    }>('POST', '/profile/account/request-deletion', { cancel });
   },
 
   // ────── Сброс пароля через Telegram-бот ──────

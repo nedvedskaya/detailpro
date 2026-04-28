@@ -43,7 +43,7 @@
  *   Prodamus — пока вручную через их кабинет (полная автоматизация — Phase 5).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { api } from '@/utils/api';
 import { translateApiError } from '@/utils/errorMessages';
@@ -1372,12 +1372,22 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
   // юзер кликает по нему — это нативный click (не popup), браузер открывает
   // ссылку без блокировки. На телефоне ссылка t.me/... триггерит deep-link
   // в приложение Telegram. Возврат — через кнопку «Я подтвердил».
+  // Чекбокс согласия на трансграничную передачу (ч. 4 ст. 12 ФЗ-152) —
+  // без него бэк не выдаст deep-link и не запишет согласие в consents.
+  // Сбрасываем при отвязке (handleTelegramUnlink), чтобы при повторной
+  // привязке юзер прочитал/принял ещё раз.
+  const [tgCrossBorderConsent, setTgCrossBorderConsent] = useState(false);
+
   const handleTelegramLink = async () => {
     if (tgBusy) return;
+    if (!tgCrossBorderConsent) {
+      setTgError('Поставьте галочку согласия на трансграничную передачу — без неё привязка бота незаконна по 152-ФЗ.');
+      return;
+    }
     setTgBusy(true);
     setTgError('');
     try {
-      const { url } = await api.linkTelegram();
+      const { url } = await api.linkTelegram(tgCrossBorderConsent);
       setTgLinkUrl(url);
       setTgWaiting(true);
     } catch (err) {
@@ -1728,12 +1738,40 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                   Подключите бота, чтобы получать ссылку для сброса пароля,
                   уведомления об оплатах и о новых записях клиентов.
                 </p>
+
+                {/* Чекбокс согласия на трансграничную передачу — обязательное
+                    отдельное согласие по ч. 4 ст. 12 ФЗ-152. Telegram —
+                    зарубежные серверы (UK/UAE), для передачи туда ПДн нужно
+                    явное согласие, отдельное от регистрационного. */}
+                <label className="flex items-start gap-3 cursor-pointer select-none mb-4">
+                  <input
+                    type="checkbox"
+                    checked={tgCrossBorderConsent}
+                    onChange={(e) => setTgCrossBorderConsent(e.target.checked)}
+                    className="mt-1 w-5 h-5 rounded border-zinc-300 accent-zinc-900 cursor-pointer"
+                  />
+                  <span className="text-xs text-zinc-600 leading-relaxed">
+                    При привязке бота ваши данные (идентификатор Telegram,
+                    имя пользователя, текст сообщений) передаются Telegram
+                    Messenger Inc. на серверы за пределами РФ. Я даю согласие
+                    на трансграничную передачу персональных данных. Подробнее —{' '}
+                    <a
+                      href="/legal/personal-data-consent"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-zinc-900 underline"
+                    >
+                      Согласие на обработку ПДн, раздел&nbsp;6
+                    </a>.
+                  </span>
+                </label>
+
                 {tgError && <p className="text-sm text-red-500 mb-3">{tgError}</p>}
                 <button
                   type="button"
                   onClick={handleTelegramLink}
-                  disabled={tgBusy}
-                  className="px-4 py-2 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                  disabled={tgBusy || !tgCrossBorderConsent}
+                  className="px-4 py-2 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {tgBusy ? 'Готовим ссылку…' : 'Подключить Telegram'}
                 </button>
@@ -2108,7 +2146,114 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           isOpen={importOpen}
           onClose={() => setImportOpen(false)}
         />
+
+        {/* ── Подвал Профиля: ссылки на документы + удаление аккаунта ──
+            Намеренно без отдельного CollapsibleSection (юзер: «не хочу
+            ещё одну секцию, страница и так перегружена»). Просто плоские
+            ссылки и кнопка-ссылка внизу. */}
+        <ProfileFooterLinks
+          isOwner={role === 'owner'}
+          deletionRequestedAt={studio.deletionRequestedAt || null}
+        />
       </div>
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────
+// ProfileFooterLinks — мини-блок в самом низу Профиля.
+//   • Ссылки на 5 юридических документов (внешние ссылки в новой вкладке).
+//   • «Удалить аккаунт» (только owner) — toggle с подтверждением.
+//
+// Отдельный компонент, чтобы держать стейт удаления локально и не лить
+// его в ProfilePage (там и так много стейта).
+// ──────────────────────────────────────────────────────────────────────
+interface ProfileFooterLinksProps {
+  isOwner: boolean;
+  deletionRequestedAt: string | null;
+}
+
+const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: ProfileFooterLinksProps) => {
+  const [deletionAt, setDeletionAt] = useState<string | null>(initialDeletion);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const requested = !!deletionAt;
+  const effectiveAt = useMemo(() => {
+    if (!deletionAt) return null;
+    const t = parseDbDate(deletionAt);
+    if (!t) return null;
+    return new Date(t.getTime() + 30 * 24 * 3600 * 1000);
+  }, [deletionAt]);
+
+  const handleClick = async () => {
+    if (busy) return;
+    if (!requested) {
+      // Двойное подтверждение перед запросом удаления — это необратимое
+      // решение для юзера, нужно явно осознать.
+      const ok = window.confirm(
+        'Удалить аккаунт?\n\n' +
+        'Студия и все данные клиентов будут удалены через 30 дней. ' +
+        'Подписка не возвращается, бонусы сгорают. ' +
+        'До истечения 30 дней можно отменить запрос — нажмите кнопку ещё раз.\n\n' +
+        'Продолжить?'
+      );
+      if (!ok) return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.requestAccountDeletion(requested);
+      setDeletionAt(res.deletionRequestedAt);
+    } catch (err) {
+      setError(translateApiError(err, 'Не удалось обработать запрос'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-8 mb-4 px-2 text-center">
+      <div className="text-xs text-zinc-400 leading-relaxed mb-3">
+        <a href="/legal/offer.html"             target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Оферта</a>
+        <span className="mx-1.5">·</span>
+        <a href="/legal/privacy-policy"         target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Политика</a>
+        <span className="mx-1.5">·</span>
+        <a href="/legal/personal-data-consent"  target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Согласие</a>
+        <span className="mx-1.5">·</span>
+        <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение&nbsp;ПДн</a>
+        <span className="mx-1.5">·</span>
+        <a href="/legal/referral-program"       target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная&nbsp;программа</a>
+      </div>
+
+      {isOwner && (
+        <div className="text-xs leading-relaxed">
+          {requested && effectiveAt ? (
+            <div className="text-zinc-600">
+              Аккаунт будет удалён{' '}
+              <span className="font-medium text-zinc-900">{formatDateRu(effectiveAt)}</span>.{' '}
+              <button
+                type="button"
+                onClick={handleClick}
+                disabled={busy}
+                className="text-orange-600 hover:text-orange-700 underline underline-offset-2 disabled:opacity-50"
+              >
+                {busy ? 'Отменяем…' : 'Отменить запрос'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleClick}
+              disabled={busy}
+              className="text-zinc-400 hover:text-red-600 underline underline-offset-2 disabled:opacity-50 transition-colors"
+            >
+              {busy ? 'Отправляем…' : 'Удалить аккаунт'}
+            </button>
+          )}
+          {error && <p className="mt-2 text-red-500">{error}</p>}
+        </div>
+      )}
     </div>
   );
 };

@@ -399,6 +399,10 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
                 Я даю согласие на обработку персональных данных в соответствии с{' '}
                 <a href="/legal/privacy-policy" className="text-zinc-900 underline" target="_blank" rel="noreferrer">
                   Политикой конфиденциальности
+                </a>{' '}
+                и{' '}
+                <a href="/legal/personal-data-consent" className="text-zinc-900 underline" target="_blank" rel="noreferrer">
+                  Согласием на обработку ПДн
                 </a>
               </Consent>
               <Consent
@@ -407,8 +411,8 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
                 required
               >
                 Я принимаю{' '}
-                <a href="/legal/terms" className="text-zinc-900 underline" target="_blank" rel="noreferrer">
-                  условия использования
+                <a href="/legal/offer.html" className="text-zinc-900 underline" target="_blank" rel="noreferrer">
+                  Договор-оферту
                 </a>
               </Consent>
             </div>
@@ -462,6 +466,31 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
             : 'После регистрации сразу попадёте в систему. 3 дня пробного периода.'}
         </p>
       </div>
+
+      {/* Подвал с реквизитами и юридическими ссылками. Рендерится только
+          на странице входа/регистрации — внутри CRM (с TabBar) footer
+          мешает. По требованию ФЗ-152 ссылка на Политику должна быть
+          в общедоступном месте; страница входа подходит идеально. */}
+      <footer className="mt-10 mb-6 px-4 text-center text-xs text-zinc-400 leading-relaxed max-w-xl mx-auto">
+        <p className="font-semibold text-zinc-600 mb-1">ДЕТЕЙЛ ПРО CRM</p>
+        <p>Самозанятый Недведская О. А., ИНН 401110148860</p>
+        <p className="mb-3">
+          <a href="mailto:nedwedskaya@yandex.ru" className="hover:text-zinc-700">nedwedskaya@yandex.ru</a>
+          <span className="mx-1">·</span>
+          <a href="tel:+79206101841" className="hover:text-zinc-700">+7 920 610 18 41</a>
+        </p>
+        <p>
+          <a href="/legal/offer.html"                target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Оферта</a>
+          <span className="mx-1.5">·</span>
+          <a href="/legal/privacy-policy"            target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Политика</a>
+          <span className="mx-1.5">·</span>
+          <a href="/legal/personal-data-consent"     target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Согласие</a>
+          <span className="mx-1.5">·</span>
+          <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение&nbsp;ПДн</a>
+          <span className="mx-1.5">·</span>
+          <a href="/legal/referral-program"          target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная&nbsp;программа</a>
+        </p>
+      </footer>
 
       {/* Модалка «Забыли пароль?» — рендерится поверх login-карточки. */}
       {resetState !== 'idle' && (

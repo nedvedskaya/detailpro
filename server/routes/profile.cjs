@@ -174,6 +174,11 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       // cancel_pending=true → пользователь нажал «Отменить подписку».
       // UI показывает badge «Подписка отменена, доступ до …» и кнопку «Восстановить».
       cancelPending: studioRow.cancel_pending === true,
+      // Запрос на удаление по 152-ФЗ. NULL — нет запроса; ISO-строка —
+      // юзер нажал «Удалить аккаунт», реальное удаление через 30 дней.
+      // Видят все юзеры студии (manager / master), чтобы понимать, что
+      // owner запросил снос.
+      deletionRequestedAt: studioRow.deletion_requested_at || null,
       // Реквизиты для шапки PDF-документов. Видны ТОЛЬКО owner-у —
       // см. комментарий выше. Для не-owner отдаём null, как будто не заполнены.
       inn:           isOwner ? (studioRow.inn           || null) : null,
@@ -227,6 +232,7 @@ router.get('/', requireAuth, async (req, res, next) => {
         s.is_active AS studio_active, s.access_until,
         s.created_at AS studio_created_at,
         s.cancel_pending AS studio_cancel_pending,
+        s.deletion_requested_at,
         s.inn, s.ogrn, s.legal_address, s.actual_address,
         s.contact_phone, s.contact_email, s.guarantee_text,
         s.daily_summary_time, s.daily_summary_time_set,
@@ -252,6 +258,7 @@ router.get('/', requireAuth, async (req, res, next) => {
     is_active: row.studio_active, access_until: row.access_until,
     created_at: row.studio_created_at,
     cancel_pending: row.studio_cancel_pending,
+    deletion_requested_at: row.deletion_requested_at,
     inn: row.inn, ogrn: row.ogrn,
     legal_address: row.legal_address, actual_address: row.actual_address,
     contact_phone: row.contact_phone, contact_email: row.contact_email,
@@ -730,6 +737,54 @@ router.post('/subscription/resume', requireAuth, async (req, res, next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/account/request-deletion
+// Запрос на удаление аккаунта по 152-ФЗ. Выставляем deletion_requested_at
+// на текущей студии. Реальное удаление — через 30 дней (см. cron в
+// server/sql/013_studio_retention.sql / studio retention job). До этого
+// юзер может отменить, нажав кнопку повторно (toggle).
+//
+// Owner-only — manager / master не могут удалять чужой бизнес.
+// При отмене — поле обнуляется, доступ остаётся.
+// ──────────────────────────────────────────────────────────────────────
+router.post('/account/request-deletion', requireAuth, async (req, res, next) => {
+  try {
+    const u = await pool.query(
+      `SELECT u.role, u.studio_id, s.deletion_requested_at
+         FROM saas_meta.users u
+         JOIN saas_meta.studios s ON s.id = u.studio_id
+        WHERE u.id = $1`,
+      [req.session.userId]
+    );
+    const row = u.rows[0];
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_delete_account' });
+    }
+
+    // Toggle: если уже запрошено — отменяем; если нет — выставляем now().
+    const cancel = req.body?.cancel === true;
+    const newValue = (cancel || row.deletion_requested_at) ? null : new Date();
+
+    await pool.query(
+      `UPDATE saas_meta.studios SET deletion_requested_at = $1 WHERE id = $2`,
+      [newValue, row.studio_id]
+    );
+
+    res.json({
+      ok: true,
+      deletionRequestedAt: newValue ? newValue.toISOString() : null,
+      // 30 дней — окно отмены, согласовано с разделом 10 оферты
+      // и cron studio_retention. До этой даты юзер может передумать.
+      deletionEffectiveAt: newValue
+        ? new Date(newValue.getTime() + 30 * 24 * 3600 * 1000).toISOString()
+        : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
 // POST /api/profile/demo/seed
 // Заливает в студию 2 демо-клиента с полным циклом (карточка → авто →
 // записи → задачи → транзакции). Owner-only. Идемпотентно: повторный
@@ -1062,10 +1117,19 @@ router.post('/telegram/link', requireAuth, async (req, res, next) => {
       return res.status(503).json({ error: 'telegram_not_configured' });
     }
 
+    // Гейтинг по согласию на трансграничную передачу (ч. 4 ст. 12 ФЗ-152).
+    // Привязка Telegram = передача данных юзера на серверы Telegram Messenger
+    // Inc. за пределами РФ. Без отдельного информированного согласия —
+    // незаконно. Фронт ставит чекбокс перед кнопкой; этот гейт защищает
+    // от прямого вызова API в обход UI.
+    if (req.body?.crossBorderConsent !== true) {
+      return res.status(400).json({ error: 'cross_border_consent_required' });
+    }
+
     // Проверяем, не привязан ли уже. Если да — возвращаем «уже привязан»
     // с username, фронт просто перерисует блок.
     const u = await pool.query(
-      `SELECT tg_user_id, tg_username FROM saas_meta.users WHERE id = $1`,
+      `SELECT tg_user_id, tg_username, email FROM saas_meta.users WHERE id = $1`,
       [req.session.userId]
     );
     const cur = u.rows[0];
@@ -1076,6 +1140,23 @@ router.post('/telegram/link', requireAuth, async (req, res, next) => {
         tgUsername: cur.tg_username || null,
       });
     }
+
+    // Записываем согласие на трансграничную передачу. Отдельная строка
+    // в consents — единственное доказательство при проверке РКН.
+    // policy_url = адрес Согласия на момент клика (там раздел 6 про
+    // трансграничную передачу).
+    await pool.query(
+      `INSERT INTO saas_meta.consents
+         (user_id, email, consent_type, policy_version, policy_url, ip, user_agent)
+       VALUES ($1, $2, 'telegram_cross_border', '28.04.2026',
+               '/legal/personal-data-consent', $3, $4)`,
+      [
+        req.session.userId,
+        cur.email,
+        req.ip || null,
+        req.headers['user-agent'] || null,
+      ]
+    );
 
     // Старые незаюзанные токены чистим — у одного user не должно быть
     // нескольких живых deep-link'ов одновременно.
