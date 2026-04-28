@@ -48,6 +48,49 @@ REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
 TS="$(date -Iseconds)"
 
 log() { echo "[$(date -Iseconds)] $*"; }
+fail() { echo "[$(date -Iseconds)] FAIL: $*" >&2; exit 1; }
+
+# ── 1.5 Pre-flight checks ──────────────────────────────────────────────
+# Защита от частых ошибок соло-разработки. Каждую можно обойти через
+# DEPLOY_SKIP_CHECKS=1 (например для срочного хотфикса), но по умолчанию
+# скрипт упрётся, если что-то не так.
+if [ "${DEPLOY_SKIP_CHECKS:-0}" != "1" ]; then
+  cd "$PROJECT_ROOT"
+
+  # 1) Только из main. Деплой из feature-ветки = неконтролируемый эксперимент.
+  CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  if [ "$CURRENT_BRANCH" != "main" ]; then
+    fail "деплой только из main, сейчас на '$CURRENT_BRANCH'. Слей в main и повтори (или DEPLOY_SKIP_CHECKS=1 для хотфикса)."
+  fi
+
+  # 2) Working tree чистый. Иначе rsync утянет на прод правки, которых нет в git.
+  if [ -n "$(git status --porcelain)" ]; then
+    git status --short
+    fail "есть незакоммиченные изменения. Закоммить или stash, потом повтори."
+  fi
+
+  # 3) Локальная main не отстаёт от origin/main. Если отстаёт — мы катим старьё.
+  git fetch --quiet origin main
+  LOCAL="$(git rev-parse main)"
+  REMOTE_SHA="$(git rev-parse origin/main)"
+  BASE="$(git merge-base main origin/main)"
+  if [ "$LOCAL" != "$REMOTE_SHA" ] && [ "$LOCAL" = "$BASE" ]; then
+    fail "локальная main отстаёт от origin/main. Сделай git pull и повтори."
+  fi
+
+  log "pre-flight ok: branch=main, tree clean, in sync with origin"
+fi
+
+# ── 1.6 Pre-deploy DB backup ───────────────────────────────────────────
+# Snapshot БД ПЕРЕД rsync — на случай, если новый код или миграция испортят
+# данные. Daily-cron уже бэкапит, но между его запусками может пройти до 24ч.
+# Запускаем backup.sh на сервере, потому что .env и pg_dump живут там.
+if [ "${DEPLOY_SKIP_BACKUP:-0}" != "1" ]; then
+  log "pre-deploy backup: ssh ${REMOTE} bash scripts/backup.sh"
+  if ! ssh "${REMOTE}" "cd ${DEPLOY_PATH} && bash scripts/backup.sh" 2>&1 | tail -10; then
+    fail "pre-deploy backup упал. Деплой остановлен (или DEPLOY_SKIP_BACKUP=1 чтобы катить без бэкапа)."
+  fi
+fi
 
 # ── 2. Локальная сборка фронта ─────────────────────────────────────────
 log "build: client (vite)"
