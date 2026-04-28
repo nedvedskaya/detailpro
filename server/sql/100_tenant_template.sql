@@ -66,6 +66,29 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END
 $$;
 
+-- Дефолтные теги для финансовых операций. Чтобы новый юзер сразу видел
+-- готовые подсказки в форме «Новая операция» (а не пустой блок «Теги»),
+-- сидим 2 дохода + 2 расхода. Юзер может удалить или переименовать
+-- любой тег в админке когда захочет — на свежей студии просто меньше
+-- пустых полей.
+--
+-- WHERE NOT EXISTS вместо ON CONFLICT: уникального индекса по (name,type)
+-- нет (юзер может создавать одноимённые теги в разных типах вручную),
+-- поэтому проверяем явно. Идемпотентно: повторный прогон template ничего
+-- не дублирует.
+INSERT INTO {{schema}}.tags (name, type, color)
+SELECT 'Полировка', 'income', '#22c55e'
+WHERE NOT EXISTS (SELECT 1 FROM {{schema}}.tags WHERE name='Полировка' AND type='income');
+INSERT INTO {{schema}}.tags (name, type, color)
+SELECT 'Химчистка', 'income', '#06b6d4'
+WHERE NOT EXISTS (SELECT 1 FROM {{schema}}.tags WHERE name='Химчистка' AND type='income');
+INSERT INTO {{schema}}.tags (name, type, color)
+SELECT 'Плёнка', 'expense', '#ef4444'
+WHERE NOT EXISTS (SELECT 1 FROM {{schema}}.tags WHERE name='Плёнка' AND type='expense');
+INSERT INTO {{schema}}.tags (name, type, color)
+SELECT 'ЗП мастера Ивана', 'expense', '#f59e0b'
+WHERE NOT EXISTS (SELECT 1 FROM {{schema}}.tags WHERE name='ЗП мастера Ивана' AND type='expense');
+
 -- ─── Клиенты ───
 -- is_demo: помечаем seed-данные, которые новый юзер видит при регистрации
 -- (см. server/lib/demo_seed.cjs). Кнопка «Очистить демо» в профиле просто
