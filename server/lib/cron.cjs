@@ -26,6 +26,7 @@ const { pool } = require('./db.cjs');
 const { cleanupExpiredSessions } = require('./auth.cjs');
 const reminders = require('./reminders.cjs');
 const cleanup = require('./cleanup.cjs');
+const birthdays = require('./birthdays.cjs');
 
 const ACTIVITY_RETENTION_DAYS = Number(process.env.ACTIVITY_RETENTION_DAYS) || 90;
 const CRON_INTERVAL_MS = Number(process.env.CRON_INTERVAL_MS) || 24 * 60 * 60 * 1000;
@@ -150,6 +151,16 @@ async function runOnce() {
   } catch (err) {
     console.error('[cron] studio retention cleanup failed:', err.message);
     result.errors.push({ job: 'studioRetention', message: err.message });
+  }
+
+  // Дни рождения клиентов: создаём задачу-напоминание в день ДР каждому
+  // клиенту, у кого указан birth_date. Запускается раз в сутки (тот же
+  // 24-часовой тик); идемпотентно — повторный прогон не плодит дубликатов.
+  try {
+    result.birthdays = await birthdays.runBirthdayReminders();
+  } catch (err) {
+    console.error('[cron] birthdays failed:', err.message);
+    result.errors.push({ job: 'birthdays', message: err.message });
   }
 
   console.log(`[cron] runOnce finished in ${Date.now() - startedAt}ms`);

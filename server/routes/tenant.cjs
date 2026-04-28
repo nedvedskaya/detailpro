@@ -30,6 +30,7 @@ const { requireRole } = require('../lib/middleware.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
 const { parseId, assertString, assertOptionalString, assertArrayOfStrings, parsePagination, handleFieldError } = require('../lib/validation.cjs');
 const { assertUserInStudio } = require('../lib/tenant_security.cjs');
+const birthdays = require('../lib/birthdays.cjs');
 
 const router = express.Router();
 
@@ -110,6 +111,18 @@ router.post('/clients', canWrite, async (req, res, next) => {
     [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null]
   );
   logAction(req, 'create', 'client', r.rows[0].id, r.rows[0].name);
+
+  // Если у клиента указан ДР=сегодня — сразу создаём задачу-напоминание,
+  // чтобы юзер не ждал cron'а до следующих суток (best-effort, ошибка
+  // создания задачи не должна валить создание клиента).
+  if (birthdays.isBirthdayToday(r.rows[0].birth_date)) {
+    try {
+      await birthdays.ensureBirthdayTaskForClient(null, req.session.schemaName, r.rows[0]);
+    } catch (err) {
+      console.error(`[clients] ensureBirthdayTask failed for ${r.rows[0].id}:`, err.message);
+    }
+  }
+
   res.status(201).json(r.rows[0]);
 });
 
@@ -138,6 +151,18 @@ router.put('/clients/:id', canWrite, async (req, res, next) => {
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'client_not_found' });
   logAction(req, 'update', 'client', id, r.rows[0].name);
+
+  // Аналогично POST: если юзер только что выставил ДР=сегодня, не ждём
+  // cron. Идемпотентность ensureBirthdayTaskForClient гарантирует, что
+  // задача не задвоится, даже если уже была создана раньше.
+  if (birthdays.isBirthdayToday(r.rows[0].birth_date)) {
+    try {
+      await birthdays.ensureBirthdayTaskForClient(null, req.session.schemaName, r.rows[0]);
+    } catch (err) {
+      console.error(`[clients] ensureBirthdayTask failed for ${id}:`, err.message);
+    }
+  }
+
   res.json(r.rows[0]);
 });
 
