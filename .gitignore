@@ -16,3 +16,10 @@ dist/
 
 # Apple Pages document templates (binary, держим локально)
 *.pages
+
+# Большие исходники картинок в корне — оставляем локально (мастер-
+# файлы для будущего экспорта в favicon/manifest), но в репо не тащим.
+/Gemini_*.png
+/*.heic
+/*.psd
+/*.ai
