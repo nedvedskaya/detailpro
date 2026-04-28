@@ -19,6 +19,8 @@ interface CalendarViewProps {
     categories: any[];
     tags: any[];
     users?: any[];
+    // Прайс-лист студии — для ServicesPicker внутри AppointmentInputs.
+    priceList?: any[];
     // canEdit=false → master-режим: скрываем «+» в шапке. Тап по дню/событию
     // открывает детали клиента в просмотре через onOpenClient.
     canEdit?: boolean;
@@ -35,6 +37,7 @@ export const CalendarView = ({
     categories,
     tags,
     users = [],
+    priceList = [],
     canEdit = true,
     onAddClient,
     ClientForm,
@@ -91,6 +94,7 @@ export const CalendarView = ({
                                 categories={categories || []}
                                 tags={tags || []}
                                 masters={users}
+                                priceList={priceList}
                             />
                             <Button 
                                 variant="primary" 

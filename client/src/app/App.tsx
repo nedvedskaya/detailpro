@@ -99,7 +99,7 @@ const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, onTa
 
 // --- 4. FORM COMPONENT (FIXED SCROLL) ---
 
-const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент", readOnlyIdentity = false, categories = [], tags = [], users = [] }) => {
+const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент", readOnlyIdentity = false, categories = [], tags = [], users = [], priceList = [] }) => {
   const [formData, setFormData] = useState(client || getInitialClientState());
   const [newTasks, setNewTasks] = useState([]);
   const [taskInput, setTaskInput] = useState(() => getInitialTaskState());
@@ -263,6 +263,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                             categories={categories}
                             tags={tags}
                             masters={users}
+                            priceList={priceList}
                         />
                         <button 
                             onClick={() => { 
@@ -466,6 +467,9 @@ const App = () => {
   // Сотрудники студии — для дропдаунов «Мастер» / «Исполнитель» в формах.
   // Загружаются через api.getUsers() (маршрут /users возвращает StudioUser[]).
   const [studioUsers, setStudioUsers] = useState<any[]>([]);
+  // Прайс-лист услуг — для ServicesPicker в формах брони/записи. Один раз
+  // на App-уровне, чтобы не дёргать /services при каждом открытии модалки.
+  const [priceList, setPriceList] = useState<any[]>([]);
   
   // Защита от двойного клика (Set содержит recordId которые сейчас обрабатываются)
   const [processingRecords, setProcessingRecords] = useState<Set<number>>(new Set());
@@ -475,7 +479,7 @@ const App = () => {
     const loadData = async () => {
       try {
         setIsLoading(true);
-        const [clientsData, tasksData, transactionsData, categoriesData, tagsData, recordsData, usersData] = await Promise.all([
+        const [clientsData, tasksData, transactionsData, categoriesData, tagsData, recordsData, usersData, servicesData] = await Promise.all([
           api.getClients().catch(() => []),
           api.getTasks().catch(() => []),
           api.getTransactions().catch(() => []),
@@ -483,6 +487,7 @@ const App = () => {
           api.getTags().catch(() => []),
           api.getClientRecords().catch(() => []),
           api.getUsers().catch(() => []),
+          api.getServices().catch(() => []),
         ]);
         
         const processedTransactions = (transactionsData || []).map(normalizeTransaction);
@@ -507,6 +512,7 @@ const App = () => {
         setCategories(categoriesData || []);
         setTags(tagsData || []);
         setStudioUsers(usersData || []);
+        setPriceList(servicesData || []);
         saveAllData({
           clients: clientsWithRecords,
           tasks: processedTasks,
@@ -1352,11 +1358,11 @@ const App = () => {
       <div className="flex-1 min-h-0 relative overflow-hidden bg-zinc-50">
           {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} isOnline={isOnline} canEdit={canEdit} />}
           {activeTab === 'tasks' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyTasksView tasks={tasks} onToggleTask={handleToggleTask} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} clients={clients} onOpenClient={setSelectedClient} canEdit={canEditTasksFlag} /></React.Suspense>}
-          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} canEdit={canEdit} onAddClient={handleAddClient} ClientForm={ClientForm} /></React.Suspense>}
+          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} priceList={priceList} canEdit={canEdit} onAddClient={handleAddClient} ClientForm={ClientForm} /></React.Suspense>}
           {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEdit} /></React.Suspense>}
 
-          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} userRole={userRole} canEdit={canEdit} />}
-          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} />}
+          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} priceList={priceList} userRole={userRole} canEdit={canEdit} />}
+          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
       </div>
       <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
       {/* Глобальные правила (html/body/#root height + overflow + scrollbar)

@@ -284,9 +284,18 @@ export const normalizeRecord = (record: any) => {
   } else if (typeof record.tags === 'string') {
     try { parsedTags = JSON.parse(record.tags || '[]').map(String); } catch { parsedTags = []; }
   }
+  // services: JSONB-массив снимков услуг. PG-pg-driver обычно отдаёт уже
+  // распарсенный объект, но на всякий случай ловим строковую форму.
+  let parsedServices: any[] = [];
+  if (Array.isArray(record.services)) {
+    parsedServices = record.services;
+  } else if (typeof record.services === 'string') {
+    try { parsedServices = JSON.parse(record.services || '[]'); } catch { parsedServices = []; }
+  }
   return {
     id: record.id,
     service: record.service_name || record.description || '',
+    services: parsedServices,
     date: toDateStr(record.date) || getDateStr(0),
     time: record.time || '10:00',
     amount: parseFloat(record.amount) || 0,
@@ -396,6 +405,11 @@ export const buildRecordPayload = (rec: any, clientId: number | string, override
   is_paid: (rec.paymentStatus || rec.payment_status) === 'paid',
   is_completed: rec.isCompleted || rec.is_completed || false,
   master_id: rec.master_id || null,
+  // Multi-service: пробрасываем массив строк услуг как есть. Бэк его
+  // resolveServices'ом преобразует в snapshot и пересчитает amount/
+  // service_name (защита от подмены). Если массива нет — бэк fallback'нет
+  // на legacy service_name + amount.
+  services: Array.isArray(rec.services) ? rec.services : undefined,
   ...overrides
 });
 

@@ -38,6 +38,8 @@ interface ClientDetailsProps {
   categories: any[];
   tags?: any[];
   users?: any[];
+  // Прайс-лист услуг — для ServicesPicker внутри AppointmentInputs.
+  priceList?: any[];
   userRole?: string;
   // canEdit=false → master видит карточку клиента в режиме просмотра:
   // скрываются кнопки «Редактировать» / «Удалить» в шапке, форма
@@ -49,7 +51,7 @@ export const ClientDetails = ({
   client, onBack, tasks, onEdit, onAddTask, onDelete, onToggleTask,
   onAddRecord, onEditRecord, onCompleteRecord, onRestoreRecord, onDeleteRecord,
   onDeleteTask, onEditTask, onUpdateAvatar, avatarSavingId,
-  categories, tags = [], users = [], userRole = 'owner', canEdit = true,
+  categories, tags = [], users = [], priceList = [], userRole = 'owner', canEdit = true,
 }: ClientDetailsProps) => {
   const clientTasks = tasks.filter(t => t.clientId && client.id && String(t.clientId) === String(client.id));
   const activeTasks = clientTasks.filter(t => !t.completed);
@@ -264,7 +266,7 @@ export const ClientDetails = ({
                 } else {
                   setNewRecord(prev => ({...prev, [e.target.name]: e.target.value}));
                 }
-              }} categories={categories || []} tags={tags || []} masters={users} />
+              }} categories={categories || []} tags={tags || []} masters={users} priceList={priceList} />
               <div className="flex gap-2">
                 <Button
                   variant="secondary"

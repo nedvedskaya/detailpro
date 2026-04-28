@@ -31,6 +31,7 @@ const { logFromReq: logAction } = require('../lib/audit.cjs');
 const { parseId, assertString, assertOptionalString, assertArrayOfStrings, parsePagination, handleFieldError } = require('../lib/validation.cjs');
 const { assertUserInStudio } = require('../lib/tenant_security.cjs');
 const birthdays = require('../lib/birthdays.cjs');
+const { resolveServices } = require('../lib/services_resolver.cjs');
 
 const router = express.Router();
 
@@ -794,11 +795,30 @@ router.post('/client-records', canWrite, async (req, res, next) => {
     client_id, vehicle_id, booking_id, service_name, description, amount,
     date, time, master_id, is_paid, is_completed,
     advance, advance_date, end_date, category_id, payment_status, tags,
+    services: rawServices,
   } = req.body || {};
   const cid = badId(client_id);
   if (!cid) return res.status(400).json({ error: 'client_id_required' });
-  if (!nonEmptyString(service_name)) return res.status(400).json({ error: 'service_name_required' });
   if (!date) return res.status(400).json({ error: 'date_required' });
+
+  // Multi-service: если фронт прислал массив services — он рулит. Бэк
+  // перезапросит actual цены из прайса (защита от подмены), сложит amount,
+  // соберёт service_name через ', ' для legacy-поля. Если массив пустой
+  // или не передан — используем legacy путь (service_name + amount из body).
+  let resolved = null;
+  try {
+    if (Array.isArray(rawServices) && rawServices.length > 0) {
+      resolved = await resolveServices(req.session.schemaName, rawServices);
+    }
+  } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+
+  const finalServiceName = resolved ? resolved.serviceName : (service_name || '').trim();
+  const finalAmount      = resolved ? resolved.amount : (amount || 0);
+  const finalServices    = resolved ? resolved.services : [];
+
+  if (!nonEmptyString(finalServiceName)) {
+    return res.status(400).json({ error: 'service_name_required' });
+  }
 
   let normalizedTags, safeMasterId;
   try {
@@ -811,21 +831,22 @@ router.post('/client-records', canWrite, async (req, res, next) => {
     `INSERT INTO {{schema}}.client_records
        (client_id, vehicle_id, booking_id, service_name, description, amount,
         date, time, master_id, is_paid, is_completed,
-        advance, advance_date, end_date, category_id, payment_status, tags)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)
+        advance, advance_date, end_date, category_id, payment_status, tags, services)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb)
      RETURNING *`,
     [
       cid, badId(vehicle_id), badId(booking_id),
-      service_name.trim(), description || null, amount || 0,
+      finalServiceName, description || null, finalAmount,
       date, time || null, safeMasterId,
       Boolean(is_paid), Boolean(is_completed),
       advance || 0, advance_date || null, end_date || null,
       badId(category_id),
       payment_status || 'none',
       JSON.stringify(normalizedTags),
+      JSON.stringify(finalServices),
     ]
   );
-  logAction(req, 'create', 'client_record', r.rows[0].id, service_name);
+  logAction(req, 'create', 'client_record', r.rows[0].id, finalServiceName);
   res.status(201).json(r.rows[0]);
 });
 
@@ -834,6 +855,19 @@ router.put('/client-records/:id', canWrite, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const fields = req.body || {};
+
+  // Multi-service: если в body пришёл services-массив, бэк перезапишет
+  // service_name и amount из расчёта (защита от подмены). Соответствующие
+  // поля в body игнорируем (даже если фронт их прислал — например, по
+  // ошибке). Если services не передан — стандартный whitelist-путь, юзер
+  // правит legacy-поля по одному.
+  let resolved = null;
+  if (Array.isArray(fields.services) && fields.services.length > 0) {
+    try {
+      resolved = await resolveServices(req.session.schemaName, fields.services);
+    } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+  }
+
   const allowed = {
     service_name: 'service_name',
     description: 'description',
@@ -855,6 +889,9 @@ router.put('/client-records/:id', canWrite, async (req, res, next) => {
   let pi = 1;
   for (const [key, col] of Object.entries(allowed)) {
     if (fields[key] === undefined) continue;
+    // Если массив services сработал — service_name и amount определяет
+    // resolveServices, не body. Игнорируем их явные значения.
+    if (resolved && (key === 'service_name' || key === 'amount')) continue;
     let val = fields[key];
     if (key === 'category_id') val = badId(val);
     if (key === 'tags') {
@@ -868,6 +905,14 @@ router.put('/client-records/:id', canWrite, async (req, res, next) => {
     set.push(`${col} = $${pi++}`);
     values.push(val);
   }
+
+  // Добавляем поля из resolveServices, если оно отработало.
+  if (resolved) {
+    set.push(`service_name = $${pi++}`); values.push(resolved.serviceName);
+    set.push(`amount = $${pi++}`);       values.push(resolved.amount);
+    set.push(`services = $${pi++}::jsonb`); values.push(JSON.stringify(resolved.services));
+  }
+
   if (set.length === 0) return res.status(400).json({ error: 'no_fields_to_update' });
   set.push(`updated_at = now()`);
   values.push(id);

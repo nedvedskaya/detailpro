@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { getDateStr, matchId } from '@/utils/helpers';
+import { ServicesPicker, ServiceLine, PriceListItem } from '@/app/components/ui/ServicesPicker';
 
 interface Category {
     id: string;
@@ -15,12 +16,17 @@ interface Tag {
 }
 
 interface AppointmentData {
+    // Старое legacy-поле — заполняется автоматически из services.map(s=>s.name).join(', ')
+    // (для совместимости с другими местами, читающими data.service).
     service?: string;
+    // Новый массив услуг — основной источник правды.
+    services?: ServiceLine[];
     date?: string;
     time?: string;
     endDate?: string;
     category?: string;
     tags?: (string | number)[];
+    // amount теперь автозаполняется из суммы services.price, поле readOnly в UI.
     amount?: string | number;
     advance?: string | number;
     advanceDate?: string;
@@ -47,9 +53,13 @@ interface AppointmentInputsProps {
     categories?: Category[];
     tags?: Tag[];
     masters?: StudioMember[];
+    // Прайс-лист студии (services таблица). Загружается родителем один
+    // раз через api.getServices, передаётся вниз — в форме, открытой
+    // несколько раз подряд, не дёргает /services при каждой повторной отрисовке.
+    priceList?: PriceListItem[];
 }
 
-export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onChange, categories, tags, masters }) => {
+export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onChange, categories, tags, masters, priceList = [] }) => {
     const endDateRef = useRef<HTMLInputElement>(null);
     
     const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -89,17 +99,34 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
             : [...currentTags, strId];
         onChange({ target: { name: 'tags', value: newTags } });
     };
+    // Обработчик изменения списка услуг: получает новый массив + сумму,
+    // батч-апдейтит три поля родителя одновременно (services, service-legacy,
+    // amount). _batch — общая convention в этом компоненте, родитель его
+    // раскладывает через setState(prev => ({...prev, ...value})).
+    const handleServicesChange = (next: ServiceLine[], totalAmount: number) => {
+        onChange({
+            target: {
+                name: '_batch',
+                value: {
+                    services: next,
+                    // Legacy-поле для обратной совместимости с местами, где
+                    // используется data.service напрямую (бэк его всё равно
+                    // переписывает на сервере, см. resolveServices).
+                    service: next.map(s => s.name).filter(Boolean).join(', '),
+                    amount: totalAmount,
+                },
+            },
+        });
+    };
+
     return (
         <div className="space-y-3">
-            <input 
-                type="text" 
-                name="service" 
-                value={String(data.service || '')} 
-                onChange={onChange} 
-                placeholder="Услуга / Деталь" 
-                className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-base font-medium text-black outline-none focus:border-orange-500 shadow-sm" 
+            <ServicesPicker
+                value={data.services || []}
+                onChange={handleServicesChange}
+                priceList={priceList}
             />
-            
+
             <div className="flex gap-3">
                 <div className="flex-1">
                     <span className="text-xs text-gray-400 font-semibold block mb-2">Дата начала</span>
@@ -211,14 +238,21 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
             )}
 
             <div>
-                <span className="text-xs text-gray-400 font-semibold block mb-2">Общая сумма услуги</span>
-                <input 
-                    type="text" 
-                    name="amount" 
-                    value={String(data.amount || '')} 
-                    onChange={onChange} 
-                    placeholder="0 ₽" 
-                    className="w-full bg-white border border-zinc-300 rounded-xl p-4 text-lg font-bold text-black outline-none focus:border-orange-500 shadow-sm" 
+                <span className="text-xs text-gray-400 font-semibold block mb-2">
+                    Общая сумма услуги
+                    {(data.services && data.services.length > 0) && (
+                        <span className="ml-2 text-[10px] font-normal text-zinc-400">
+                            (рассчитывается автоматически из услуг выше)
+                        </span>
+                    )}
+                </span>
+                <input
+                    type="text"
+                    name="amount"
+                    value={data.amount ? `${Number(data.amount).toLocaleString('ru-RU')} ₽` : ''}
+                    readOnly
+                    placeholder="0 ₽"
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-4 text-lg font-bold text-zinc-700 outline-none cursor-default"
                 />
             </div>
             

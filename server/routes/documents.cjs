@@ -495,14 +495,31 @@ router.put('/work-orders/:bookingId', canWrite, async (req, res, next) => {
     if (!bookingId) return res.status(400).json({ error: 'invalid_booking_id' });
 
     // Проверим, что запись принадлежит студии (вне студии queryInSchema не достанет).
+    // Тянем services — если в наряде юзер не передал items, авто-заполним
+    // из услуг записи (см. ниже).
     const bk = await queryInSchema(
       req.session.schemaName,
-      `SELECT id, master_id FROM {{schema}}.client_records WHERE id = $1`,
+      `SELECT id, master_id, services FROM {{schema}}.client_records WHERE id = $1`,
       [bookingId]
     );
     if (!bk.rows[0]) return res.status(404).json({ error: 'booking_not_found' });
 
     const body = req.body || {};
+
+    // Auto-fill items из record.services (multi-service). Срабатывает только
+    // когда фронт явно НЕ прислал items (или прислал пустой массив) — иначе
+    // юзер мог отредактировать наряд вручную и сохранение должно использовать
+    // именно его правки. record.services хранит snapshot {service_id, name,
+    // price}; для items нужен формат {name, quantity, price} — мап с qty=1.
+    if ((!Array.isArray(body.items) || body.items.length === 0)
+        && Array.isArray(bk.rows[0].services) && bk.rows[0].services.length > 0) {
+      body.items = bk.rows[0].services.map((s) => ({
+        name: s.name,
+        quantity: 1,
+        price: Number(s.price) || 0,
+      }));
+    }
+
     const items = validateItems(body.items);
     const signature = validateSignature(body.signature_data);
 

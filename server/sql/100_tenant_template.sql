@@ -192,6 +192,11 @@ CREATE TABLE IF NOT EXISTS {{schema}}.client_records (
     is_paid         BOOLEAN NOT NULL DEFAULT false,
     is_completed    BOOLEAN NOT NULL DEFAULT false,
     tags            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    -- Список услуг записи (snapshot имя+цена+id на момент создания).
+    -- Каждый элемент: {service_id?: int, name: string, price: number}.
+    -- service_id = null → custom-строка (юзер ввёл имя+цену вручную, не из прайса).
+    -- amount и service_name пересчитываются из этого массива на бэке.
+    services        JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_demo         BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -471,6 +476,7 @@ ALTER TABLE {{schema}}.vehicles        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN 
 ALTER TABLE {{schema}}.services        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.bookings        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.client_records  ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.client_records  ADD COLUMN IF NOT EXISTS services JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE {{schema}}.transactions    ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.tasks           ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 
