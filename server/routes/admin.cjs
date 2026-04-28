@@ -586,16 +586,42 @@ router.get('/analytics', async (req, res, next) => {
       pct: Math.round((c.revenue / categoriesTotal) * 100),
     }));
 
-    // ── Топ-5 услуг по выручке (по service_name, денормализованному в client_records) ──
+    // ── Топ-5 услуг по выручке ──
+    // Источник правды — client_records.services (JSONB-массив snapshot'ов
+    // {service_id, name, price}). Раньше группировка шла по service_name
+    // (текстовое legacy-поле «Полировка, Перешив, Тонировка» через запятую),
+    // и multi-service бронь попадала одной длинной строкой, что
+    // искажало статистику. Теперь jsonb_array_elements разворачивает
+    // массив, GROUP BY по name даёт реальный топ.
+    //
+    // Для записей без массива services (старые брони до feature) —
+    // fallback на legacy service_name через UNION.
     const topRes = await queryInSchema(schema, `
-      SELECT cr.service_name AS name, COALESCE(SUM(cr.amount), 0)::numeric AS revenue
-        FROM {{schema}}.client_records cr
-        WHERE cr.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
-          AND cr.service_name IS NOT NULL AND cr.service_name <> ''
-        GROUP BY cr.service_name
-        HAVING SUM(cr.amount) > 0
-        ORDER BY revenue DESC
-        LIMIT 5
+      WITH expanded AS (
+        -- Multi-service записи: каждая услуга отдельной строкой со своей ценой
+        SELECT (s->>'name')::text AS name,
+               (s->>'price')::numeric AS price
+          FROM {{schema}}.client_records cr,
+               LATERAL jsonb_array_elements(cr.services) s
+         WHERE cr.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+           AND jsonb_array_length(cr.services) > 0
+           AND s->>'name' IS NOT NULL AND s->>'name' <> ''
+
+        UNION ALL
+
+        -- Legacy записи (services пустой): целиком service_name + amount
+        SELECT cr.service_name AS name, cr.amount AS price
+          FROM {{schema}}.client_records cr
+         WHERE cr.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+           AND (cr.services IS NULL OR jsonb_array_length(cr.services) = 0)
+           AND cr.service_name IS NOT NULL AND cr.service_name <> ''
+      )
+      SELECT name, COALESCE(SUM(price), 0)::numeric AS revenue
+        FROM expanded
+       GROUP BY name
+      HAVING SUM(price) > 0
+       ORDER BY revenue DESC
+       LIMIT 5
     `, [months]);
     const topServices = topRes.rows.map((r) => ({ name: r.name, revenue: Number(r.revenue) }));
 
