@@ -41,6 +41,7 @@ const { pool, withTx } = require('../lib/db.cjs');
 const tg = require('../lib/telegram.cjs');
 const { securityLog, SEVERITY } = require('../lib/security_log.cjs');
 const { verifySignatureProdamus } = require('../lib/webhook_signing.cjs');
+const { formatRub, formatDateRu } = require('../lib/formatting.cjs');
 
 const router = express.Router();
 
@@ -80,20 +81,9 @@ function planPeriodRu(planId) {
   return planId.toLowerCase().endsWith('_year') ? '12 месяцев' : '1 месяц';
 }
 
-function formatRub(amountKop) {
-  const rub = Math.round((amountKop || 0) / 100);
-  // 8900 → "8 900" — пробел в тысячах согласно фид-беку по типографике.
-  return rub.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-}
-
-function formatDateRu(dateLike) {
-  const d = dateLike instanceof Date ? dateLike : new Date(dateLike);
-  if (Number.isNaN(d.getTime())) return '—';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  return `${dd}.${mm}.${yyyy}`;
-}
+// formatRub / formatDateRu вынесены в server/lib/formatting.cjs —
+// см. require выше. Локальные определения убраны, чтобы не было двух
+// разных версий «правды» в одном проекте.
 
 async function notifyOwnerOnPayment({ studioId, orderId, amountKop, planId, bonusKopUsed, isPaidAfterCancel }) {
   try {

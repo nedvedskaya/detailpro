@@ -115,10 +115,29 @@ function requireRole(...allowedRoles) {
   };
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// requireNotMaster
+//   Запрещает любые мутации профиля / аватара для роли 'master' —
+//   мастер видит только свои бронирования и не может менять данные
+//   студии. Используется в profile.cjs PATCH /api/profile, POST/DELETE
+//   /api/profile/avatar и т.п. Раньше эта проверка повторялась
+//   inline в трёх endpoint'ах, теперь — один middleware.
+// ──────────────────────────────────────────────────────────────────────
+function requireNotMaster(req, res, next) {
+  if (!req.session) {
+    return res.status(401).json({ error: 'unauthenticated' });
+  }
+  if (req.session.role === 'master') {
+    return res.status(403).json({ error: 'master_cannot_edit' });
+  }
+  next();
+}
+
 module.exports = {
   requireAuth,
   requireActiveStudio,
   requireRole,
+  requireNotMaster,
   readSessionCookie, // экспортируем для тестов
   SESSION_COOKIE_NAME,
 };

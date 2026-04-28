@@ -31,7 +31,7 @@ const sharp = require('sharp');
 const crypto = require('node:crypto');
 
 const { pool } = require('../lib/db.cjs');
-const { requireAuth } = require('../lib/middleware.cjs');
+const { requireAuth, requireNotMaster } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan, planHasDailySummary } = require('../lib/plans.cjs');
 const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
@@ -39,6 +39,8 @@ const tgClient = require('../lib/telegram.cjs');
 const payments = require('../lib/payments.cjs');
 const { withTx } = require('../lib/db.cjs');
 const { seedDemo, clearDemo } = require('../lib/demo_seed.cjs');
+const { takeOptionalString } = require('../lib/field_parser.cjs');
+const { getCurrentUser } = require('../lib/queries.cjs');
 
 const router = express.Router();
 
@@ -278,39 +280,20 @@ router.get('/', requireAuth, async (req, res, next) => {
 // PATCH /api/profile
 // Body: { firstName?, lastName?, phone? }
 // ──────────────────────────────────────────────────────────────────────
-router.patch('/', requireAuth, async (req, res, next) => {
+router.patch('/', requireAuth, requireNotMaster, async (req, res, next) => {
   try {
-    // Master — read-only по своему профилю: данные мастера правит owner
-    // через админ-панель. Без этой проверки UI на /profile у мастера показывал
-    // форму, бэк молча принимал апдейт, но иногда падал на других гардах —
-    // пользователь видел красную ошибку и не понимал, что именно не так.
-    if (req.session && req.session.role === 'master') {
-      return res.status(403).json({ error: 'master_cannot_edit' });
-    }
+    // Master-проверка вынесена в requireNotMaster (см. lib/middleware.cjs).
+    // Без неё UI на /profile у мастера показывал форму, бэк молча принимал
+    // апдейт, но иногда падал на других гардах — юзер видел красную
+    // ошибку и не понимал что именно не так.
 
     const body = req.body || {};
     const fields = {};
 
-    function takeOptionalString(key, dbField, maxLen = 100) {
-      if (!Object.prototype.hasOwnProperty.call(body, key)) return;
-      const raw = body[key];
-      if (raw === null || raw === '') {
-        fields[dbField] = null;
-        return;
-      }
-      if (typeof raw !== 'string') {
-        const e = new Error(`${key}_must_be_string`); e.status = 400; throw e;
-      }
-      const trimmed = raw.trim();
-      if (trimmed.length > maxLen) {
-        const e = new Error(`${key}_too_long`); e.status = 400; throw e;
-      }
-      fields[dbField] = trimmed;
-    }
-
-    takeOptionalString('firstName', 'first_name', 100);
-    takeOptionalString('lastName',  'last_name',  100);
-    takeOptionalString('phone',     'phone',      40);
+    // Парсинг опциональных полей унифицирован — см. lib/field_parser.cjs.
+    takeOptionalString(body, fields, 'firstName', 'first_name', 100);
+    takeOptionalString(body, fields, 'lastName',  'last_name',  100);
+    takeOptionalString(body, fields, 'phone',     'phone',      40);
 
     const keys = Object.keys(fields);
     if (keys.length === 0) {
@@ -410,31 +393,15 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
     const body = req.body || {};
     const fields = {};
 
-    function takeOptionalString(key, dbField, maxLen) {
-      if (!Object.prototype.hasOwnProperty.call(body, key)) return;
-      const raw = body[key];
-      if (raw === null || raw === '') {
-        fields[dbField] = null;
-        return;
-      }
-      if (typeof raw !== 'string') {
-        const e = new Error(`${key}_must_be_string`); e.status = 400; throw e;
-      }
-      const trimmed = raw.trim();
-      if (trimmed.length > maxLen) {
-        const e = new Error(`${key}_too_long`); e.status = 400; throw e;
-      }
-      fields[dbField] = trimmed;
-    }
-
-    takeOptionalString('displayName',   'display_name',   100);
-    takeOptionalString('inn',           'inn',            20);
-    takeOptionalString('ogrn',          'ogrn',           20);
-    takeOptionalString('legalAddress',  'legal_address',  500);
-    takeOptionalString('actualAddress', 'actual_address', 500);
-    takeOptionalString('contactPhone',  'contact_phone',  40);
-    takeOptionalString('contactEmail',  'contact_email',  100);
-    takeOptionalString('guaranteeText', 'guarantee_text', 500);
+    // Парсинг опциональных полей унифицирован — см. lib/field_parser.cjs.
+    takeOptionalString(body, fields, 'displayName',   'display_name',   100);
+    takeOptionalString(body, fields, 'inn',           'inn',            20);
+    takeOptionalString(body, fields, 'ogrn',          'ogrn',           20);
+    takeOptionalString(body, fields, 'legalAddress',  'legal_address',  500);
+    takeOptionalString(body, fields, 'actualAddress', 'actual_address', 500);
+    takeOptionalString(body, fields, 'contactPhone',  'contact_phone',  40);
+    takeOptionalString(body, fields, 'contactEmail',  'contact_email',  100);
+    takeOptionalString(body, fields, 'guaranteeText', 'guarantee_text', 500);
 
     // dailySummaryTime — особый случай: НЕ строка-как-другие, а время.
     //   • '' / null  → daily_summary_time = NULL ⇒ «не присылать сводку»
@@ -546,11 +513,8 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
 // POST /api/profile/avatar
 // multipart/form-data: avatar=<file>
 // ──────────────────────────────────────────────────────────────────────
-router.post('/avatar', requireAuth, (req, res, next) => {
-  // Master не правит свой профиль — аватар тоже.
-  if (req.session && req.session.role === 'master') {
-    return res.status(403).json({ error: 'master_cannot_edit' });
-  }
+router.post('/avatar', requireAuth, requireNotMaster, (req, res, next) => {
+  // Master-проверка — в requireNotMaster middleware.
   upload.single('avatar')(req, res, async (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -601,10 +565,7 @@ router.post('/avatar', requireAuth, (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 // DELETE /api/profile/avatar
 // ──────────────────────────────────────────────────────────────────────
-router.delete('/avatar', requireAuth, async (req, res, next) => {
-  if (req.session && req.session.role === 'master') {
-    return res.status(403).json({ error: 'master_cannot_edit' });
-  }
+router.delete('/avatar', requireAuth, requireNotMaster, async (req, res, next) => {
   const userId = req.session.userId;
   const fullPath = path.join(AVATARS_DIR, `${userId}.webp`);
 
@@ -717,13 +678,7 @@ router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
 router.post('/subscription/resume', requireAuth, async (req, res, next) => {
   const userId = req.session.userId;
 
-  const u = await pool.query(
-    `SELECT u.role, u.studio_id
-       FROM saas_meta.users u
-      WHERE u.id = $1`,
-    [userId]
-  );
-  const row = u.rows[0];
+  const row = await getCurrentUser(userId);
   if (!row) return res.status(404).json({ error: 'user_not_found' });
   if (row.role !== 'owner') {
     return res.status(403).json({ error: 'only_owner_can_resume' });
