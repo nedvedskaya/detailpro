@@ -191,7 +191,17 @@ function setDeep(obj, path, value) {
   let cur = obj;
   for (let i = 0; i < path.length - 1; i++) {
     const k = path[i];
-    if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
+    const nextK = path[i + 1];
+    // Если следующий сегмент — цифровой индекс ('0', '1', ...), родитель
+    // должен быть МАССИВОМ, а не объектом. PHP-парсер у Prodamus
+    // (parse_str) делает именно так: products[0][name] → array(0 => array(name=>...)).
+    // При последующем json_encode без флагов получается '{"products":[{...}]}'.
+    // Если тут оставить объект — JSON будет '{"products":{"0":{...}}}',
+    // и HMAC-подпись не сойдётся с тем, что считает Prodamus.
+    const nextIsArrayIdx = typeof nextK === 'string' && /^\d+$/.test(nextK);
+    if (cur[k] == null || typeof cur[k] !== 'object') {
+      cur[k] = nextIsArrayIdx ? [] : {};
+    }
     cur = cur[k];
   }
   cur[path[path.length - 1]] = value;
