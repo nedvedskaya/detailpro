@@ -431,6 +431,16 @@ const App = () => {
 
   // Все производные хуки должны быть вызваны ДО любого условного return.
   const [activeTab, setActiveTab] = useState('clients');
+  // Глобальный flag «подписка истекла» — поднимается из api.ts при 402.
+  // Если true, поверх UI рисуем LockScreen с CTA «Перейти к тарифам».
+  // /api/profile продолжает работать (не за requireActiveStudio), значит
+  // юзер сможет посмотреть тарифы и оплатить.
+  const [subscriptionLocked, setSubscriptionLocked] = useState(false);
+  useEffect(() => {
+    const handler = () => setSubscriptionLocked(true);
+    window.addEventListener('app:subscription-lock', handler);
+    return () => window.removeEventListener('app:subscription-lock', handler);
+  }, []);
   const [clients, setClients] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -1380,6 +1390,33 @@ const App = () => {
           {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
       </div>
       <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
+
+      {/* LockScreen: подписка истекла. Перекрываем весь UI, оставляем
+          один CTA — «Перейти к тарифам». Профиль не за requireActiveStudio,
+          поэтому страница тарифов всегда доступна и юзер сможет оплатить. */}
+      {subscriptionLocked && !showProfile && (
+        <div className="fixed inset-0 z-[300] bg-zinc-900/80 backdrop-blur-sm flex items-center justify-center p-6">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center">
+            <div className="text-5xl mb-4">🔒</div>
+            <h2 className="text-xl font-bold text-zinc-900 mb-2">Подписка истекла</h2>
+            <p className="text-sm text-zinc-600 mb-6">
+              Доступ к CRM приостановлен. Все ваши данные сохранены — оформите тариф, чтобы продолжить работу.
+            </p>
+            <button
+              onClick={() => { setSubscriptionLocked(false); setShowProfile(true); }}
+              className="w-full bg-orange-500 hover:bg-orange-600 active:scale-[0.98] text-white font-bold py-3 rounded-xl transition-all"
+            >
+              Перейти к тарифам
+            </button>
+            <button
+              onClick={() => logout().then(() => window.location.reload())}
+              className="mt-3 w-full text-zinc-500 text-sm py-2 hover:text-zinc-900"
+            >
+              Выйти из аккаунта
+            </button>
+          </div>
+        </div>
+      )}
       {/* Глобальные правила (html/body/#root height + overflow + scrollbar)
           перенесены в client/src/styles/mobile.css, чтобы применяться ВСЕГДА —
           в т.ч. при early-return App для AdminPanel/ProfilePage. Раньше они

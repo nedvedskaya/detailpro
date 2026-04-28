@@ -43,6 +43,14 @@ async function handleResponse<T>(response: Response): Promise<T> {
   }
   if (response.status === 402) {
     const body = await response.json().catch(() => ({}));
+    // Бэк отдаёт 402 с любого защищённого роута, если access_until истёк.
+    // Поднимаем глобальный flag — App.tsx слушает событие и поверх UI
+    // показывает LockScreen с CTA «Перейти к тарифам». Сам ApiError всё
+    // равно бросаем — компонент, который сделал запрос, должен корректно
+    // отлипнуть от спиннера/состояния.
+    try {
+      window.dispatchEvent(new CustomEvent('app:subscription-lock', { detail: body }));
+    } catch (_) { /* SSR/older browsers — best-effort */ }
     throw new ApiError(body.error || 'Подписка истекла', 402, 'subscription_expired');
   }
   if (!response.ok) {

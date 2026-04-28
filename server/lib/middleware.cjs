@@ -70,13 +70,24 @@ async function requireAuth(req, res, next) {
 // ──────────────────────────────────────────────────────────────────────
 // requireActiveStudio
 //   - is_active=false → 403 (студия отключена админом)
-//   - access_until истёк → НЕ блокируем (мягкий режим, см. ниже)
+//   - access_until <= now() → 402 (подписка истекла → hard lock)
 //
-// Мягкий режим по подписке: 402 за просрочку убран, чтобы менеджер/мастер
-// и собственник видели одно и то же состояние. Раньше API отдавал 402
-// для не-owner, а UI показывал lock-страницу — менеджер не мог работать,
-// пока owner шёл оплачивать. Бизнес-логика «истёк → отключим» решается
-// админом вручную через is_active=false (это всё ещё 403).
+// Whitelist «работает всегда» делается на уровне routing'а в app.cjs:
+// /api/auth, /api/profile, /api/webhooks, /api/telegram НЕ используют
+// requireActiveStudio. Поэтому юзер с истёкшей подпиской может:
+//   • войти/восстановить пароль (auth)
+//   • открыть свой профиль и посмотреть тарифы (profile)
+//   • заплатить через Prodamus (webhook прилетит → активация)
+// Но не может: создать клиента, провести бронь, выписать наряд и т.п.
+// (роуты tenant/documents/admin под requireActiveStudio).
+//
+// Раньше тут был «мягкий режим»: 402 не отдавали никогда. Это создавало
+// дыру в воронке прогрева — бот пишет «доступ закрыт», а UI работает
+// как ни в чём не бывало, и у юзера нет стимула платить. Возвращён hard lock.
+//
+// Для роли master/manager результат тот же 402 — раньше переживали,
+// что менеджер не сможет работать, пока owner оплачивает; на практике
+// «нет подписки = вся студия не работает» — корректное бизнес-поведение.
 // ──────────────────────────────────────────────────────────────────────
 async function requireActiveStudio(req, res, next) {
   try {
@@ -95,6 +106,15 @@ async function requireActiveStudio(req, res, next) {
     }
     if (!studio.is_active) {
       return res.status(403).json({ error: 'studio_disabled' });
+    }
+    if (studio.access_until && new Date(studio.access_until).getTime() <= Date.now()) {
+      // Подписка/триал истёк. Фронт ловит 402 и показывает LockScreen
+      // с CTA «Перейти к тарифам» (см. client/src/utils/api.ts handleResponse).
+      return res.status(402).json({
+        error: 'subscription_expired',
+        plan: studio.plan,
+        access_until: studio.access_until,
+      });
     }
     req.studio = studio;
     next();
