@@ -87,7 +87,7 @@ export const ResetPasswordPage = () => {
               <span
                 aria-label="CRM"
                 className="absolute -top-2 -right-7 inline-flex items-center justify-center
-                           rounded-md bg-orange-500 px-1.5 py-0.5 text-[10px] font-bold
+                           rounded-md bg-orange-500 px-1.5 py-0.5 text-xs font-bold
                            tracking-wider text-white shadow-sm leading-none"
               >
                 CRM

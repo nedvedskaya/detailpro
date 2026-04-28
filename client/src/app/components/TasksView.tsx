@@ -252,7 +252,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                         ) : (
                             Object.entries(bookingsByDay).map(([date, bookings]: [string, any[]]) => (
                                 <div key={date}>
-                                    <div className="flex items-center gap-2 text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5">
+                                    <div className="flex items-center gap-2 text-xs font-black text-zinc-400 uppercase tracking-widest mb-1.5">
                                         <CalendarDays size={12} />
                                         {date === today ? 'сегодня' : formatDate(date)}
                                     </div>
@@ -274,7 +274,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                                         <div className="flex items-center justify-between gap-2">
                                                             <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                                                 <span className={`text-sm font-bold shrink-0 ${isArchived ? 'text-zinc-400 line-through' : 'text-zinc-900'}`} style={{maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{booking.service || '—'}</span>
-                                                                <span className="text-zinc-400 text-[10px] shrink-0">·</span>
+                                                                <span className="text-zinc-400 text-xs shrink-0">·</span>
                                                                 <span className={`text-xs truncate ${isArchived ? 'text-zinc-400' : 'text-zinc-500'}`}>{booking.clientName}</span>
                                                             </div>
                                                             <div className="flex items-center gap-1.5 shrink-0">

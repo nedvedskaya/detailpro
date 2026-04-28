@@ -88,7 +88,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               {formatDate(task.date)} • {formatTime(task.time)}
             </span>
             {isUrgent && !task.completed && (
-              <span className="text-[10px] bg-orange-500 text-white px-1.5 py-0.5 rounded font-bold">
+              <span className="text-xs bg-orange-500 text-white px-1.5 py-0.5 rounded font-bold">
                 СРОЧНО
               </span>
             )}
@@ -96,7 +96,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
               <button
                 type="button"
                 onClick={stop(() => onToggle(task.id))}
-                className="text-[10px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-semibold hover:bg-orange-200 transition-colors"
+                className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-semibold hover:bg-orange-200 transition-colors"
               >
                 Восстановить
               </button>

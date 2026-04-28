@@ -563,7 +563,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                           />
                           <h3 className="font-bold text-base text-zinc-900 truncate">{displayName}</h3>
                           {self && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500">
+                            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500">
                               это вы
                             </span>
                           )}
@@ -636,7 +636,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                         <span className="text-xs font-bold text-zinc-600 flex items-center gap-2">
                           <EyeOff size={14} className="text-zinc-500" /> «Финансы» скрыты
                         </span>
-                        <span className="text-[10px] font-medium text-zinc-400">мастер не видит финансы</span>
+                        <span className="text-xs font-medium text-zinc-400">мастер не видит финансы</span>
                       </div>
                     ) : isOwner ? (
                       <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-zinc-700">
@@ -791,7 +791,7 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                       <div key={log.id} className="bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TONE_DOT[tone]}`} />
-                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap shrink-0 ${TONE_BADGE[tone]}`}>
+                          <span className={`text-xs font-bold px-1.5 py-0.5 rounded border whitespace-nowrap shrink-0 ${TONE_BADGE[tone]}`}>
                             {label}
                           </span>
                           <span className="text-xs font-bold text-zinc-800 truncate shrink-0 max-w-[40%]">
@@ -802,12 +802,12 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                               · {formatEntityName(log.entity_name)}
                             </span>
                           )}
-                          <span className="text-[10px] text-zinc-400 font-medium whitespace-nowrap ml-auto shrink-0">
+                          <span className="text-xs text-zinc-400 font-medium whitespace-nowrap ml-auto shrink-0">
                             {formatDateTime(log.created_at)}
                           </span>
                         </div>
                         {log.details && (
-                          <p className="text-[10px] text-zinc-500 leading-snug whitespace-pre-line mt-0.5 ml-3.5 truncate">
+                          <p className="text-xs text-zinc-500 leading-snug whitespace-pre-line mt-0.5 ml-3.5 truncate">
                             {formatLogDetails(log.details)}
                           </p>
                         )}

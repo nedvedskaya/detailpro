@@ -247,7 +247,7 @@ export const ClientDetails = ({
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">{editingRecordId ? 'Редактирование брони' : 'Бронь'}</span>
             {!isAddingRecord && !editingRecordId && (
-              <button onClick={() => setIsAddingRecord(true)} className={`text-[10px] font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>
+              <button onClick={() => setIsAddingRecord(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>
                 + Добавить
               </button>
             )}
@@ -468,7 +468,7 @@ export const ClientDetails = ({
             <div className="mt-6">
               <button 
                 onClick={() => setShowRecordsArchive(!showRecordsArchive)} 
-                className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all"
+                className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all"
               >
                 <History size={12} />
                 Архив броней ({archivedRecords.length})
@@ -484,7 +484,7 @@ export const ClientDetails = ({
                         <div className="flex items-center gap-2 justify-between">
                           <div className="flex items-center gap-2">
                             <CheckCircle2 size={14} className="text-green-600" />
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Выполнено</span>
+                            <span className="text-xs font-bold uppercase tracking-wider text-zinc-500">Выполнено</span>
                             {record.isPaid && <PaymentBadge status="paid" size="sm" />}
                           </div>
                           
@@ -544,7 +544,7 @@ export const ClientDetails = ({
         {!editingRecordId && <div>
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</span>
-            <button onClick={() => setIsAddingTask(true)} className={`text-[10px] font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>+ Создать</button>
+            <button onClick={() => setIsAddingTask(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>+ Создать</button>
           </div>
           {isAddingTask && (
             <div className="bg-white p-4 rounded-2xl border border-zinc-300 shadow-sm space-y-3 mb-4 animate-in fade-in">
@@ -570,7 +570,7 @@ export const ClientDetails = ({
             </div>
           )}
           <div className="space-y-2">{activeTasks.map(t => <TaskItem key={t.id} task={t} onToggle={onToggleTask} onDelete={onDeleteTask} onEdit={handleEditTask} />)}</div>
-          {completedTasks.length > 0 && (<div className="mt-6"><button onClick={() => setShowArchive(!showArchive)} className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all">Архив ({completedTasks.length}) <ChevronDown size={12} className={showArchive ? 'rotate-180' : ''} /></button>{showArchive && <div className="space-y-2 opacity-60 animate-in fade-in">{completedTasks.map(t => <TaskItem key={t.id} task={t} onToggle={onToggleTask} />)}</div>}</div>)}
+          {completedTasks.length > 0 && (<div className="mt-6"><button onClick={() => setShowArchive(!showArchive)} className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all">Архив ({completedTasks.length}) <ChevronDown size={12} className={showArchive ? 'rotate-180' : ''} /></button>{showArchive && <div className="space-y-2 opacity-60 animate-in fade-in">{completedTasks.map(t => <TaskItem key={t.id} task={t} onToggle={onToggleTask} />)}</div>}</div>)}
         </div>}
       </div>
 

@@ -605,10 +605,14 @@ const DemoDataField = () => {
         throw err;
       }
       setDone(kind);
-      // Перезагружаем страницу, чтобы кэшированные списки клиентов / задач /
-      // календаря / финансов подтянули свежее состояние. Без reload юзер
-      // видел бы пустой профиль и думал, что ничего не произошло.
-      setTimeout(() => window.location.reload(), 600);
+      setBusy(null);
+      // Раньше тут был window.location.reload() — терялся scroll и фокус
+      // юзера. Теперь не перезагружаем: каждый View (Клиенты / Задачи /
+      // Календарь / Финансы) делает fetch при открытии своей вкладки,
+      // так что свежие данные подтянутся автоматически при переходе.
+      // Зелёный плашка «демо добавлено / удалено» висит дольше (4 сек),
+      // чтобы юзер успел заметить и понять что переключаться можно.
+      setTimeout(() => setDone(null), 4000);
     } catch (e: any) {
       setError(translateApiError(e, kind === 'seed'
         ? 'Не удалось заполнить демо-данные'
@@ -646,9 +650,19 @@ const DemoDataField = () => {
         >
           {busy === 'clear' ? 'Удаляем…' : 'Очистить демо'}
         </button>
-        {done === 'seed' && <span className="self-center text-xs text-emerald-600">демо добавлено</span>}
-        {done === 'clear' && <span className="self-center text-xs text-emerald-600">демо удалено</span>}
       </div>
+      {done === 'seed' && (
+        <p className="mt-3 text-xs text-emerald-600 leading-relaxed">
+          ✓ Демо добавлено. Открой раздел «Клиенты», «Задачи», «Календарь»
+          или «Финансы» — увидишь Ивана Петрова и Анну Смирнову с записями
+          и платежами.
+        </p>
+      )}
+      {done === 'clear' && (
+        <p className="mt-3 text-xs text-emerald-600 leading-relaxed">
+          ✓ Демо удалено. Реальные карточки клиентов остались на месте.
+        </p>
+      )}
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
     </div>
   );
@@ -855,7 +869,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOf
         {group.yearly.savePct && (
           <span
             aria-label={`Скидка ${group.yearly.savePct}%`}
-            className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold tracking-wide shadow-md ring-2 ring-white"
+            className="absolute -top-2 -right-2 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-xs font-bold tracking-wide shadow-md ring-2 ring-white"
           >
             −{group.yearly.savePct}%
           </span>
@@ -1053,19 +1067,19 @@ const ReferralSection = ({ referralCode, bonusBalanceKop }: ReferralSectionProps
       {/* ── Балансы ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-emerald-700 font-semibold">Доступно</div>
+          <div className="text-xs uppercase tracking-wide text-emerald-700 font-semibold">Доступно</div>
           <div className="mt-1 text-base sm:text-lg font-bold text-emerald-900">
             {formatRub(balanceKop / 100)}
           </div>
         </div>
         <div className="rounded-xl border border-zinc-200 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Всего начислено</div>
+          <div className="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Всего начислено</div>
           <div className="mt-1 text-base sm:text-lg font-bold text-zinc-900">
             {formatRub(totalEarnedKop / 100)}
           </div>
         </div>
         <div className="rounded-xl border border-zinc-200 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Потрачено</div>
+          <div className="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Потрачено</div>
           <div className="mt-1 text-base sm:text-lg font-bold text-zinc-900">
             {formatRub(totalSpentKop / 100)}
           </div>
@@ -1075,11 +1089,11 @@ const ReferralSection = ({ referralCode, bonusBalanceKop }: ReferralSectionProps
       {/* ── Статистика приглашений ─────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-2 sm:gap-3">
         <div className="rounded-xl border border-zinc-200 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Регистраций</div>
+          <div className="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Регистраций</div>
           <div className="mt-1 text-lg font-bold text-zinc-900">{refCount}</div>
         </div>
         <div className="rounded-xl border border-zinc-200 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-500 font-semibold">Оплатили</div>
+          <div className="text-xs uppercase tracking-wide text-zinc-500 font-semibold">Оплатили</div>
           <div className="mt-1 text-lg font-bold text-zinc-900">{paidCount}</div>
         </div>
       </div>
@@ -1105,7 +1119,7 @@ const ReferralSection = ({ referralCode, bonusBalanceKop }: ReferralSectionProps
                   </div>
                 </div>
                 <span
-                  className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide ${
+                  className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-semibold uppercase tracking-wide ${
                     r.hasPaid
                       ? 'bg-emerald-100 text-emerald-800'
                       : 'bg-zinc-100 text-zinc-500'

@@ -21,7 +21,7 @@ export const TransactionItem = ({ transaction: t, category, tags: transactionTag
                     <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
                             {timeStr && (
-                                <span className="text-[10px] font-semibold text-zinc-400 shrink-0">{timeStr}</span>
+                                <span className="text-xs font-semibold text-zinc-400 shrink-0">{timeStr}</span>
                             )}
                             <span className="text-sm font-bold text-gray-900 truncate">{String(t.description || '')}</span>
                         </div>
@@ -34,13 +34,13 @@ export const TransactionItem = ({ transaction: t, category, tags: transactionTag
                             {category && (
                                 <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100">
                                     <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: category.color }} />
-                                    <span className="text-[10px] font-semibold text-gray-500">{category.name}</span>
+                                    <span className="text-xs font-semibold text-gray-500">{category.name}</span>
                                 </div>
                             )}
                             {transactionTags.map(tag => (
                                 <div key={tag.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100">
                                     <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color || COLORS[0] }} />
-                                    <span className="text-[10px] font-semibold text-gray-500">{tag.name}</span>
+                                    <span className="text-xs font-semibold text-gray-500">{tag.name}</span>
                                 </div>
                             ))}
                         </div>

@@ -113,7 +113,7 @@ export const AutocompleteInput = ({
                     )}
                     {suggestions.length > 0 && (
                       <div className="sticky bg-zinc-50 px-3 py-1.5 border-b border-zinc-100" style={{ top: topAction ? 44 : 0 }}>
-                          <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">
+                          <span className="text-xs font-black text-zinc-400 uppercase tracking-wider">
                               {suggestions.length} {suggestions.length === 1 ? 'вариант' : suggestions.length < 5 ? 'варианта' : 'вариантов'}
                           </span>
                       </div>

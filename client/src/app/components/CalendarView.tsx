@@ -139,7 +139,7 @@ export const CalendarView = ({
                 <div className="text-sm font-bold text-zinc-400 pr-2">{year}</div>
             </div>
              <div className="flex-1 overflow-y-auto bg-white p-2 overscroll-contain" style={{paddingBottom: 'calc(100px + env(safe-area-inset-bottom, 20px))', WebkitOverflowScrolling: 'touch'}}>
-                <div className="grid grid-cols-7 border-b border-zinc-100 pb-2 mb-2 text-center text-[10px] font-black text-zinc-400 uppercase">{week.map(d => <div key={d}>{d}</div>)}</div>
+                <div className="grid grid-cols-7 border-b border-zinc-100 pb-2 mb-2 text-center text-xs font-black text-zinc-400 uppercase">{week.map(d => <div key={d}>{d}</div>)}</div>
                 <CalendarGrid
                     year={year}
                     month={month}
@@ -251,7 +251,7 @@ export const CalendarView = ({
                                             {client && (
                                                 <div className="flex gap-2 mt-3 pt-3 border-t border-orange-100">
                                                     <div className="flex-1 bg-white rounded-lg px-3 py-2 border border-zinc-200">
-                                                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wide">Автомобиль</p>
+                                                        <p className="text-xs text-zinc-400 font-bold uppercase tracking-wide">Автомобиль</p>
                                                         <p className="text-sm font-bold text-black mt-0.5">{client.carBrand} {client.carModel}</p>
                                                     </div>
                                                     <div 
@@ -261,7 +261,7 @@ export const CalendarView = ({
                                                             navigator.clipboard.writeText(client.phone);
                                                         }}
                                                     >
-                                                        <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wide">Телефон</p>
+                                                        <p className="text-xs text-zinc-400 font-bold uppercase tracking-wide">Телефон</p>
                                                         <div className="flex items-center gap-1.5 mt-0.5">
                                                             <p className="text-sm font-bold text-black whitespace-nowrap">{client.phone}</p>
                                                             <Copy size={14} className="text-orange-500 shrink-0" />

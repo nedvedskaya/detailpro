@@ -72,7 +72,7 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
               className="w-6 h-6 rounded-full object-cover bg-zinc-100"
             />
           ) : (
-            <div className="w-6 h-6 rounded-full bg-zinc-200 text-zinc-600 text-[10px] font-bold flex items-center justify-center">
+            <div className="w-6 h-6 rounded-full bg-zinc-200 text-zinc-600 text-xs font-bold flex items-center justify-center">
               {(user.name || user.email || '?').charAt(0).toUpperCase()}
             </div>
           )}

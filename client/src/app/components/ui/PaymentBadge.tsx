@@ -14,7 +14,7 @@ const BADGE_LABELS = {
 
 const BADGE_SIZES = {
   xs: 'text-[9px] px-1.5 py-0.5 rounded',
-  sm: 'text-[10px] px-2 py-0.5 rounded-lg font-semibold',
+  sm: 'text-xs px-2 py-0.5 rounded-lg font-semibold',
   md: 'text-xs px-2.5 py-1 rounded-lg font-semibold'
 } as const;
 

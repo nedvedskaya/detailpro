@@ -53,7 +53,7 @@ export const ClientListCard = ({
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-zinc-400">{String(client.phone || '')}</span>
             {hasBirthday && (
-              <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-orange-100 text-orange-600 flex items-center gap-1">
+              <span className="text-xs font-bold px-2 py-1 rounded-full bg-orange-100 text-orange-600 flex items-center gap-1">
                 <Cake size={10} /> ДР
               </span>
             )}

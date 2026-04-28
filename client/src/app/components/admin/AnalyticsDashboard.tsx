@@ -433,7 +433,7 @@ function Row({ label, value, badge }: {
       <span className="flex items-center gap-2">
         <span className="text-[13px] font-medium text-zinc-900">{value}</span>
         {badge && (
-          <span className={`rounded px-2 py-0.5 text-[10px] ${badgeCls}`}>{badge.text}</span>
+          <span className={`rounded px-2 py-0.5 text-xs ${badgeCls}`}>{badge.text}</span>
         )}
       </span>
     </li>

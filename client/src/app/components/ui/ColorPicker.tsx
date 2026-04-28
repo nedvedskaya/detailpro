@@ -10,7 +10,7 @@ interface ColorPickerProps {
 export const ColorPicker = ({ colors, selectedColor, onColorSelect, label = 'Цвет' }: ColorPickerProps) => {
   return (
     <div>
-      <p className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2">{label}</p>
+      <p className="text-xs font-black text-zinc-400 uppercase tracking-wider mb-2">{label}</p>
       <div className="grid grid-cols-8 gap-2">
         {colors.map(color => (
           <button

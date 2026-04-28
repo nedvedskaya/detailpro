@@ -424,7 +424,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                         {/* Категория - компактный блок */}
                         <div>
                             <div className="flex items-center justify-between mb-2">
-                                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Категория</label>
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Категория</label>
                                 <div className="flex items-center gap-3">
                                     {filteredCategories.length > 0 && (
                                         <button 
@@ -481,7 +481,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                         {/* Теги - компактный блок */}
                         <div>
                             <div className="flex items-center justify-between mb-2">
-                                <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Теги</label>
+                                <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Теги</label>
                                 <div className="flex items-center gap-3">
                                     {filteredTags.length > 0 && (
                                         <button
@@ -953,7 +953,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                                         <span className="text-xs font-semibold text-gray-900 flex-1 mr-2">{t.description}</span>
                                                                         <span className="text-xs font-bold text-gray-900 shrink-0">{formatMoney(t.amount)} ₽</span>
                                                                     </div>
-                                                                    {t.date && <div className="text-[10px] text-gray-400 mt-0.5">{formatDateShort(t.date)}</div>}
+                                                                    {t.date && <div className="text-xs text-gray-400 mt-0.5">{formatDateShort(t.date)}</div>}
                                                                 </div>
                                                             ))}
                                                         </div>
@@ -977,7 +977,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                                 <div className="flex items-center gap-1.5">
                                                                     <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: group.tag.color || '#94a3b8' }} />
                                                                     <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">{group.tag.name}</span>
-                                                                    <span className="text-[10px] text-gray-400">{group.txns.length} оп.</span>
+                                                                    <span className="text-xs text-gray-400">{group.txns.length} оп.</span>
                                                                 </div>
                                                                 <span className="text-xs font-bold text-gray-800">{formatMoney(group.total)} ₽</span>
                                                             </div>
@@ -988,7 +988,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                                             <span className="text-[11px] font-semibold text-gray-900 flex-1 leading-tight">{t.description}</span>
                                                                             <span className="text-[11px] font-bold text-gray-900 shrink-0">{formatMoney(t.amount)} ₽</span>
                                                                         </div>
-                                                                        {t.date && <div className="text-[10px] text-gray-400 mt-0.5">{formatDateShort(t.date)}</div>}
+                                                                        {t.date && <div className="text-xs text-gray-400 mt-0.5">{formatDateShort(t.date)}</div>}
                                                                     </div>
                                                                 ))}
                                                             </div>
@@ -1000,7 +1000,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                                 <div className="flex items-center gap-1.5">
                                                                     <div className="w-2 h-2 rounded-full shrink-0 bg-gray-300" />
                                                                     <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Без тега</span>
-                                                                    <span className="text-[10px] text-gray-400">{noTagTxns.length} оп.</span>
+                                                                    <span className="text-xs text-gray-400">{noTagTxns.length} оп.</span>
                                                                 </div>
                                                                 <span className="text-xs font-bold text-gray-800">{formatMoney(noTagTxns.reduce((s, t) => s + Number(t.amount), 0))} ₽</span>
                                                             </div>
@@ -1011,7 +1011,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                                                                             <span className="text-[11px] font-semibold text-gray-900 flex-1 leading-tight">{t.description}</span>
                                                                             <span className="text-[11px] font-bold text-gray-900 shrink-0">{formatMoney(t.amount)} ₽</span>
                                                                         </div>
-                                                                        {t.date && <div className="text-[10px] text-gray-400 mt-0.5">{formatDateShort(t.date)}</div>}
+                                                                        {t.date && <div className="text-xs text-gray-400 mt-0.5">{formatDateShort(t.date)}</div>}
                                                                     </div>
                                                                 ))}
                                                             </div>
