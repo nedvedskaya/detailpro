@@ -199,24 +199,32 @@ async function seedDemo(client, schemaName, ownerId) {
   const catSupplies   = findCatId('Расходники');
   const catSalary     = findCatId('Зарплата');
 
+  // ВАЖНО про двойную передачу id категорий: один и тот же $-параметр нельзя
+  // использовать одновременно как INTEGER (для category_id FK) и как TEXT
+  // (для category, поле VARCHAR). Postgres выводит тип параметра один раз
+  // и при ::text-касте на втором использовании ругается «inconsistent types
+  // deduced for parameter $10 | text versus integer» (42P08). Поэтому
+  // передаём id категории дважды — отдельным int-параметром и отдельным
+  // string-параметром. Семантически одно и то же значение, но pg-биндинг
+  // получает разные тип-теги.
   await queryInSchema(
     schemaName,
     `INSERT INTO {{schema}}.transactions
         (type, amount, category_id, category, description, date, time,
          client_id, client_record_id, created_by, tags, is_demo) VALUES
-       ('income',  8000,  $10, $10::text,
+       ('income',  8000,  $10, $13,
         'Полировка кузова — Иван Петров (BMW X5)',
         CURRENT_DATE - INTERVAL '3 days', '16:00',
         $1,   $2,   $3, $6::jsonb, TRUE),
-       ('income',  2000,  $10, $10::text,
+       ('income',  2000,  $10, $13,
         'Аванс — Анна Смирнова (Toyota Camry, химчистка)',
         CURRENT_DATE, '11:00',
         $4,   $5,   $3, $7::jsonb, TRUE),
-       ('expense', 4500,  $11, $11::text,
+       ('expense', 4500,  $11, $14,
         'Закупка защитной плёнки',
         CURRENT_DATE - INTERVAL '5 days', '10:30',
         NULL, NULL, $3, $8::jsonb, TRUE),
-       ('expense', 15000, $12, $12::text,
+       ('expense', 15000, $12, $15,
         'ЗП мастера Ивана за неделю',
         CURRENT_DATE - INTERVAL '1 day',  '18:00',
         NULL, NULL, $3, $9::jsonb, TRUE)`,
@@ -228,6 +236,11 @@ async function seedDemo(client, schemaName, ownerId) {
       jsonbTags(tagFilm),
       jsonbTags(tagSalary),
       catService, catSupplies, catSalary,
+      // Те же id, но как строки — для поля category (VARCHAR).
+      // null-id остаётся null (pg преобразует null корректно для обоих типов).
+      catService    != null ? String(catService)    : null,
+      catSupplies   != null ? String(catSupplies)   : null,
+      catSalary     != null ? String(catSalary)     : null,
     ],
     client
   );

@@ -595,8 +595,14 @@ const DemoDataField = () => {
         credentials: 'include',
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || `HTTP ${res.status}`);
+        // Прокидываем ApiError-совместимый объект, чтобы translateApiError
+        // подхватил `code` из ERROR_TRANSLATIONS и показал русский текст
+        // вместо «internal_error».
+        const body = await res.json().catch(() => ({} as any));
+        const err: any = new Error(body?.error || `HTTP ${res.status}`);
+        err.code = body?.error || 'http_error';
+        err.status = res.status;
+        throw err;
       }
       setDone(kind);
       // Перезагружаем страницу, чтобы кэшированные списки клиентов / задач /
@@ -604,7 +610,9 @@ const DemoDataField = () => {
       // видел бы пустой профиль и думал, что ничего не произошло.
       setTimeout(() => window.location.reload(), 600);
     } catch (e: any) {
-      setError(e?.message || 'Не удалось выполнить');
+      setError(translateApiError(e, kind === 'seed'
+        ? 'Не удалось заполнить демо-данные'
+        : 'Не удалось очистить демо-данные'));
       setBusy(null);
     }
   };
