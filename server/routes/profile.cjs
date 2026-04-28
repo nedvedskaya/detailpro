@@ -127,6 +127,18 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
   const meta = planMeta(studioRow.plan);
   const maxUsers = maxUsersForPlan(studioRow.plan);
 
+  // Приватные поля студии — это персональные данные владельца как ИП/юрлица:
+  //   • реквизиты для документов (ИНН, ОГРН, адреса, телефон, email студии,
+  //     текст гарантии) — должны быть видны только владельцу. Менеджер и
+  //     мастер их не используют в UI: они не редактируют профиль студии и
+  //     не работают с её юридическими данными. PDF-документы рендерятся на
+  //     сервере и читают эти поля напрямую из БД, минуя API.
+  //   • реферальный код и бонусный баланс — личный кабинет владельца, чужие
+  //     сотрудники не должны видеть промокод и сумму бонусов.
+  // До этой проверки бэк отдавал все эти поля любому авторизованному юзеру
+  // студии — manager/master заходили в /profile и видели реквизиты владельца.
+  const isOwner = userRow.role === 'owner';
+
   return {
     user: {
       id: userRow.id,
@@ -160,26 +172,29 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       // cancel_pending=true → пользователь нажал «Отменить подписку».
       // UI показывает badge «Подписка отменена, доступ до …» и кнопку «Восстановить».
       cancelPending: studioRow.cancel_pending === true,
-      // Реквизиты для шапки PDF-документов (заполняются в «Профиль → Реквизиты студии»).
-      // Все nullable — до заполнения в документах выводится «—».
-      inn:           studioRow.inn           || null,
-      ogrn:          studioRow.ogrn          || null,
-      legalAddress:  studioRow.legal_address || null,
-      actualAddress: studioRow.actual_address || null,
-      contactPhone:  studioRow.contact_phone || null,
-      contactEmail:  studioRow.contact_email || null,
-      guaranteeText: studioRow.guarantee_text || null,
+      // Реквизиты для шапки PDF-документов. Видны ТОЛЬКО owner-у —
+      // см. комментарий выше. Для не-owner отдаём null, как будто не заполнены.
+      inn:           isOwner ? (studioRow.inn           || null) : null,
+      ogrn:          isOwner ? (studioRow.ogrn          || null) : null,
+      legalAddress:  isOwner ? (studioRow.legal_address || null) : null,
+      actualAddress: isOwner ? (studioRow.actual_address || null) : null,
+      contactPhone:  isOwner ? (studioRow.contact_phone || null) : null,
+      contactEmail:  isOwner ? (studioRow.contact_email || null) : null,
+      guaranteeText: isOwner ? (studioRow.guarantee_text || null) : null,
       // Время утренней Telegram-сводки (миграция 011). PG отдаёт TIME как
       // 'HH:MM:SS' — урезаем до 'HH:MM' для UI (чтобы <input type="time">
       // принял без переформатирования). NULL = «не присылать студии».
+      // Это поле менять может только owner, но видеть могут все —
+      // не секретное (общая настройка студии).
       dailySummaryTime:    formatDailySummaryTime(studioRow.daily_summary_time),
       dailySummaryTimeSet: studioRow.daily_summary_time_set === true,
-      // Реферальная программа: код у студии всегда есть после миграции 005,
-      // bonus_balance_kop — текущий баланс бонусов в копейках. UI делит на 100.
-      referralCode:   studioRow.referral_code || null,
-      bonusBalanceKop: typeof studioRow.bonus_balance_kop === 'number'
-        ? studioRow.bonus_balance_kop
-        : Number(studioRow.bonus_balance_kop || 0),
+      // Реферальная программа: личное владельца. Не-owner получает null/0.
+      referralCode:   isOwner ? (studioRow.referral_code || null) : null,
+      bonusBalanceKop: isOwner
+        ? (typeof studioRow.bonus_balance_kop === 'number'
+            ? studioRow.bonus_balance_kop
+            : Number(studioRow.bonus_balance_kop || 0))
+        : 0,
     },
     limits: {
       currentUsers,
