@@ -1032,7 +1032,10 @@ function describeAccessUntil(accessUntil) {
   if (!accessUntil) return { text: 'дата не указана', expired: false };
   const target = new Date(accessUntil);
   if (Number.isNaN(target.getTime())) return { text: 'дата не указана', expired: false };
-  const days = Math.ceil((target.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+  // floor: «осталось N дней» = ПОЛНЫХ суток до access_until. ceil показывал
+  // одно и то же значение первые ~24 часа после регистрации (2.3 дня → «3»),
+  // юзер обоснованно жаловался: «вчера было 3, сегодня 3 — должен идти отсчёт».
+  const days = Math.floor((target.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
   if (days < 0)  return { text: `доступ истёк ${Math.abs(days)} дн. назад`, expired: true };
   if (days === 0) return { text: 'истекает сегодня', expired: false };
   return { text: `осталось ${days} ${pluralizeDays(days)}`, expired: false };

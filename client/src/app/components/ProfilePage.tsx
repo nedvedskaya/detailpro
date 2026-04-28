@@ -261,7 +261,12 @@ function describeAccessUntil(accessUntil: string | null | undefined): { text: st
   if (!target) return { text: 'дата не указана', tone: 'warn' };
   const now = new Date();
   const ms = target.getTime() - now.getTime();
-  const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
+  // floor, а не ceil: «осталось N дней» = сколько ПОЛНЫХ дней до истечения.
+  // Если регистрация была вчера в 19:17 и доступ до послезавтра в 19:17 —
+  // прошло ~16 часов, осталось 2.3 суток; ceil даст «3» и счётчик не
+  // меняется первые сутки (фидбек: «вчера было 3, сегодня 3 — должен идти
+  // отсчёт»). floor корректно покажет 2 уже на следующий день.
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
   if (days < 0) {
     const n = Math.abs(days);
     return { text: `истёк ${n} ${pluralizeDays(n)} назад`, tone: 'expired' };
@@ -1387,7 +1392,9 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     const target = parseDbDate(studio.accessUntil);
     if (!target) return 0;
     const ms = target.getTime() - Date.now();
-    return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+    // floor — см. describeAccessUntil выше: «осталось N дней» считается
+    // полными сутками, иначе счётчик «3 дня» висит сутки после регистрации.
+    return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
   })() : 0;
 
   // Можно ли отменить подписку: только owner на платном тарифе
