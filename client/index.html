@@ -10,13 +10,14 @@
     <title>ДЕТЕЙЛ ПРО CRM</title>
 
     <!--
-      Favicon. SVG поддерживается всеми Chromium/Firefox/Safari ≥16
-      (наш build target — chrome109/safari16/firefox109, см. vite.config.ts).
-      На iOS/Android home-screen используются icon-192/512.png из manifest.json.
-      Заменить лого: положить новый PNG/SVG в client/public/ и обновить
-      ссылку ниже.
+      Favicon — фирменное «DC» лого (чёрная D + оранжевая C).
+      PNG 256×256, генерится из исходного изображения через `sips -Z 256`.
+      На iOS/Android home-screen используются отдельные icon-192/512.png
+      из manifest.json (туда тоже стоит экспортировать тот же лого).
+      Заменить лого: положить новый PNG в client/public/favicon.png
+      того же размера — пересборка фронта подхватит автоматически.
     -->
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
 
     <link rel="preload" href="/fonts/inter-regular.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/inter-regular-latin.woff2" as="font" type="font/woff2" crossorigin />
