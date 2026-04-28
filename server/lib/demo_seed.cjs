@@ -146,10 +146,22 @@ async function seedDemo(client, schemaName, ownerId) {
   // ── Транзакции (финансы) ─────────────────────────────────────────
   // 4 транзакции — доход + аванс + 2 расхода — чтобы юзер сразу видел
   // полноценную аналитику в финансах: разбивку по категориям и тегам.
+  //
   // Теги привязываем по ID (поле transactions.tags хранит массив id),
   // ищем заранее засиженные дефолтные теги по name+type (см. seed
   // в 100_tenant_template.sql). Если каких-то тегов нет (на старой
   // студии до миграции, fail-soft) — транзакция уйдёт без тегов.
+  //
+  // ВАЖНО про category-vs-category_id: текущий UI (FinanceView.tsx) хранит
+  // в поле transactions.category строку с ID категории (наследие старого
+  // кода — поле названо «category», но фактически содержит id). Лукап в
+  // аналитике идёт через findCategoryById(categories, t.category). Если
+  // в это поле положить имя «Услуги», UI не найдёт совпадение по id и
+  // покажет «Без категории» серым цветом. Поэтому здесь сидим:
+  //   • category_id   — настоящий FK на categories (правильное хранение)
+  //   • category      — строка с тем же id, для совместимости с UI
+  // Когда UI починят на category_id — поле category можно будет
+  // упростить до настоящего имени или вообще убрать.
   const tagsRes = await queryInSchema(
     schemaName,
     `SELECT id, name, type FROM {{schema}}.tags
@@ -168,22 +180,46 @@ async function seedDemo(client, schemaName, ownerId) {
   const tagChemistry = findTagId('Химчистка', 'income');
   const tagFilm      = findTagId('Плёнка',    'expense');
   const tagSalary    = findTagId('ЗП мастера Ивана', 'expense');
-
-  // Помощник: массив tag-id в JSONB-формате. `[null]` фильтруем.
   const jsonbTags = (...ids) => JSON.stringify(ids.filter((x) => x != null));
+
+  // Подтягиваем id категорий — они засиживаются в tenant_provisioning
+  // шагом 5 («Услуги», «Аренда», «Зарплата», «Расходники»).
+  const catRes = await queryInSchema(
+    schemaName,
+    `SELECT id, name FROM {{schema}}.categories
+      WHERE name IN ('Услуги', 'Расходники', 'Зарплата')`,
+    [],
+    client
+  );
+  const findCatId = (name) => {
+    const r = catRes.rows.find((x) => x.name === name);
+    return r ? r.id : null;
+  };
+  const catService    = findCatId('Услуги');
+  const catSupplies   = findCatId('Расходники');
+  const catSalary     = findCatId('Зарплата');
 
   await queryInSchema(
     schemaName,
     `INSERT INTO {{schema}}.transactions
-        (type, amount, category, description, date, time, client_id, client_record_id, created_by, tags, is_demo) VALUES
-       ('income',  8000,  'Услуги',     'Полировка кузова — Иван Петров (BMW X5)',
-        CURRENT_DATE - INTERVAL '3 days', '16:00', $1,   $2,   $3, $6::jsonb, TRUE),
-       ('income',  2000,  'Услуги',     'Аванс — Анна Смирнова (Toyota Camry, химчистка)',
-        CURRENT_DATE, '11:00',                     $4,   $5,   $3, $7::jsonb, TRUE),
-       ('expense', 4500,  'Расходники', 'Закупка защитной плёнки',
-        CURRENT_DATE - INTERVAL '5 days', '10:30', NULL, NULL, $3, $8::jsonb, TRUE),
-       ('expense', 15000, 'Зарплата',   'ЗП мастера Ивана за неделю',
-        CURRENT_DATE - INTERVAL '1 day',  '18:00', NULL, NULL, $3, $9::jsonb, TRUE)`,
+        (type, amount, category_id, category, description, date, time,
+         client_id, client_record_id, created_by, tags, is_demo) VALUES
+       ('income',  8000,  $10, $10::text,
+        'Полировка кузова — Иван Петров (BMW X5)',
+        CURRENT_DATE - INTERVAL '3 days', '16:00',
+        $1,   $2,   $3, $6::jsonb, TRUE),
+       ('income',  2000,  $10, $10::text,
+        'Аванс — Анна Смирнова (Toyota Camry, химчистка)',
+        CURRENT_DATE, '11:00',
+        $4,   $5,   $3, $7::jsonb, TRUE),
+       ('expense', 4500,  $11, $11::text,
+        'Закупка защитной плёнки',
+        CURRENT_DATE - INTERVAL '5 days', '10:30',
+        NULL, NULL, $3, $8::jsonb, TRUE),
+       ('expense', 15000, $12, $12::text,
+        'ЗП мастера Ивана за неделю',
+        CURRENT_DATE - INTERVAL '1 day',  '18:00',
+        NULL, NULL, $3, $9::jsonb, TRUE)`,
     [
       clientIvanId, recordIvanId, ownerId,
       clientAnnaId, recordAnnaId,
@@ -191,6 +227,7 @@ async function seedDemo(client, schemaName, ownerId) {
       jsonbTags(tagChemistry),
       jsonbTags(tagFilm),
       jsonbTags(tagSalary),
+      catService, catSupplies, catSalary,
     ],
     client
   );
