@@ -27,18 +27,19 @@ const PLAN_PRICES_KOP = {
   studio_year: 8990000,
 };
 
-const PLAN_PAYFORM_URL = {
-  solo_month:   'https://payform.ru/dablmR1/',
-  solo_year:    'https://payform.ru/goblmSQ/',
-  studio_month: 'https://payform.ru/jqblmUt/',
-  studio_year:  'https://payform.ru/moblmW2/',
-};
+// Базовый URL платёжной страницы Prodamus (dynamic-режим).
+// До 28.04.2026 использовали статичные paylink-формы (payform.ru/<slug>/),
+// но они НЕ принимают discount_value. Поддержка Prodamus подтвердила:
+// «запрос формировать не к уже сформированной ссылке, а к платежной
+// странице — https://yalokontent.payform.ru/». Товар (имя, цена,
+// скидка) описывается динамически через products[0][...] и discount_value.
+const PAYFORM_BASE_URL = 'https://yalokontent.payform.ru/';
 
 const PLAN_LABELS_RU = {
-  solo_month:   { tariff: 'Соло',   period: '1\u00a0мес',  priceRub: 4900 },
-  solo_year:    { tariff: 'Соло',   period: '12\u00a0мес', priceRub: 49900 },
-  studio_month: { tariff: 'Студия', period: '1\u00a0мес',  priceRub: 8900 },
-  studio_year:  { tariff: 'Студия', period: '12\u00a0мес', priceRub: 89900 },
+  solo_month:   { tariff: 'Соло',   period: '1\u00a0мес',  priceRub: 4900, productName: 'Детейл Про CRM — Соло (1 месяц)' },
+  solo_year:    { tariff: 'Соло',   period: '12\u00a0мес', priceRub: 49900, productName: 'Детейл Про CRM — Соло (12 месяцев)' },
+  studio_month: { tariff: 'Студия', period: '1\u00a0мес',  priceRub: 8900, productName: 'Детейл Про CRM — Студия (1 месяц)' },
+  studio_year:  { tariff: 'Студия', period: '12\u00a0мес', priceRub: 89900, productName: 'Детейл Про CRM — Студия (12 месяцев)' },
 };
 
 const VALID_PLAN_IDS = Object.keys(PLAN_PRICES_KOP);
@@ -103,40 +104,58 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
 }
 
 /**
- * Собирает полный URL payform.ru с подставленными параметрами.
- *   `_param_intent`   — токен из createPaymentIntent (наш audit-id)
- *   `_param_plan`     — id плана (для резолва в webhook'е)
- *   `customer_email`  — заполнит чекаут (UX), на security не влияет
- *   `_param_bonus_kop`— наш внутренний counter в копейках, нужен webhook'у
- *                       для списания с bonus_balance_kop
- *   `discount_value`  — Prodamus-параметр: размер скидки в ЦЕЛЫХ рублях,
- *                       снижает финальную сумму на чекауте.
+ * Собирает полный URL Prodamus payform-а в DYNAMIC-режиме (платёжная
+ * страница вместо paylink-формы). Параметры:
  *
- * ВАЖНО: ранее использовался `customer_price` (итоговая сумма). По ответу
- * поддержки Prodamus (28.04.2026) этот параметр у них не реализован —
- * нужно передавать `discount_value` (величину скидки). Соответствие:
- * bonusKop кратен 100 (см. createPaymentIntent), значит discountRub
- * = bonusKop / 100 — точное совпадение с _param_bonus_kop.
+ *   products[0][name|price|quantity] — товар описывается в URL целиком
+ *                                       (раньше был зашит в paylink-форме)
+ *   discount_value                   — размер скидки в ЦЕЛЫХ рублях
+ *   _param_intent / _param_plan      — наши custom-поля для webhook'а
+ *   _param_bonus_kop                 — наш counter в копейках для debit
+ *   customer_email                   — префилл email-а
+ *   order_id                         — наш уникальный id заказа
+ *
+ * Источник изменения: 28.04.2026 поддержка Prodamus подтвердила что
+ * paylink-формы не принимают discount_value, нужно использовать
+ * базовый URL https://yalokontent.payform.ru/ и описывать товар в
+ * параметрах. До этого юзер видел полную цену независимо от скидки.
  */
 function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, customerEmail }) {
-  const base = PLAN_PAYFORM_URL[planId];
-  if (!base) throw new Error('plan_invalid');
-  const u = new URL(base);
+  const expectedKop = PLAN_PRICES_KOP[planId];
+  const label = PLAN_LABELS_RU[planId];
+  if (!expectedKop || !label) throw new Error('plan_invalid');
+  const u = new URL(PAYFORM_BASE_URL);
+
+  // Описываем товар в URL. Цена в рублях, как требует Prodamus.
+  // products[0][...] — синтаксис, который Express/PHP-style парсеры
+  // на стороне Prodamus распарсят как массив объектов.
+  u.searchParams.set('products[0][name]',     label.productName);
+  u.searchParams.set('products[0][price]',    String(expectedKop / 100));
+  u.searchParams.set('products[0][quantity]', '1');
+
+  // Наш сквозной order_id — производный от intent-token: уникальный, но
+  // компактный. Webhook возвращает его обратно, мы сверяем по
+  // payment_intents.token (через _param_intent — он несёт полный токен).
+  u.searchParams.set('order_id', `dpro-${intentToken.slice(0, 16)}`);
+
+  // Наши custom-поля для webhook-аудита.
   u.searchParams.set('_param_intent', intentToken);
-  u.searchParams.set('_param_plan', planId);
+  u.searchParams.set('_param_plan',   planId);
   if (customerEmail) u.searchParams.set('customer_email', customerEmail);
+
   if (bonusKop > 0) {
     u.searchParams.set('_param_bonus_kop', String(bonusKop));
     // bonusKop гарантированно кратен 100 (createPaymentIntent делает floor),
     // деление целочисленное → точная сумма скидки в рублях.
     u.searchParams.set('discount_value', String(bonusKop / 100));
   }
+
   return u.toString();
 }
 
 module.exports = {
   PLAN_PRICES_KOP,
-  PLAN_PAYFORM_URL,
+  PAYFORM_BASE_URL,
   PLAN_LABELS_RU,
   VALID_PLAN_IDS,
   PAYMENT_INTENT_TTL_MS,

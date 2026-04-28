@@ -226,6 +226,11 @@ export const api = {
       expectedAmountKop: number;
       bonusKopApplied: number;
       finalAmountRub: number;
+      // Готовый URL платёжной страницы Prodamus (бэк собирает целиком).
+      // Фронт делает window.location.href = payformUrl. Опциональный для
+      // обратной совместимости со старыми билдами клиента — фронт
+      // обработает отсутствие явной ошибкой.
+      payformUrl?: string;
     }>('POST', '/profile/payment/intent', { plan });
   },
 

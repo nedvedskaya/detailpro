@@ -713,24 +713,23 @@ function calcBonusUsage(priceRub: number, balanceKop: number): { useKop: number;
 // ──────────────────────────────────────────────────────────────────────
 async function startPaymentFlow(
   option: TariffOption,
-  email: string,
+  _email: string,
 ): Promise<void> {
+  // С 28.04.2026 бэк сам собирает payform-URL (см. POST /api/profile/
+  // payment/intent → response.payformUrl). Раньше фронт держал base
+  // payformUrl на тариф и сам приклеивал параметры — но после перехода
+  // с paylink-форм на dynamic-режим Prodamus (по их же ответу: «запрос
+  // формировать к платежной странице, а не к paylink») параметров стало
+  // больше (products[0][...], order_id, discount_value), и держать их
+  // синхронизированными между фронтом и бэком — лишнее дублирование.
   const intent = await api.createPaymentIntent(option.id);
-  const u = new URL(option.payformUrl);
-  u.searchParams.set('_param_intent', intent.token);
-  u.searchParams.set('_param_plan', option.id);
-  if (email) u.searchParams.set('customer_email', email);
-  if (intent.bonusKopApplied > 0) {
-    u.searchParams.set('_param_bonus_kop', String(intent.bonusKopApplied));
-    // Prodamus: размер скидки в ЦЕЛЫХ рублях. customer_price у них не
-    // реализован — поддержка ответила 28.04.2026: «размер скидки по оплате
-    // передаётся через параметр discount_value». bonusKopApplied на сервере
-    // приведён к кратности 100, поэтому деление точное.
-    u.searchParams.set('discount_value', String(Math.floor(intent.bonusKopApplied / 100)));
+  if (!intent.payformUrl) {
+    // Старый бэк ещё не задеплоен или поле пропало — fallback в ошибку.
+    throw new Error('payform_url_missing');
   }
   // Same-window navigation: надёжно работает на любом мобиле, не зависит
   // от popup-блокеров. После оплаты Prodamus вернёт на /profile с query.
-  window.location.href = u.toString();
+  window.location.href = intent.payformUrl;
 }
 
 // ──────────────────────────────────────────────────────────────────────

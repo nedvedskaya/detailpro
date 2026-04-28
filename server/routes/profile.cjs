@@ -838,14 +838,35 @@ router.post('/payment/intent', requireAuth, async (req, res, next) => {
       throw e;
     }
 
+    // Email юзера для префила Prodamus-формы. Если в сессии нет —
+    // пустая строка, payform его просто не префиллит, юзер впишет руками.
+    const userRow = await pool.query(
+      `SELECT email FROM saas_meta.users WHERE id = $1`,
+      [req.session.userId]
+    );
+    const customerEmail = userRow.rows[0]?.email || '';
+
+    // Бэк собирает payform-URL целиком (раньше фронт делал это сам, но
+    // после перехода на dynamic-режим Prodamus параметров больше —
+    // удобнее держать сборку в одном месте). Фронт просто откроет URL.
+    const payformUrl = payments.buildPayformUrl({
+      planId,
+      intentToken:    result.token,
+      bonusKop:       result.bonusKop,
+      finalAmountKop: result.finalAmountKop,
+      customerEmail,
+    });
+
     res.json({
       token:             result.token,
       expiresAt:         result.expiresAt.toISOString(),
       expectedAmountKop: result.expectedKop,
       bonusKopApplied:   result.bonusKop,
-      // finalAmountRub — сколько фронт должен подставить в `customer_price`.
-      // Округляем вверх до целого рубля (Prodamus принимает целые ₽).
+      // finalAmountRub — для UI «к оплате X ₽», независимо от того, как
+      // мы передаём это Prodamus (через discount_value или иначе).
       finalAmountRub: Math.ceil(result.finalAmountKop / 100),
+      // Готовый URL платёжной страницы — фронт просто делает window.location.href.
+      payformUrl,
     });
   } catch (err) {
     next(err);
