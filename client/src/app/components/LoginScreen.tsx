@@ -479,17 +479,17 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
           <span className="mx-1">·</span>
           <a href="tel:+79206101841" className="hover:text-zinc-700">+7 920 610 18 41</a>
         </p>
-        <p>
+        {/* flex-wrap, чтобы на узком iPhone (≤390px) ссылки переносились
+            на следующую строку. Раньше использовали &nbsp; внутри
+            «Поручение ПДн» / «Реферальная программа» — связки не могли
+            разорваться, и юзер видел обрезанные хвосты за краем экрана. */}
+        <div className="flex flex-wrap justify-center gap-x-3 gap-y-1">
           <a href="/legal/offer.html"                target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Оферта</a>
-          <span className="mx-1.5">·</span>
           <a href="/legal/privacy-policy"            target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Политика</a>
-          <span className="mx-1.5">·</span>
           <a href="/legal/personal-data-consent"     target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Согласие</a>
-          <span className="mx-1.5">·</span>
-          <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение&nbsp;ПДн</a>
-          <span className="mx-1.5">·</span>
-          <a href="/legal/referral-program"          target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная&nbsp;программа</a>
-        </p>
+          <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение ПДн</a>
+          <a href="/legal/referral-program"          target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная программа</a>
+        </div>
       </footer>
 
       {/* Модалка «Забыли пароль?» — рендерится поверх login-карточки. */}

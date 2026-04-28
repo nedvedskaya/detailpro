@@ -2228,16 +2228,15 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
 
   return (
     <div className="mt-8 mb-4 px-2 text-center">
-      <div className="text-xs text-zinc-400 leading-relaxed mb-3">
-        <a href="/legal/offer.html"             target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Оферта</a>
-        <span className="mx-1.5">·</span>
-        <a href="/legal/privacy-policy"         target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Политика</a>
-        <span className="mx-1.5">·</span>
-        <a href="/legal/personal-data-consent"  target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Согласие</a>
-        <span className="mx-1.5">·</span>
-        <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение&nbsp;ПДн</a>
-        <span className="mx-1.5">·</span>
-        <a href="/legal/referral-program"       target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная&nbsp;программа</a>
+      {/* flex-wrap + gap: ссылки сами переносятся на новую строку на
+          узких iPhone (≤390px). Без &nbsp;: «Поручение ПДн» и
+          «Реферальная программа» спокойно режутся между словами. */}
+      <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-zinc-400 leading-relaxed mb-3">
+        <a href="/legal/offer.html"                target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Оферта</a>
+        <a href="/legal/privacy-policy"            target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Политика</a>
+        <a href="/legal/personal-data-consent"     target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Согласие</a>
+        <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение ПДн</a>
+        <a href="/legal/referral-program"          target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная программа</a>
       </div>
 
       {isOwner && (
