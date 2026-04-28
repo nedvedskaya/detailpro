@@ -42,6 +42,10 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
   // лишним шумом в форме регистрации (по запросу пользователя 2026-04-27).
 
   const [error, setError] = useState('');
+  // При signup-е поднимается, если бэк ответил email_already_used. Используем
+  // отдельно от error, чтобы под текстом ошибки показать «Войти» / «Забыли
+  // пароль?» — пользователь не должен переключать вкладки руками.
+  const [emailAlreadyUsed, setEmailAlreadyUsed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -211,6 +215,11 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
       onLogin(res);
     } catch (err) {
       setError(translateApiError(err));
+      // ApiError кладёт error-код бэка в .message (если .code не пришёл).
+      // По нему понимаем, надо ли подсказать пользователю «войти/восстановить пароль».
+      const apiErr = err as { code?: string; message?: string } | null;
+      const errCode = (apiErr?.code || apiErr?.message || '').toString();
+      setEmailAlreadyUsed(errCode === 'email_already_used');
     } finally {
       setIsLoading(false);
     }
@@ -218,6 +227,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
   const handleSubmit = () => {
     setError('');
+    setEmailAlreadyUsed(false);
     if (mode === 'login') return handleLogin();
     return handleSignup();
   };
@@ -444,6 +454,30 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
           )}
 
           {error && <p className="text-sm text-red-500 px-1 mb-3">{error}</p>}
+
+          {emailAlreadyUsed && mode === 'signup' && (
+            <div className="mb-3 px-3 py-2 rounded-lg bg-orange-50 border border-orange-200 flex flex-col gap-2">
+              <p className="text-xs text-orange-900 leading-snug">
+                У вас уже есть аккаунт с этим email. Войдите или восстановите пароль.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setMode('login'); setError(''); setEmailAlreadyUsed(false); }}
+                  className="flex-1 text-xs font-semibold py-2 rounded-md bg-zinc-900 text-white hover:bg-zinc-800"
+                >
+                  Войти
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMode('login'); setError(''); setEmailAlreadyUsed(false); openResetForm(); }}
+                  className="flex-1 text-xs font-semibold py-2 rounded-md bg-white text-zinc-900 border border-zinc-300 hover:bg-zinc-50"
+                >
+                  Забыли пароль?
+                </button>
+              </div>
+            </div>
+          )}
 
           <button
             onClick={handleSubmit}

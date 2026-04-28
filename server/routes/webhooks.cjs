@@ -85,6 +85,78 @@ function planPeriodRu(planId) {
 // см. require выше. Локальные определения убраны, чтобы не было двух
 // разных версий «правды» в одном проекте.
 
+// Push-уведомление админу платформы (Оле) о любой свежей оплате чужой
+// студии. Раньше она знала о платежах только из своей студии (через
+// notifyOwnerOnPayment) — приходилось дёргать /платежи в боте. Теперь
+// бот сам пингует на каждый paid-платёж. Идемпотентность — на стороне
+// caller'а (вызываем только когда result.duplicate === false).
+//
+// Chat_id админа = его user_id (для приватных чатов TG они совпадают).
+// Захардкожен в server/routes/telegram.cjs#ADMIN_TG_USER_ID — важно
+// держать одним числом, чтобы при ротации владельца была одна точка правки.
+const ADMIN_TG_CHAT_ID = '472538427';
+
+async function notifyAdminOnPayment({ studioId, orderId, amountKop, planId, bonusKopUsed, isPaidAfterCancel }) {
+  try {
+    // Не дёргаем сами себя: если оплатила Олина студия, она и так
+    // получила notifyOwnerOnPayment в качестве owner'а. Дублирующее
+    // админ-уведомление не нужно.
+    const me = await pool.query(
+      `SELECT id FROM saas_meta.users
+        WHERE studio_id = $1 AND tg_chat_id = $2 AND role = 'owner' LIMIT 1`,
+      [studioId, ADMIN_TG_CHAT_ID]
+    );
+    if (me.rowCount > 0) return;
+
+    const sRes = await pool.query(
+      `SELECT s.display_name, s.schema_name,
+              o.first_name, o.last_name, o.email
+         FROM saas_meta.studios s
+         LEFT JOIN saas_meta.users o
+                ON o.studio_id = s.id AND o.role = 'owner'
+        WHERE s.id = $1
+        LIMIT 1`,
+      [studioId]
+    );
+    const s = sRes.rows[0];
+    if (!s) return;
+
+    const ownerName = [s.first_name, s.last_name].filter(Boolean).join(' ').trim() || 'без имени';
+    const planRu = PLAN_RU[
+      typeof planId === 'string' && planId.toLowerCase().startsWith('solo') ? 'solo' : 'studio'
+    ] || 'тарифа';
+    const periodRu = planPeriodRu(planId);
+    const sumRu = formatRub(amountKop);
+    const bonusRu = bonusKopUsed > 0 ? formatRub(bonusKopUsed) : null;
+
+    const lines = isPaidAfterCancel
+      ? [
+        `⚠️ Платёж после отмены`,
+        ``,
+        `Студия: <b>${s.display_name || s.schema_name}</b>`,
+        `Владелец: ${ownerName} (${s.email || '—'})`,
+        `Сумма: <b>${sumRu} ₽</b> → зачислено в бонусы пользователя`,
+      ]
+      : [
+        `💰 Новая оплата`,
+        ``,
+        `Студия: <b>${s.display_name || s.schema_name}</b>`,
+        `Владелец: ${ownerName} (${s.email || '—'})`,
+        `Тариф: <b>${planRu}</b> · ${periodRu}`,
+        `Сумма: <b>${sumRu} ₽</b>${bonusRu ? ` (бонусом ${bonusRu} ₽)` : ''}`,
+      ];
+
+    await tg.sendMessage({
+      chatId: ADMIN_TG_CHAT_ID,
+      kind: 'admin_payment_notify',
+      text: lines.join('\n'),
+      parseMode: 'HTML',
+    });
+  } catch (err) {
+    console.error('[webhooks] notifyAdminOnPayment failed:', err.message, { studioId, orderId });
+  }
+}
+
 async function notifyOwnerOnPayment({ studioId, orderId, amountKop, planId, bonusKopUsed, isPaidAfterCancel }) {
   try {
     // Берём owner'а студии с привязанным TG. Если owner один и без TG —
@@ -753,6 +825,17 @@ router.post('/prodamus', rawParser, async (req, res) => {
       // Не await: ответ Prodamus'у ждать не надо. Если TG ляжет на 30 сек —
       // не задерживаем webhook-acknowledge.
       void notifyOwnerOnPayment({
+        studioId,
+        orderId,
+        amountKop,
+        planId,
+        bonusKopUsed,
+        isPaidAfterCancel: result.wasCancelled,
+      });
+      // Параллельно — уведомление админу платформы (если оплата не от
+      // его собственной студии). Чтобы Оле не приходилось дёргать
+      // /платежи в боте, чтобы узнать о свежих оплатах клиентов.
+      void notifyAdminOnPayment({
         studioId,
         orderId,
         amountKop,
