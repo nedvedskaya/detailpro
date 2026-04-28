@@ -148,7 +148,7 @@ async function notifyOwnerOnPayment({ studioId, orderId, amountKop, planId, bonu
       }
       lines.push(``);
       lines.push(`Доступ активен до <b>${accessUntilRu}</b>.`);
-      lines.push(`Чек по 54-ФЗ Продамус пришлёт отдельно на email.`);
+      lines.push(`Чек об оплате придёт на вашу электронную почту.`);
       text = lines.join('\n');
     }
 
