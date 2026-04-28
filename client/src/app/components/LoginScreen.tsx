@@ -479,17 +479,23 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
           <span className="mx-1">·</span>
           <a href="tel:+79206101841" className="hover:text-zinc-700">+7 920 610 18 41</a>
         </p>
-        {/* flex-wrap, чтобы на узком iPhone (≤390px) ссылки переносились
-            на следующую строку. Раньше использовали &nbsp; внутри
-            «Поручение ПДн» / «Реферальная программа» — связки не могли
-            разорваться, и юзер видел обрезанные хвосты за краем экрана. */}
-        <div className="flex flex-wrap justify-center gap-x-3 gap-y-1">
+        {/* Обычные пробелы (НЕ &nbsp;) внутри «Поручение ПДн» /
+            «Реферальная программа» позволяют браузеру естественно
+            переносить ссылки на новую строку на узких экранах
+            (iPhone ≤390px). Точки-разделители «·» сохранены и
+            корректно ведут себя при переносе — оказываются в начале
+            новой строки если ссылка сместилась. */}
+        <p className="leading-relaxed">
           <a href="/legal/offer.html"                target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Оферта</a>
+          {' · '}
           <a href="/legal/privacy-policy"            target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Политика</a>
+          {' · '}
           <a href="/legal/personal-data-consent"     target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Согласие</a>
+          {' · '}
           <a href="/legal/data-processing-agreement" target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Поручение ПДн</a>
+          {' · '}
           <a href="/legal/referral-program"          target="_blank" rel="noreferrer" className="hover:text-zinc-700 underline-offset-2 hover:underline">Реферальная программа</a>
-        </div>
+        </p>
       </footer>
 
       {/* Модалка «Забыли пароль?» — рендерится поверх login-карточки. */}
