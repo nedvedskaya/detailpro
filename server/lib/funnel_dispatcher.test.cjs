@@ -21,9 +21,14 @@ const { pickEventKind, isInSendingWindow } = require('./funnel_dispatcher.cjs');
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-function makeStudio({ daysExpired, paid }) {
+function makeStudio({ daysExpired, paid, hoursUntilExpiry }) {
+  // hoursUntilExpiry > 0 — подписка ещё активна, истечёт через N часов
+  // daysExpired >= 0 — подписка истекла N дней назад
+  const offsetMs = hoursUntilExpiry != null
+    ? -hoursUntilExpiry * 60 * 60 * 1000  // в будущем
+    : daysExpired * ONE_DAY_MS;            // в прошлом
   return {
-    access_until: new Date(Date.now() - daysExpired * ONE_DAY_MS).toISOString(),
+    access_until: new Date(Date.now() - offsetMs).toISOString(),
     first_paid_at: paid ? new Date('2026-01-01').toISOString() : null,
   };
 }
@@ -47,6 +52,17 @@ test('pickEventKind: s1 (никогда не платил)', () => {
   // T+30 и далее — поздно
   assert.equal(pickEventKind(makeStudio({ daysExpired: 30, paid: false })), null);
   assert.equal(pickEventKind(makeStudio({ daysExpired: 100, paid: false })), null);
+});
+
+test('pickEventKind: s1.trial_last_day (за 24ч до конца trial)', () => {
+  // Через 12 часов истечёт, не платил → trial_last_day
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 12, paid: false })), 's1.trial_last_day');
+  // На границе 24 часа
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 24, paid: false })), 's1.trial_last_day');
+  // 25 часов — слишком рано
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 25, paid: false })), null);
+  // Платным эту ветку не шлём
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 12, paid: true })), null);
 });
 
 test('pickEventKind: s2 (платил, истёк)', () => {

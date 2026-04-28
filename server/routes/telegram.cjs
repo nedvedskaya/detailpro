@@ -798,6 +798,7 @@ async function dispatchCallback(cb) {
     if (data === 'admin:overview') return handleAdminOverview(fakeMsg);
     if (data === 'admin:reg')      return handleAdminRegistrations(fakeMsg);
     if (data === 'admin:pay')      return handleAdminPayments(fakeMsg);
+    if (data === 'admin:funnel')   return handleAdminFunnel(fakeMsg);
     return;
   }
 
@@ -1473,6 +1474,9 @@ const ADMIN_INLINE = {
       { text: '💰 Платежи (20)',     callback_data: 'admin:pay' },
     ],
     [
+      { text: '🎯 Воронка / метрики', callback_data: 'admin:funnel' },
+    ],
+    [
       { text: '🔄 Обновить', callback_data: 'admin:overview' },
     ],
   ],
@@ -1628,6 +1632,87 @@ async function handleAdminPayments(message) {
   });
 }
 
+async function handleAdminFunnel(message) {
+  if (!isAdmin(message.from?.id)) return handleUnknown(message);
+  // 1. Конверсия trial → paid за 30 / 7 дней.
+  // 2. Среднее время от регистрации до первой оплаты (только для оплативших).
+  // 3. По каждой точке воронки: отправлено / кликнуто / % CTR.
+  // 4. На воронке прямо сейчас — сколько студий в каком сегменте.
+  const [convRes, ttpRes, funnelRes, currentRes] = await Promise.all([
+    pool.query(`
+      SELECT
+        count(*) FILTER (WHERE created_at > now() - interval '30 days')::int AS total_30d,
+        count(*) FILTER (WHERE created_at > now() - interval '30 days' AND first_paid_at IS NOT NULL)::int AS paid_30d,
+        count(*) FILTER (WHERE created_at > now() - interval '7 days')::int  AS total_7d,
+        count(*) FILTER (WHERE created_at > now() - interval '7 days'  AND first_paid_at IS NOT NULL)::int AS paid_7d
+      FROM saas_meta.studios
+    `),
+    pool.query(`
+      SELECT
+        count(*)::int AS paid_studios,
+        avg(extract(epoch FROM first_paid_at - created_at) / 3600)::numeric(10,1) AS avg_hours,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM first_paid_at - created_at) / 3600)::numeric(10,1) AS median_hours
+      FROM saas_meta.studios
+      WHERE first_paid_at IS NOT NULL
+    `),
+    pool.query(`
+      SELECT event_kind,
+             count(*)::int AS sent,
+             count(*) FILTER (WHERE clicked_at IS NOT NULL)::int AS clicked
+        FROM saas_meta.funnel_events
+       GROUP BY event_kind
+       ORDER BY event_kind
+    `),
+    pool.query(`
+      SELECT
+        count(*) FILTER (WHERE access_until < now() AND first_paid_at IS NULL)::int  AS s1_active,
+        count(*) FILTER (WHERE access_until < now() AND first_paid_at IS NOT NULL)::int AS s2_active,
+        count(*) FILTER (WHERE access_until > now() AND access_until < now() + interval '24 hours' AND first_paid_at IS NULL)::int AS pre_expiry
+      FROM saas_meta.studios
+      WHERE deletion_requested_at IS NULL
+        AND (now() - access_until) < interval '31 days'
+    `),
+  ]);
+
+  const c = convRes.rows[0], t = ttpRes.rows[0], cur = currentRes.rows[0];
+  const conv30 = c.total_30d > 0 ? ((c.paid_30d * 100) / c.total_30d).toFixed(1) : '—';
+  const conv7  = c.total_7d  > 0 ? ((c.paid_7d  * 100) / c.total_7d ).toFixed(1) : '—';
+  const avgDays = t.avg_hours    ? (Number(t.avg_hours)    / 24).toFixed(1) : '—';
+  const medDays = t.median_hours ? (Number(t.median_hours) / 24).toFixed(1) : '—';
+
+  const funnelLines = funnelRes.rows.length === 0
+    ? ['(пока нет отправок)']
+    : funnelRes.rows.map(r => {
+        const pct = r.sent > 0 ? ((r.clicked * 100) / r.sent).toFixed(0) : '0';
+        return `   <code>${escapeHtmlSafe(r.event_kind)}</code> · отправлено ${r.sent} · клик ${r.clicked} (${pct}%)`;
+      });
+
+  const text = [
+    `🎯 <b>Воронка прогрева — метрики</b>`,
+    ``,
+    `<b>Конверсия trial → paid</b>`,
+    `   за 30 дней: <b>${c.paid_30d} из ${c.total_30d}</b> (${conv30}%)`,
+    `   за 7 дней: <b>${c.paid_7d} из ${c.total_7d}</b> (${conv7}%)`,
+    ``,
+    `<b>Время от регистрации до первой оплаты</b>`,
+    `   студий оплатило: ${t.paid_studios}`,
+    `   среднее: ${avgDays} дн. · медиана: ${medDays} дн.`,
+    ``,
+    `<b>Сейчас на воронке</b>`,
+    `   pre-expiry (≤24ч до истечения trial): ${cur.pre_expiry}`,
+    `   s1 (никогда не платил, истёк): ${cur.s1_active}`,
+    `   s2 (платил, истёк): ${cur.s2_active}`,
+    ``,
+    `<b>Точки воронки (отправки + клики)</b>`,
+    ...funnelLines,
+  ].join('\n');
+
+  await tg.sendMessage({
+    chatId: message.chat.id, kind: 'admin_funnel',
+    text, parseMode: 'HTML', replyMarkup: ADMIN_INLINE,
+  });
+}
+
 async function handleUnknown(message) {
   return handleStart(message, '');
 }
@@ -1707,6 +1792,9 @@ async function dispatchCommand(message, cmd, args) {
     case 'регистрации':     return handleAdminRegistrations(message);
     case 'payments':
     case 'платежи':         return handleAdminPayments(message);
+    case 'funnel':
+    case 'воронка':
+    case 'метрики':         return handleAdminFunnel(message);
     default:         return handleUnknown(message);
   }
 }

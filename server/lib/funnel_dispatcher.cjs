@@ -25,7 +25,7 @@
 const { pool } = require('./db.cjs');
 const tg = require('./telegram.cjs');
 const { applyGender } = require('./gender.cjs');
-const { S1, S2 } = require('./funnel_messages.cjs');
+const { S1, S1_PRE, S2 } = require('./funnel_messages.cjs');
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -48,6 +48,7 @@ const SCHEDULE = {
 };
 
 const RENDERERS = {
+  's1.trial_last_day':  (ctx) => S1_PRE['trial_last_day'](ctx),
   's1.day1':            (ctx) => S1['day1'](ctx),
   's1.day5_pain':       (ctx) => S1['day5_pain'](ctx),
   's1.day14_freedom':   (ctx) => S1['day14_freedom'](ctx),
@@ -104,8 +105,16 @@ async function findCandidates() {
       LEFT JOIN saas_meta.users u
              ON u.studio_id = s.id AND u.role = 'owner'
      WHERE s.access_until IS NOT NULL
-       AND s.access_until < now()                         -- истекло
-       AND (now() - s.access_until) < interval '31 days'  -- не старше 30 дней
+       AND (
+         -- POST-EXPIRY: подписка истекла, идёт основная воронка (T+1..+29).
+         (s.access_until < now() AND (now() - s.access_until) < interval '31 days')
+         -- PRE-EXPIRY: trial вот-вот закончится (последние 24 часа), и
+         -- юзер ни разу не платил. Платным эту ветку не шлём — они и так
+         -- знают про конец и продляют сами.
+         OR (s.access_until > now()
+             AND s.access_until < now() + interval '24 hours'
+             AND s.first_paid_at IS NULL)
+       )
        AND s.deletion_requested_at IS NULL
        AND u.tg_chat_id IS NOT NULL
        AND u.tg_blocked_at IS NULL
@@ -118,10 +127,22 @@ async function findCandidates() {
  * Возвращаем kind или null если никакая точка не подходит.
  */
 function pickEventKind(studio) {
+  const accessMs = new Date(studio.access_until).getTime();
+  const nowMs = Date.now();
+
+  // PRE-EXPIRY: подписка ещё активна, но истечёт в ближайшие 24 часа.
+  // Только для не-плативших (s1) — платных предупреждать иначе, отдельно.
+  if (accessMs > nowMs && !studio.first_paid_at) {
+    const hoursUntilExpiry = (accessMs - nowMs) / (60 * 60 * 1000);
+    if (hoursUntilExpiry > 0 && hoursUntilExpiry <= 24) {
+      return 's1.trial_last_day';
+    }
+    return null;
+  }
+
+  // POST-EXPIRY: основная воронка по дням после истечения.
   const segment = studio.first_paid_at ? 's2' : 's1';
-  const daysSinceExpiry = Math.floor(
-    (Date.now() - new Date(studio.access_until).getTime()) / ONE_DAY_MS
-  );
+  const daysSinceExpiry = Math.floor((nowMs - accessMs) / ONE_DAY_MS);
   const schedule = SCHEDULE[segment];
   // Сравниваем с допуском ±0 — мы и так шлём только в часовое окно 11:00.
   // Если cron упал на сутки и пропустил T+5 — в T+6 уже не догоняем

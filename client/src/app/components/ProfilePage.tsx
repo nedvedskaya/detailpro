@@ -2126,31 +2126,50 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             )}
           </div>
 
-          {/* 2 карточки: Соло и Студия. Каждая — с двумя кнопками (мес/год). */}
-          <div className="px-6 pb-2">
-            <p className="text-xs text-zinc-500 mb-4">
-              Выберите подходящий тариф. Оплата — через Prodamus, чек придёт на email автоматически.
-            </p>
-            {/* Чекбокс с офертой теперь живёт ВНУТРИ каждой карточки (под
-                кнопками оплаты), стейт общий через acceptOffer/setAcceptOffer.
-                Раньше один чекбокс над карточками плохо находился глазами
-                на iOS — пользователь думал, что «там белый экран». */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
-              {TARIFF_GROUPS.map((group) => (
-                <TariffCardView
-                  key={group.id}
-                  group={group}
-                  isCurrent={currentGroup === group.id}
-                  email={user.email}
-                  bonusBalanceKop={studio.bonusBalanceKop || 0}
-                  proratedMonthlyRub={group.id === 'studio' ? proratedMonthlyRub : 0}
-                  proratedYearlyRub={group.id === 'studio' ? proratedYearlyRub : 0}
-                  acceptOffer={acceptOffer}
-                  setAcceptOffer={setAcceptOffer}
-                />
-              ))}
+          {/* Менеджер/мастер не управляет подпиской. Вместо карточек тарифов
+              показываем им информационный блок «попроси собственника». Это
+              честнее, чем рендерить кнопки «Оплатить», которые на сервере
+              приведут к 403 only_owner. */}
+          {!canManageSubscription(role) ? (
+            <div className="mx-6 mb-5 p-4 rounded-xl bg-blue-50 border border-blue-200">
+              <p className="text-sm text-blue-900 font-semibold mb-1">
+                Подписку оформляет собственник студии
+              </p>
+              <p className="text-xs text-blue-800 leading-snug">
+                У вашей роли нет прав на оплату тарифа. Если подписка истекла или скоро закончится —
+                сообщите собственнику, чтобы он зашёл в свой профиль и оформил оплату.
+                Все ваши данные сохранены, доступ восстановится сразу после оплаты.
+              </p>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* 2 карточки: Соло и Студия. Каждая — с двумя кнопками (мес/год). */}
+              <div className="px-6 pb-2">
+                <p className="text-xs text-zinc-500 mb-4">
+                  Выберите подходящий тариф. Оплата — через Prodamus, чек придёт на email автоматически.
+                </p>
+                {/* Чекбокс с офертой теперь живёт ВНУТРИ каждой карточки (под
+                    кнопками оплаты), стейт общий через acceptOffer/setAcceptOffer.
+                    Раньше один чекбокс над карточками плохо находился глазами
+                    на iOS — пользователь думал, что «там белый экран». */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
+                  {TARIFF_GROUPS.map((group) => (
+                    <TariffCardView
+                      key={group.id}
+                      group={group}
+                      isCurrent={currentGroup === group.id}
+                      email={user.email}
+                      bonusBalanceKop={studio.bonusBalanceKop || 0}
+                      proratedMonthlyRub={group.id === 'studio' ? proratedMonthlyRub : 0}
+                      proratedYearlyRub={group.id === 'studio' ? proratedYearlyRub : 0}
+                      acceptOffer={acceptOffer}
+                      setAcceptOffer={setAcceptOffer}
+                    />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Подсказка про апгрейд Соло → Студия */}
           {currentGroup === 'solo' && (
