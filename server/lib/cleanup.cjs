@@ -59,14 +59,25 @@ const APP_ORIGIN = (process.env.APP_ORIGIN || 'https://detailprocrm.ru').replace
 // ──────────────────────────────────────────────────────────────────────
 
 /**
- * Студии, у которых access_until истекло > RETENTION_AFTER_EXPIRY_DAYS дней
- * назад и нет недавних платежей со статусом paid. Возвращаем максимум
- * DELETE_BATCH_LIMIT записей с метаданными owner-а для логов и финального
- * notification.
+ * Студии, которые пора удалить. Два независимых пути:
+ *
+ *   A. Брошенные: access_until истекло > RETENTION_AFTER_EXPIRY_DAYS дней
+ *      назад и нет недавних платежей со статусом paid (юзер не платит,
+ *      молчит, бросил аккаунт).
+ *
+ *   B. Запрошенные на удаление: owner нажал «Удалить аккаунт» в Профиле
+ *      (deletion_requested_at) и прошло > RETENTION_AFTER_EXPIRY_DAYS
+ *      дней. По 152-ФЗ это право субъекта — удаляем НЕЗАВИСИМО от
+ *      того, есть ли активная подписка. Деньги не возвращаются (см.
+ *      раздел 3.6 / 10.2 Договора-оферты).
+ *
+ * Возвращаем максимум DELETE_BATCH_LIMIT записей с метаданными owner-а
+ * для логов и финального notification.
  */
 async function findExpiredStudios(client = pool) {
   const r = await client.query(
-    `SELECT s.id, s.schema_name, s.display_name, s.plan, s.access_until, s.created_at,
+    `SELECT s.id, s.schema_name, s.display_name, s.plan, s.access_until,
+            s.created_at, s.deletion_requested_at,
             u.id      AS owner_id,
             u.email   AS owner_email,
             u.tg_chat_id,
@@ -75,14 +86,24 @@ async function findExpiredStudios(client = pool) {
        FROM saas_meta.studios s
        LEFT JOIN saas_meta.users u
               ON u.studio_id = s.id AND u.role = 'owner'
-      WHERE s.access_until < (now() - ($1 || ' days')::interval)
-        AND NOT EXISTS (
-          SELECT 1 FROM saas_meta.payments p
-           WHERE p.studio_id = s.id
-             AND p.status = 'paid'
-             AND p.received_at > (now() - ($1 || ' days')::interval)
+      WHERE
+        -- A. Брошенный: подписка истекла > N дней назад и нет недавних
+        -- paid-платежей (защита от удаления юзера, который только что заплатил
+        -- и webhook ещё не обновил access_until).
+        ( s.access_until < (now() - ($1 || ' days')::interval)
+          AND NOT EXISTS (
+            SELECT 1 FROM saas_meta.payments p
+             WHERE p.studio_id = s.id
+               AND p.status = 'paid'
+               AND p.received_at > (now() - ($1 || ' days')::interval)
+          )
         )
-      ORDER BY s.access_until ASC
+        OR
+        -- B. Юзер запросил удаление > N дней назад (152-ФЗ право субъекта).
+        ( s.deletion_requested_at IS NOT NULL
+          AND s.deletion_requested_at < (now() - ($1 || ' days')::interval)
+        )
+      ORDER BY COALESCE(s.deletion_requested_at, s.access_until) ASC
       LIMIT $2`,
     [String(RETENTION_AFTER_EXPIRY_DAYS), DELETE_BATCH_LIMIT]
   );

@@ -43,7 +43,11 @@ function sessionTtlMs() {
 // Активный юзер своё last_used_at двигает каждым запросом — для него
 // эффективного ограничения нет.
 function sessionIdleMs() {
-  const hours = Number(process.env.SESSION_IDLE_HOURS) || 14 * 24; // 14 дней
+  // 3 дня idle (а не 14): для финансово-чувствительного SaaS это разумный
+  // баланс между UX и безопасностью. Активный юзер своё last_used_at
+  // двигает каждым запросом, на него ограничение не давит. Похищенный
+  // cookie живёт максимум 3 дня, а не 2 недели.
+  const hours = Number(process.env.SESSION_IDLE_HOURS) || 72;
   return hours * 60 * 60 * 1000;
 }
 
@@ -228,7 +232,7 @@ async function invalidateAllStudioSessions(studioId) {
  * Дропает: (а) absolute-TTL истёкшие, (б) idle-TTL истёкшие.
  */
 async function cleanupExpiredSessions() {
-  const idleHours = Number(process.env.SESSION_IDLE_HOURS) || 14 * 24;
+  const idleHours = Number(process.env.SESSION_IDLE_HOURS) || 72;
   const { rowCount } = await pool.query(
     `DELETE FROM saas_meta.sessions
        WHERE expires_at <= now()

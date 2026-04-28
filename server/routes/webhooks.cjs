@@ -646,6 +646,65 @@ router.post('/prodamus', rawParser, async (req, res) => {
             WHERE id = $1`,
           [studioId]
         );
+
+        // Реверс реферального бонуса: если за этот платёж рефереру был
+        // начислен credit-event (1 250 ₽ по реф-программе), снимаем его
+        // с баланса. Условия 7.3 Реферальной программы прямо это
+        // предусматривают: «Если Реферал инициировал возврат… Исполнитель
+        // вправе списать соответствующий Бонус».
+        //
+        // FOR UPDATE — защита от гонки: если параллельно идёт другой webhook
+        // или intent, они блокируются на этой строке до COMMIT.
+        const credit = await client.query(
+          `SELECT studio_id AS referrer_id, amount_kop
+             FROM saas_meta.referral_events
+            WHERE payment_order_id = $1 AND kind = 'credit'
+            FOR UPDATE`,
+          [orderId]
+        );
+        if (credit.rowCount > 0) {
+          const { referrer_id: referrerId, amount_kop: amount } = credit.rows[0];
+          // Снимаем не больше, чем сейчас на балансе — иначе уйдём в минус.
+          // Если реферер уже потратил эти бонусы на свою подписку (полностью
+          // или частично) — снимаем сколько есть, остальное «прощаем».
+          // Альтернатива: запросить с реферера деньги — но это ломает UX
+          // и в Договоре-оферте п. 3.6 сказано «Возврат средств не
+          // производится» (для реферера это де-факто чужой возврат, не его).
+          const balRow = await client.query(
+            `SELECT bonus_balance_kop FROM saas_meta.studios
+              WHERE id = $1 FOR UPDATE`,
+            [referrerId]
+          );
+          const have = Number(balRow.rows[0]?.bonus_balance_kop || 0);
+          const toReverse = Math.min(have, Number(amount) || 0);
+          if (toReverse > 0) {
+            await client.query(
+              `UPDATE saas_meta.studios
+                  SET bonus_balance_kop = bonus_balance_kop - $1
+                WHERE id = $2`,
+              [toReverse, referrerId]
+            );
+            // referral_events.kind CHECK содержит ('credit', 'debit') —
+            // reverse-операцию пишем как 'debit' с положительной суммой
+            // (CHECK amount_kop > 0). UNIQUE(payment_order_id, kind) НЕ
+            // помешает: на этот order_id есть credit, а debit ещё нет.
+            await client.query(
+              `INSERT INTO saas_meta.referral_events
+                 (studio_id, source_studio_id, kind, amount_kop, payment_order_id)
+               VALUES ($1, $2, 'debit', $3, $4)
+               ON CONFLICT (payment_order_id, kind)
+               WHERE payment_order_id IS NOT NULL DO NOTHING`,
+              [referrerId, studioId, toReverse, orderId]
+            );
+          } else {
+            // Реверс на 0 ₽ — реферер уже потратил всё. Пишем в обычный
+            // лог (не в referral_events, т.к. CHECK amount_kop > 0).
+            console.warn(
+              `[referral] reverse=0 for refunded order ${orderId}: ` +
+              `referrer ${referrerId} already spent the credit (${amount} kop).`
+            );
+          }
+        }
       }
 
       await client.query(

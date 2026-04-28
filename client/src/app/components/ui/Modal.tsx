@@ -48,6 +48,22 @@ export const Modal = ({
     };
   }, [isOpen]);
 
+  // Закрытие по Esc (a11y / WCAG). Для вложенных модалок проверяем, что
+  // эта — самая внешняя из открытых на текущий момент: если есть
+  // child-modal, Esc должен закрывать только её, а не нашу. Делаем это
+  // через capture+stopPropagation в child'е, либо просто через сравнение
+  // счётчика — но вложенный кейс редкий, проще: всегда закрываем верхнюю.
+  // На практике у нас не больше одной модалки одновременно (picker внутри
+  // WorkOrderForm — отдельный bottom-sheet, не Modal-компонент).
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const maxWidthClasses = {
