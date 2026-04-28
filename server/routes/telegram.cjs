@@ -44,6 +44,18 @@ const SUPPORT_CHAT_ID = process.env.SUPPORT_TG_CHAT_ID
   ? Number(process.env.SUPPORT_TG_CHAT_ID)
   : null;
 
+// Telegram-ID Оли (владельца SaaS). Команды /админ /регистрации /платежи
+// доступны ТОЛЬКО ей. Любой другой юзер, пытающийся ввести эти команды,
+// получит обычное /start-приветствие — admin-функционал прячется как
+// несуществующий, чтобы не палить факт его наличия.
+//
+// Жёсткий хардкод вместо ENV: id привязан к человеку, не к окружению,
+// и не должен случайно «утечь» через .env.example в публичный репозиторий.
+const ADMIN_TG_USER_ID = '472538427';
+function isAdmin(tgUserId) {
+  return String(tgUserId) === ADMIN_TG_USER_ID;
+}
+
 // TTL стейта «жду сообщение в поддержку» — иначе случайный текст недели спустя
 // попадёт в support_requests как обращение.
 const STATE_TTL_MS = 15 * 60 * 1000;
@@ -776,6 +788,19 @@ async function dispatchCallback(cb) {
     return handleHelp({ chat: { id: chatId }, from: tgUser });
   }
 
+  // ── Админ-callback'и ───────────────────────────────────────────────
+  // Идут ДО проверки linked, потому что админ может работать с ботом
+  // безотносительно к привязке к студии. Не-админу эти callback-data
+  // тихо игнорируем (return), чтобы не палить факт админки.
+  if (data.startsWith('admin:')) {
+    if (!isAdmin(tgUser.id)) return;
+    const fakeMsg = { chat: { id: chatId }, from: tgUser };
+    if (data === 'admin:overview') return handleAdminOverview(fakeMsg);
+    if (data === 'admin:reg')      return handleAdminRegistrations(fakeMsg);
+    if (data === 'admin:pay')      return handleAdminPayments(fakeMsg);
+    return;
+  }
+
   // Все остальные наши callback'и требуют привязанного пользователя.
   const linked = await findLinkedUser(tgUser.id);
   if (!linked) {
@@ -1309,6 +1334,200 @@ async function handleSupportReply(message) {
   return true;
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Админ-панель: /админ /регистрации /платежи. Только для Оли (ADMIN_TG_USER_ID).
+//
+// Цель: дать владельцу SaaS быстрый срез по всем студиям прямо из чата,
+// без ходов в Postgres. Запросы тяжёлые на больших объёмах не дают —
+// 5 SELECT'ов с агрегацией, COUNT FILTER, LIMIT 5/20.
+//
+// Гейтинг: если tg_user_id ≠ ADMIN_TG_USER_ID — ведём себя как «команда
+// не найдена» (handleUnknown / handleStart), чтобы не раскрывать наличие
+// админки чужому юзеру, который случайно угадает команду.
+// ──────────────────────────────────────────────────────────────────────
+
+function fmtRubKop(kop) {
+  // 489900 коп → «4 899 ₽» (без копеек, неразрывный пробел разрядов).
+  const rub = Math.round((Number(kop) || 0) / 100);
+  return rub.toLocaleString('ru-RU').replace(/\s/g, ' ') + ' ₽';
+}
+function fmtDateTimeShort(d) {
+  // 2026-04-28T09:32:56Z → «28.04 12:32» (МСК). Используем moscow-time форматтер,
+  // чтобы Оля видела время в её часовом поясе, а не в UTC.
+  if (!d) return '—';
+  const fmt = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: 'Europe/Moscow',
+    day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+  return fmt.format(new Date(d));
+}
+function escapeHtmlSafe(s) {
+  return tg.escapeHtml(String(s == null ? '' : s));
+}
+
+const ADMIN_INLINE = {
+  inline_keyboard: [
+    [
+      { text: '📋 Регистрации (20)', callback_data: 'admin:reg' },
+      { text: '💰 Платежи (20)',     callback_data: 'admin:pay' },
+    ],
+    [
+      { text: '🔄 Обновить', callback_data: 'admin:overview' },
+    ],
+  ],
+};
+
+async function buildAdminOverviewText() {
+  const [studiosRes, byPlanRes, paymentsRes, tgRes, lastStudiosRes, lastPaymentsRes] =
+    await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)::int                                                                     AS total,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 day')::int   AS today,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '7 days')::int  AS week,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '30 days')::int AS month,
+          COUNT(*) FILTER (WHERE is_active = TRUE AND plan <> 'cancelled')::int AS active
+        FROM saas_meta.studios`),
+      pool.query(`
+        SELECT plan, COUNT(*)::int AS n FROM saas_meta.studios
+         WHERE is_active = TRUE
+         GROUP BY plan ORDER BY plan`),
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE processed_at >= now() - interval '1 day')::int   AS today_n,
+          COALESCE(SUM(amount_kop) FILTER (WHERE processed_at >= now() - interval '1 day'),   0)::bigint AS today_kop,
+          COUNT(*) FILTER (WHERE processed_at >= now() - interval '7 days')::int  AS week_n,
+          COALESCE(SUM(amount_kop) FILTER (WHERE processed_at >= now() - interval '7 days'),  0)::bigint AS week_kop,
+          COUNT(*) FILTER (WHERE processed_at >= now() - interval '30 days')::int AS month_n,
+          COALESCE(SUM(amount_kop) FILTER (WHERE processed_at >= now() - interval '30 days'), 0)::bigint AS month_kop
+        FROM saas_meta.payments WHERE status = 'paid'`),
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE tg_user_id IS NOT NULL)::int AS tg_total,
+          COUNT(*) FILTER (WHERE tg_user_id IS NOT NULL AND tg_linked_at >= now() - interval '1 day')::int AS tg_today
+        FROM saas_meta.users`),
+      pool.query(`
+        SELECT s.display_name, s.plan, s.created_at,
+               u.email, u.tg_username, u.tg_user_id
+          FROM saas_meta.studios s
+          LEFT JOIN saas_meta.users u ON u.studio_id = s.id AND u.role = 'owner'
+         ORDER BY s.created_at DESC LIMIT 5`),
+      pool.query(`
+        SELECT p.processed_at, p.amount_kop, p.plan,
+               s.display_name
+          FROM saas_meta.payments p
+          LEFT JOIN saas_meta.studios s ON s.id = p.studio_id
+         WHERE p.status = 'paid'
+         ORDER BY p.processed_at DESC LIMIT 5`),
+    ]);
+
+  const s = studiosRes.rows[0];
+  const p = paymentsRes.rows[0];
+  const tgStats = tgRes.rows[0];
+
+  const planSummary = byPlanRes.rows.length
+    ? byPlanRes.rows.map((r) => `${r.plan}: ${r.n}`).join(' · ')
+    : '—';
+
+  const lastStudios = lastStudiosRes.rows.length
+    ? lastStudiosRes.rows.map((r) => {
+        const tg = r.tg_username ? `@${escapeHtmlSafe(r.tg_username)}` :
+                   r.tg_user_id  ? `id ${r.tg_user_id}` : 'tg —';
+        return `• <b>${escapeHtmlSafe(r.display_name)}</b> — ${escapeHtmlSafe(r.email || '—')}, ${tg}, <i>${escapeHtmlSafe(r.plan)}</i>, ${fmtDateTimeShort(r.created_at)}`;
+      }).join('\n')
+    : '—';
+
+  const lastPayments = lastPaymentsRes.rows.length
+    ? lastPaymentsRes.rows.map((r) =>
+        `• <b>${escapeHtmlSafe(r.display_name || '—')}</b> — ${fmtRubKop(r.amount_kop)}, <i>${escapeHtmlSafe(r.plan || '—')}</i>, ${fmtDateTimeShort(r.processed_at)}`
+      ).join('\n')
+    : '—';
+
+  return [
+    `📊 <b>АДМИН-ПАНЕЛЬ</b>`,
+    `<i>${fmtDateTimeShort(new Date())} МСК</i>`,
+    ``,
+    `👥 <b>Студии</b>: ${s.total} всего`,
+    `   сегодня: ${s.today} · неделя: ${s.week} · месяц: ${s.month}`,
+    `   активных: ${s.active} (${planSummary})`,
+    ``,
+    `💰 <b>Платежи</b> (paid):`,
+    `   сегодня: ${p.today_n} шт. — ${fmtRubKop(p.today_kop)}`,
+    `   неделя:  ${p.week_n} шт. — ${fmtRubKop(p.week_kop)}`,
+    `   месяц:   ${p.month_n} шт. — ${fmtRubKop(p.month_kop)}`,
+    ``,
+    `📲 <b>Telegram</b>: ${tgStats.tg_total} всего · +${tgStats.tg_today} за сутки`,
+    ``,
+    `📝 <b>Последние регистрации</b>:`,
+    lastStudios,
+    ``,
+    `💸 <b>Последние платежи</b>:`,
+    lastPayments,
+  ].join('\n');
+}
+
+async function handleAdminOverview(message) {
+  if (!isAdmin(message.from?.id)) return handleUnknown(message);
+  let text;
+  try { text = await buildAdminOverviewText(); }
+  catch (err) {
+    console.error('[admin] overview failed:', err.message);
+    text = `⚠️ Не удалось собрать обзор: ${escapeHtmlSafe(err.message)}`;
+  }
+  await tg.sendMessage({
+    chatId: message.chat.id, kind: 'admin_overview',
+    text, parseMode: 'HTML', replyMarkup: ADMIN_INLINE,
+  });
+}
+
+async function handleAdminRegistrations(message) {
+  if (!isAdmin(message.from?.id)) return handleUnknown(message);
+  const r = await pool.query(`
+    SELECT s.display_name, s.plan, s.created_at, s.access_until,
+           u.email, u.tg_username, u.tg_user_id
+      FROM saas_meta.studios s
+      LEFT JOIN saas_meta.users u ON u.studio_id = s.id AND u.role = 'owner'
+     ORDER BY s.created_at DESC LIMIT 20`);
+  const lines = r.rows.length === 0
+    ? ['Регистраций пока нет.']
+    : r.rows.map((x, i) => {
+        const tg = x.tg_username ? `@${escapeHtmlSafe(x.tg_username)}` :
+                   x.tg_user_id  ? `id ${x.tg_user_id}` : 'tg —';
+        return `${i + 1}. <b>${escapeHtmlSafe(x.display_name)}</b> · <i>${escapeHtmlSafe(x.plan)}</i>\n` +
+               `   ${escapeHtmlSafe(x.email || '—')} · ${tg}\n` +
+               `   рег: ${fmtDateTimeShort(x.created_at)} · до: ${fmtDateTimeShort(x.access_until)}`;
+      });
+  await tg.sendMessage({
+    chatId: message.chat.id, kind: 'admin_regs',
+    text: `📋 <b>Последние ${r.rows.length} регистраций</b>\n\n` + lines.join('\n\n'),
+    parseMode: 'HTML',
+  });
+}
+
+async function handleAdminPayments(message) {
+  if (!isAdmin(message.from?.id)) return handleUnknown(message);
+  const r = await pool.query(`
+    SELECT p.order_id, p.processed_at, p.amount_kop, p.plan, p.status,
+           s.display_name
+      FROM saas_meta.payments p
+      LEFT JOIN saas_meta.studios s ON s.id = p.studio_id
+     ORDER BY p.received_at DESC LIMIT 20`);
+  const lines = r.rows.length === 0
+    ? ['Платежей пока нет.']
+    : r.rows.map((x, i) => {
+        const statusEmoji = x.status === 'paid' ? '✅' : x.status === 'refunded' ? '↩️' : x.status === 'failed' ? '❌' : '⏳';
+        return `${i + 1}. ${statusEmoji} <b>${escapeHtmlSafe(x.display_name || '—')}</b> · <i>${escapeHtmlSafe(x.plan || '—')}</i>\n` +
+               `   ${fmtRubKop(x.amount_kop)} · ${fmtDateTimeShort(x.processed_at)}\n` +
+               `   <code>${escapeHtmlSafe(x.order_id)}</code>`;
+      });
+  await tg.sendMessage({
+    chatId: message.chat.id, kind: 'admin_pays',
+    text: `💰 <b>Последние ${r.rows.length} платежей</b>\n\n` + lines.join('\n\n'),
+    parseMode: 'HTML',
+  });
+}
+
 async function handleUnknown(message) {
   return handleStart(message, '');
 }
@@ -1371,6 +1590,14 @@ async function dispatchCommand(message, cmd, args) {
     case 'balance':  return handleTariffs(message); // alias: бонусы внутри тарифов
     case 'time':                                     // официальная (латиница)
     case 'время':    return handleDailyTimeCommand(message);
+    // Админ-команды (гейтинг внутри хендлеров — для не-админа выглядят
+    // как несуществующие, чтобы не палить наличие админки).
+    case 'admin':
+    case 'админ':           return handleAdminOverview(message);
+    case 'registrations':
+    case 'регистрации':     return handleAdminRegistrations(message);
+    case 'payments':
+    case 'платежи':         return handleAdminPayments(message);
     default:         return handleUnknown(message);
   }
 }
