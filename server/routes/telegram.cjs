@@ -362,7 +362,7 @@ async function clearState(tgUserId) {
 async function findLinkedUser(tgUserId) {
   if (!tgUserId) return null;
   const r = await pool.query(
-    `SELECT u.id, u.email, u.name, u.role, u.studio_id, u.tg_chat_id, u.gender,
+    `SELECT u.id, u.email, u.name, u.first_name, u.role, u.studio_id, u.tg_chat_id, u.gender,
             s.referral_code, s.bonus_balance_kop,
             s.display_name AS studio_name, s.plan, s.access_until,
             s.timezone, s.timezone_set,
@@ -949,6 +949,103 @@ async function dispatchCallback(cb) {
     });
     await sendOnboardingDone(chatId, linked.id, 'owner');
     return;
+  }
+
+  // ── funnel:s1.day1:b1..b4 — кнопки касдева Дня 1 для не-плативших ───
+  // На b1 даём +1 бесплатный день к access_until (один раз навсегда —
+  // защищено флагом trial_extension_used_at).
+  // На b2 переводим юзера в support-pipeline: ответ-текст уйдёт в
+  // саппорт, как обычный /help.
+  // На b3, b4 — простые ответы с кнопками.
+  if (data.startsWith('funnel:')) {
+    const { S1_DAY1_REPLIES } = require('../lib/funnel_messages.cjs');
+    // Снимаем кнопки у исходного сообщения, чтобы не нажали повторно.
+    await tg.editMessageReplyMarkup(chatId, messageId, null).catch(() => {});
+
+    // Считаем клик в funnel_events (для аналитики конверсии).
+    const eventKind = data.split(':')[1] || ''; // 's1.day1'
+    const action = data.split(':')[2] || '';    // 'b1'..'b4'
+    await pool.query(
+      `UPDATE saas_meta.funnel_events
+          SET clicked_at = COALESCE(clicked_at, now()),
+              click_value = COALESCE(click_value, '{}'::jsonb) || jsonb_build_object('action', $3::text)
+        WHERE studio_id = $1 AND event_kind = $2`,
+      [linked.studio_id, eventKind, action]
+    ).catch(e => console.error('[funnel] click update failed:', e.message));
+
+    const ctx = { name: linked.first_name || null, referralCode: linked.referral_code || null };
+
+    if (action === 'b1') {
+      // +1 день. Только если ни разу ещё не давали. CASE-выражение
+      // защищает от двойного нажатия (даже если editMessageReplyMarkup
+      // не сработал) и от одновременных кликов.
+      const upd = await pool.query(
+        `UPDATE saas_meta.studios
+            SET access_until = GREATEST(COALESCE(access_until, now()), now()) + interval '1 day',
+                trial_extension_used_at = now(),
+                updated_at = now()
+          WHERE id = $1 AND trial_extension_used_at IS NULL
+          RETURNING access_until`,
+        [linked.studio_id]
+      );
+      const reply = S1_DAY1_REPLIES.b1();
+      const text = upd.rowCount === 0
+        ? applyGender(
+            `Бонусный день уже использован раньше — но ссылка работает, заглядывай в СРМ 🚀`,
+            linked.gender
+          )
+        : applyGender(reply.text, linked.gender);
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'funnel.s1.day1.b1',
+        text,
+        parseMode: 'HTML',
+        replyMarkup: reply.inline_keyboard ? { inline_keyboard: reply.inline_keyboard } : undefined,
+      });
+      return;
+    }
+
+    if (action === 'b2') {
+      // Переводим юзера в режим «жду сообщение в поддержку» — следующее
+      // его текстовое сообщение dispatchMessage заберёт в handleSupportMessage
+      // и перешлёт админу. Чтобы пользователь увидел осмысленный ответ
+      // именно от воронки, отправляем ему prompt с правильным текстом.
+      await setState(tgUser.id, 'awaiting_support_message');
+      const reply = S1_DAY1_REPLIES.b2();
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'funnel.s1.day1.b2',
+        text: applyGender(reply.text, linked.gender),
+        parseMode: 'HTML',
+      });
+      return;
+    }
+
+    if (action === 'b3') {
+      const reply = S1_DAY1_REPLIES.b3(ctx);
+      const inline = reply.inline_keyboard?.map(row =>
+        row.map(btn => ({ ...btn, text: applyGender(btn.text, linked.gender) }))
+      );
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'funnel.s1.day1.b3',
+        text: applyGender(reply.text, linked.gender),
+        parseMode: 'HTML',
+        replyMarkup: inline ? { inline_keyboard: inline } : undefined,
+      });
+      return;
+    }
+
+    if (action === 'b4') {
+      const reply = S1_DAY1_REPLIES.b4();
+      const inline = reply.inline_keyboard?.map(row =>
+        row.map(btn => ({ ...btn, text: applyGender(btn.text, linked.gender) }))
+      );
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'funnel.s1.day1.b4',
+        text: applyGender(reply.text, linked.gender),
+        parseMode: 'HTML',
+        replyMarkup: inline ? { inline_keyboard: inline } : undefined,
+      });
+      return;
+    }
   }
 }
 

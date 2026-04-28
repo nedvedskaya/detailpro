@@ -25,6 +25,7 @@
 const { pool } = require('./db.cjs');
 const { cleanupExpiredSessions } = require('./auth.cjs');
 const reminders = require('./reminders.cjs');
+const funnelDispatcher = require('./funnel_dispatcher.cjs');
 const cleanup = require('./cleanup.cjs');
 const birthdays = require('./birthdays.cjs');
 
@@ -161,6 +162,18 @@ async function runOnce() {
   } catch (err) {
     console.error('[cron] birthdays failed:', err.message);
     result.errors.push({ job: 'birthdays', message: err.message });
+  }
+
+  // Воронка прогрева в Telegram. Шлёт T+1, +5, +14, +24, +29 после
+  // окончания access_until для двух сегментов (никогда не платил vs
+  // платил-истёк). Окно отправки — 11:00 локалки студии. Идемпотентно
+  // через UNIQUE на funnel_events (studio_id, event_kind).
+  try {
+    const dryRun = (process.env.FUNNEL_DRY_RUN || '').toLowerCase() === 'true';
+    result.funnel = await funnelDispatcher.runFunnel({ dryRun });
+  } catch (err) {
+    console.error('[cron] funnel dispatcher failed:', err.message);
+    result.errors.push({ job: 'funnel', message: err.message });
   }
 
   console.log(`[cron] runOnce finished in ${Date.now() - startedAt}ms`);

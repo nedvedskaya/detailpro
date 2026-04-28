@@ -280,24 +280,11 @@ async function runCleanup(opts = {}) {
   const startedAt = Date.now();
   const result = { warningsSent: 0, studiosDeleted: 0, errors: [] };
 
-  // 1. Warnings
-  let warnings = [];
-  try {
-    warnings = await findStudiosForWarning();
-  } catch (err) {
-    console.error('[cleanup] findStudiosForWarning failed:', err.message);
-    result.errors.push({ stage: 'find_warnings', message: err.message });
-  }
-
-  for (const s of warnings) {
-    try {
-      await sendWarning(s, { dryRun });
-      result.warningsSent++;
-    } catch (err) {
-      console.error(`[cleanup] sendWarning failed for studio ${s.id}:`, err.message);
-      result.errors.push({ stage: 'send_warning', studio_id: s.id, message: err.message });
-    }
-  }
+  // 1. Warnings — отключены: их функцию выполняет funnel_dispatcher
+  // (Day 24 = T+24 от access_until = за 7 дней до удаления). Раньше
+  // здесь шёл отдельный generic warning, который дублировал бы новый
+  // FOMO-текст воронки.
+  const warnings = [];
 
   // 2. Deletions
   let candidates = [];
