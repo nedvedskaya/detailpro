@@ -742,13 +742,18 @@ interface TariffCardViewProps {
   email: string;
   // Баланс бонусов — для UI-превью скидки и подсказки «будет применено X ₽».
   bonusBalanceKop?: number;
+  // Pro-rata зачёт за неиспользованные дни Соло — показываем в карточке
+  // «Студия» как часть скидки, чтобы пользователь видел реальную сумму
+  // к доплате до перехода на платёжку. Реальная сумма считается на бэке.
+  proratedMonthlyRub?: number;
+  proratedYearlyRub?: number;
   // Согласие с офертой — общий стейт на родителе, чекбокс отображается
   // в каждой карточке (две колонки), но управляет одним и тем же полем.
   acceptOffer: boolean;
   setAcceptOffer: (v: boolean) => void;
 }
 
-const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOffer, setAcceptOffer }: TariffCardViewProps) => {
+const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, proratedMonthlyRub = 0, proratedYearlyRub = 0, acceptOffer, setAcceptOffer }: TariffCardViewProps) => {
   // Состояние «идёт запрос intent'а» — чтобы заблокировать кнопку и
   // не дать создать два intent'а параллельно (каждый одноразовый,
   // второй пропадёт впустую).
@@ -771,8 +776,18 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOf
   // UI-превью: сколько применится бонусов на месячном/годовом — для
   // перечёркнутой цены и подписи внизу карточки. Реальное значение
   // считает сервер при создании intent'а.
-  const monthlyUse = calcBonusUsage(group.monthly.priceRub, bonusBalanceKop);
-  const yearlyUse  = calcBonusUsage(group.yearly.priceRub,  bonusBalanceKop);
+  // Pro-rata зачёт от Соло применяется ДО бонусов: вычитаем его сначала,
+  // и только из остатка считаем сколько бонусов влезет (с учётом MIN 50 ₽).
+  // Эта последовательность совпадает с серверной (payments.cjs).
+  const monthlyAfterProrate = Math.max(0, group.monthly.priceRub - proratedMonthlyRub);
+  const yearlyAfterProrate  = Math.max(0, group.yearly.priceRub  - proratedYearlyRub);
+  const monthlyUse = calcBonusUsage(monthlyAfterProrate, bonusBalanceKop);
+  const yearlyUse  = calcBonusUsage(yearlyAfterProrate,  bonusBalanceKop);
+  // Итоговая «к доплате» = (цена − pro-rate − бонусы), но не ниже MIN_PAYABLE_RUB.
+  const monthlyFinalRub = Math.max(MIN_PAYABLE_RUB, monthlyUse.finalRub);
+  const yearlyFinalRub  = Math.max(MIN_PAYABLE_RUB, yearlyUse.finalRub);
+  const monthlyHasDiscount = proratedMonthlyRub > 0 || monthlyUse.useKop > 0;
+  const yearlyHasDiscount  = proratedYearlyRub  > 0 || yearlyUse.useKop  > 0;
 
   // Студия: оранжевая рамка + лёгкий tint, бейдж «ПОПУЛЯРНО».
   // Соло: нейтральная рамка.
@@ -842,12 +857,12 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOf
         }
       >
         <span className="text-xs">{busy === group.monthly.id ? 'Открываем…' : 'Оплатить на 1 месяц'}</span>
-        {monthlyUse.useKop > 0 ? (
+        {monthlyHasDiscount ? (
           <span className="mt-0.5 text-lg font-bold">
             <span className="line-through text-zinc-400 text-sm font-normal mr-2">
               {formatRub(group.monthly.priceRub)}
             </span>
-            {formatRub(monthlyUse.finalRub)}
+            {formatRub(monthlyFinalRub)}
           </span>
         ) : (
           <span className="mt-0.5 text-lg font-bold">{formatRub(group.monthly.priceRub)}</span>
@@ -875,12 +890,12 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOf
           </span>
         )}
         <span className="text-xs opacity-90">{busy === group.yearly.id ? 'Открываем…' : 'Оплатить на 12 месяцев'}</span>
-        {yearlyUse.useKop > 0 ? (
+        {yearlyHasDiscount ? (
           <span className="mt-0.5 text-lg font-bold">
             <span className="line-through opacity-70 text-sm font-normal mr-2">
               {formatRub(group.yearly.priceRub)}
             </span>
-            {formatRub(yearlyUse.finalRub)}
+            {formatRub(yearlyFinalRub)}
           </span>
         ) : (
           <span className="mt-0.5 text-lg font-bold">{formatRub(group.yearly.priceRub)}</span>
@@ -891,8 +906,13 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, acceptOf
         <p className="mt-2 text-xs text-red-500 text-center">{error}</p>
       )}
 
+      {(proratedMonthlyRub > 0 || proratedYearlyRub > 0) && (
+        <p className="mt-2 text-[11px] text-orange-700 text-center font-semibold">
+          Зачёт за неиспользованные дни Соло: до {formatRub(Math.max(proratedMonthlyRub, proratedYearlyRub))}
+        </p>
+      )}
       {(monthlyUse.useKop > 0 || yearlyUse.useKop > 0) && (
-        <p className="mt-2 text-[11px] text-emerald-700 text-center">
+        <p className="mt-1 text-[11px] text-emerald-700 text-center">
           Применятся бонусы: до {formatRub(Math.max(monthlyUse.useKop, yearlyUse.useKop) / 100)}
         </p>
       )}
@@ -1499,6 +1519,29 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     : studio.plan === 'studio' ? 'studio'
     : null;
 
+  // ── Pro-rata UI-превью для апгрейда Соло → Студия ──
+  // Если активен Соло — считаем зачёт за неиспользованные дни в рамках
+  // одного периода. Эвристика для разделения месяц/год: остаток > 60 дней
+  // считаем годовой подпиской. Точное значение всё равно вернёт сервер.
+  // Сами не получим серверный план без отдельного запроса — это preview
+  // для UI, а реальная сумма в URL Prodamus считается на бэке.
+  let proratedMonthlyRub = 0;
+  let proratedYearlyRub  = 0;
+  if (currentGroup === 'solo' && studio.accessUntil) {
+    const remainingMs = parseDbDate(studio.accessUntil).getTime() - Date.now();
+    if (remainingMs > 0) {
+      const remainingDaysExact = remainingMs / (24 * 3600 * 1000);
+      const isYearlySolo = remainingDaysExact > 60;
+      const totalDays = isYearlySolo ? 365 : 30;
+      const currentSoloPriceRub = isYearlySolo ? 49900 : 4900;
+      const remainingDays = Math.min(Math.ceil(remainingDaysExact), totalDays);
+      const credit = Math.floor((currentSoloPriceRub * remainingDays) / totalDays);
+      // Зачёт показываем только при совпадении периода (как и на бэке).
+      if (isYearlySolo) proratedYearlyRub = credit;
+      else              proratedMonthlyRub = credit;
+    }
+  }
+
   // Триал — сколько осталось дней (для шапки-баннера).
   // Используем parseDbDate (а не голый new Date), чтобы Safari корректно
   // съел Postgres-формат «2026-04-30 03:00:00.123456+00» (микросекунды +
@@ -2103,6 +2146,8 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                   isCurrent={currentGroup === group.id}
                   email={user.email}
                   bonusBalanceKop={studio.bonusBalanceKop || 0}
+                  proratedMonthlyRub={group.id === 'studio' ? proratedMonthlyRub : 0}
+                  proratedYearlyRub={group.id === 'studio' ? proratedYearlyRub : 0}
                   acceptOffer={acceptOffer}
                   setAcceptOffer={setAcceptOffer}
                 />
@@ -2115,8 +2160,9 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             <div className="mx-6 mt-4 mb-5 p-3 rounded-lg bg-orange-50 border border-orange-200">
               <p className="text-xs text-orange-900">
                 <span className="font-semibold">Хотите перейти с «Соло» на «Студия»?</span>{' '}
-                Просто оплатите тариф «Студия» — оставшиеся дни от «Соло» сохранятся,
-                новый период добавится сверху. Платите только за продление, ничего не теряется.
+                Доплатите разницу — стоимость неиспользованных дней «Соло»
+                автоматически зачтётся как скидка. Новый период «Студии»
+                начнётся с момента оплаты на полные 30 дней (или 12 месяцев).
               </p>
             </div>
           )}

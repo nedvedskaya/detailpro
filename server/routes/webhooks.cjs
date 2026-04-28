@@ -361,6 +361,7 @@ router.post('/prodamus', rawParser, async (req, res) => {
   if (intentToken) {
     const ir = await pool.query(
       `SELECT token, studio_id, plan_id, expected_amount_kop, bonus_kop,
+              is_upgrade, prorated_credit_kop,
               expires_at, consumed_at
          FROM saas_meta.payment_intents
         WHERE token = $1`,
@@ -533,9 +534,21 @@ router.post('/prodamus', rawParser, async (req, res) => {
           // Когда фронт полностью перейдёт на intent-flow — legacy-ветку
           // удалить и в `if (!intentRow || expired)` выше вернуть 401.
           if (usedIntent) {
+            // При upgrade Соло → Студия пользователь УЖЕ получил скидку за
+            // неиспользованные дни Соло (proratedCreditKop в discount_value).
+            // Поэтому access_until сбрасываем в now()+durationDays — иначе
+            // он бы оплатил студию и получил «бонусом» оставшийся хвост Соло
+            // плюс полный месяц Студии. Это double-count.
+            //
+            // При обычном продлении (тот же план, или из trial/cancelled) —
+            // GREATEST, чтобы ранняя оплата не «срезала» хвост текущего периода.
+            const isUpgrade = intentRow && intentRow.is_upgrade === true;
+            const accessExpr = isUpgrade
+              ? `now() + ($1 || ' days')::interval`
+              : `GREATEST(access_until, now()) + ($1 || ' days')::interval`;
             await client.query(
               `UPDATE saas_meta.studios
-                  SET access_until                = GREATEST(access_until, now()) + ($1 || ' days')::interval,
+                  SET access_until                = ${accessExpr},
                       plan                        = COALESCE($2, plan),
                       is_active                   = TRUE,
                       cancel_pending              = FALSE,

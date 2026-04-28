@@ -851,10 +851,11 @@ router.post('/payment/intent', requireAuth, async (req, res, next) => {
     // удобнее держать сборку в одном месте). Фронт просто откроет URL.
     const payformUrl = payments.buildPayformUrl({
       planId,
-      intentToken:    result.token,
-      bonusKop:       result.bonusKop,
-      finalAmountKop: result.finalAmountKop,
+      intentToken:        result.token,
+      bonusKop:           result.bonusKop,
+      finalAmountKop:     result.finalAmountKop,
       customerEmail,
+      proratedCreditKop:  result.proratedCreditKop,
     });
 
     res.json({
@@ -862,6 +863,8 @@ router.post('/payment/intent', requireAuth, async (req, res, next) => {
       expiresAt:         result.expiresAt.toISOString(),
       expectedAmountKop: result.expectedKop,
       bonusKopApplied:   result.bonusKop,
+      proratedCreditKop: result.proratedCreditKop,
+      isUpgrade:         result.isUpgrade,
       // finalAmountRub — для UI «к оплате X ₽», независимо от того, как
       // мы передаём это Prodamus (через discount_value или иначе).
       finalAmountRub: Math.ceil(result.finalAmountKop / 100),
@@ -970,11 +973,12 @@ router.get('/payment/from-tg', async (req, res, next) => {
     });
 
     const url = payments.buildPayformUrl({
-      planId:        plan,
-      intentToken:   intent.token,
-      bonusKop:      intent.bonusKop,
-      finalAmountKop: intent.finalAmountKop,
-      customerEmail: user.email,
+      planId:            plan,
+      intentToken:       intent.token,
+      bonusKop:          intent.bonusKop,
+      finalAmountKop:    intent.finalAmountKop,
+      customerEmail:     user.email,
+      proratedCreditKop: intent.proratedCreditKop,
     });
 
     return res.redirect(302, url);

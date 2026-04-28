@@ -65,7 +65,8 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
     throw e;
   }
   const sRes = await pool.query(
-    `SELECT bonus_balance_kop FROM saas_meta.studios WHERE id = $1`,
+    `SELECT bonus_balance_kop, plan, access_until, cancel_pending
+       FROM saas_meta.studios WHERE id = $1`,
     [studioId]
   );
   if (sRes.rowCount === 0) {
@@ -73,25 +74,77 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
     e.code = 'studio_not_found';
     throw e;
   }
-  const bonusAvailable = Number(sRes.rows[0].bonus_balance_kop) || 0;
+  const studio = sRes.rows[0];
+  const bonusAvailable = Number(studio.bonus_balance_kop) || 0;
   const expectedKop = PLAN_PRICES_KOP[planId];
+
+  // ── Pro-rata upgrade Соло → Студия (в рамках одного периода) ──
+  // Если у студии активен Соло и она хочет купить Студия того же периода,
+  // зачитываем стоимость неиспользованных дней Соло. Зачёт уходит в
+  // Prodamus как часть discount_value (вместе с bonus_kop).
+  //
+  // Кросс-period (solo_month → studio_year или solo_year → studio_month) —
+  // НЕ зачитываем, потому что период разный и пересчёт сложен. Фронт
+  // в этом случае не должен показывать кнопку upgrade.
+  //
+  // Direction: только Соло → Студия. Студия → Соло (downgrade) не
+  // поддерживается — фронт прячет кнопки Соло для studio-плательщиков.
+  let proratedCreditKop = 0;
+  let isUpgrade = false;
+  const newPeriod = planId.endsWith('_year') ? 'year' : 'month';
+  const newTier = planId.startsWith('studio') ? 'studio' : 'solo';
+  if (
+    studio.plan === 'solo' &&
+    newTier === 'studio' &&
+    !studio.cancel_pending &&
+    studio.access_until &&
+    new Date(studio.access_until).getTime() > Date.now()
+  ) {
+    // Определяем точный текущий план (solo_month vs solo_year) из последней
+    // успешной оплаты — нужен и для цены, и для проверки совпадения периода.
+    const lastPayRes = await pool.query(
+      `SELECT plan FROM saas_meta.payments
+        WHERE studio_id = $1 AND status = 'paid' AND plan IS NOT NULL
+        ORDER BY processed_at DESC NULLS LAST, received_at DESC
+        LIMIT 1`,
+      [studioId]
+    );
+    const currentPlanId = lastPayRes.rows[0]?.plan;
+    const currentPeriod = currentPlanId && currentPlanId.endsWith('_year') ? 'year' : 'month';
+    // Зачёт делаем ТОЛЬКО при совпадении периода (solo_month → studio_month
+    // или solo_year → studio_year). Кросс-period апгрейды требуют отдельной
+    // бизнес-логики (что делать с длинным остатком при коротком новом периоде).
+    if (currentPlanId && PLAN_PRICES_KOP[currentPlanId] && currentPeriod === newPeriod) {
+      const currentPriceKop = PLAN_PRICES_KOP[currentPlanId];
+      const totalDays = currentPeriod === 'year' ? 365 : 30;
+      const remainingMs = new Date(studio.access_until).getTime() - Date.now();
+      const remainingDays = Math.max(0, Math.ceil(remainingMs / (24 * 3600 * 1000)));
+      const cappedDays = Math.min(remainingDays, totalDays);
+      // Зачёт в копейках, округляем ВНИЗ до целого рубля — та же логика, что
+      // и для bonus_kop: discount_value в Prodamus передаётся в целых рублях,
+      // а наш внутренний учёт должен ровно сходиться с тем, что заявлено.
+      const raw = Math.floor((currentPriceKop * cappedDays) / totalDays);
+      proratedCreditKop = Math.floor(raw / 100) * 100;
+      isUpgrade = proratedCreditKop > 0;
+    }
+  }
+
   // Минимальная сумма к оплате — 50 ₽ (5000 коп). Жёсткое ограничение
   // Prodamus: при сумме < 50 ₽ платёжная страница отвечает «Сумма не может
-  // быть меньше 50.00 ₽». Поэтому даже если у студии бонусов больше, чем
-  // (price − 50 ₽), скидка обрезается. Остаток бонуса остаётся на балансе.
+  // быть меньше 50.00 ₽». Скидку (бонус + pro-rated) обрезаем сверху так,
+  // чтобы итог был не ниже 50 ₽. Остаток бонуса остаётся на балансе.
   const MIN_PAYABLE_KOP = 5000;
-  const maxBonusUse = Math.max(0, expectedKop - MIN_PAYABLE_KOP);
-  const bonusKopRaw = Math.min(bonusAvailable, maxBonusUse);
-  // Prodamus принимает discount_value в ЦЕЛЫХ рублях (по их инструкции:
-  // https://help.prodamus.ru/payform/integracii/rest-api/...). Чтобы наш
-  // внутренний учёт (bonusKop в копейках, см. webhook bonus_kop debit)
-  // совпадал ровно с тем, что мы заявили Prodamus как скидку — округляем
-  // bonusKop ВНИЗ до ближайшего рубля. Без этого юзер с бонусом 4899,50 ₽
-  // получил бы скидку 4899 ₽ на payform, но при списании мы бы дебетнули
-  // 4899,50 ₽ — копеечный mismatch в логах. Floor вместо ceil — чтобы
-  // никогда не пытаться списать больше, чем фактическая скидка на чеке.
+  const maxDiscountKop = Math.max(0, expectedKop - MIN_PAYABLE_KOP);
+  // Pro-rated credit имеет приоритет: его нельзя «потерять», т.к. он
+  // отражает уже оплаченный пользователем период. Бонус — то, чем мы
+  // готовы пожертвовать для соблюдения min 50 ₽.
+  const proratedFinal = Math.min(proratedCreditKop, maxDiscountKop);
+  const remainingDiscountRoom = maxDiscountKop - proratedFinal;
+  const bonusKopRaw = Math.min(bonusAvailable, remainingDiscountRoom);
   const bonusKop = Math.floor(bonusKopRaw / 100) * 100;
-  const finalAmountKop = expectedKop - bonusKop;
+
+  const totalDiscountKop = bonusKop + proratedFinal;
+  const finalAmountKop = expectedKop - totalDiscountKop;
 
   const token = crypto.randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + PAYMENT_INTENT_TTL_MS);
@@ -99,12 +152,18 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
   await pool.query(
     `INSERT INTO saas_meta.payment_intents
        (token, studio_id, user_id, plan_id, expected_amount_kop, bonus_kop,
+        is_upgrade, prorated_credit_kop,
         expires_at, created_ip, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [token, studioId, userId, planId, expectedKop, bonusKop, expiresAt, ip, userAgent]
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [token, studioId, userId, planId, expectedKop, bonusKop,
+     isUpgrade, proratedFinal,
+     expiresAt, ip, userAgent]
   );
 
-  return { token, expiresAt, expectedKop, bonusKop, finalAmountKop };
+  return {
+    token, expiresAt, expectedKop, bonusKop, finalAmountKop,
+    proratedCreditKop: proratedFinal, isUpgrade,
+  };
 }
 
 /**
@@ -124,7 +183,7 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
  * базовый URL https://yalokontent.payform.ru/ и описывать товар в
  * параметрах. До этого юзер видел полную цену независимо от скидки.
  */
-function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, customerEmail }) {
+function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, customerEmail, proratedCreditKop = 0 }) {
   const expectedKop = PLAN_PRICES_KOP[planId];
   const label = PLAN_LABELS_RU[planId];
   if (!expectedKop || !label) throw new Error('plan_invalid');
@@ -159,11 +218,22 @@ function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, custom
   u.searchParams.set('_param_plan',   planId);
   if (customerEmail) u.searchParams.set('customer_email', customerEmail);
 
+  // discount_value передаётся в Prodamus как СУММА бонусов и pro-rated
+  // зачёта от Соло (если это апгрейд). _param_bonus_kop несёт ТОЛЬКО
+  // бонусы — webhook по нему дебетует bonus_balance_kop. _param_prorated_kop
+  // отдельно — он не должен быть зачислен куда-то обратно как реферал-бонус
+  // при возврате (это деньги пользователя, уже оплаченные за Соло).
+  const totalDiscountKop = bonusKop + proratedCreditKop;
   if (bonusKop > 0) {
     u.searchParams.set('_param_bonus_kop', String(bonusKop));
-    // bonusKop гарантированно кратен 100 (createPaymentIntent делает floor),
-    // деление целочисленное → точная сумма скидки в рублях.
-    u.searchParams.set('discount_value', String(bonusKop / 100));
+  }
+  if (proratedCreditKop > 0) {
+    u.searchParams.set('_param_prorated_kop', String(proratedCreditKop));
+  }
+  if (totalDiscountKop > 0) {
+    // Кратность 100 (целые рубли) гарантирована createPaymentIntent через
+    // Math.floor(.../100)*100 для обеих компонент.
+    u.searchParams.set('discount_value', String(totalDiscountKop / 100));
   }
 
   return u.toString();
