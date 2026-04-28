@@ -123,6 +123,12 @@ async function getStudioUsers(studioId) {
 //
 // assigned_to IS NULL означает «общая задача студии» — попадает к owner/manager,
 // но не к конкретному мастеру (мастер видит только то, что назначено лично).
+//
+// LEFT JOIN clients: если задача привязана к карточке клиента (t.client_id),
+// тянем имя и телефон — иначе строка вида «Позвонить» в сводке непонятна
+// (фидбек пользователя: «позвонить кому?»). Клиент мог быть удалён
+// (ON DELETE SET NULL в DDL) — тогда client_name/phone придут NULL,
+// formatTaskLine просто не приклеит хвост.
 async function getTasksForDate(schema, dateStr) {
   const r = await queryInSchema(schema,
     `SELECT t.id,
@@ -131,8 +137,11 @@ async function getTasksForDate(schema, dateStr) {
             t.due_date,
             t.due_time,
             t.assigned_to,
-            (t.due_date < $1) AS is_overdue
+            (t.due_date < $1) AS is_overdue,
+            c.name  AS client_name,
+            c.phone AS client_phone
        FROM {{schema}}.tasks t
+       LEFT JOIN {{schema}}.clients c ON c.id = t.client_id
       WHERE t.status IN ('pending', 'in_progress')
         AND t.due_date IS NOT NULL
         AND t.due_date <= $1
@@ -242,14 +251,33 @@ function priorityLabel(priority) {
   }
 }
 
+// Строка задачи в дневной сводке. Без эмодзи — фидбек владельца: «сами
+// задачи пиши без смайликов».
+//
+// Если задача привязана к клиенту (client_id, см. getTasksForDate), к
+// заголовку приклеиваем имя и телефон — иначе «Позвонить» в сводке
+// непонятна. Имя и телефон даём отдельной строкой ниже заголовка, чтобы
+// Telegram распознал телефон как tel:-ссылку и сделал тапом-звонком.
+// Клиент без телефона (старые карточки) — приклеиваем только имя.
+// Без имени и без телефона (задача не привязана) — никаких хвостов.
 function formatTaskLine(t) {
   const title = tg.escapeHtml(t.title || 'без названия');
   const tag   = priorityLabel(t.priority);
   const tagPart = tag ? ` <i>· ${tag}</i>` : '';
-  return `• ${title}${tagPart}`;
+
+  let clientLine = '';
+  if (t.client_name || t.client_phone) {
+    const parts = [];
+    if (t.client_name)  parts.push(tg.escapeHtml(t.client_name));
+    if (t.client_phone) parts.push(tg.escapeHtml(t.client_phone));
+    clientLine = `\n  ${parts.join(' · ')}`;
+  }
+
+  return `• ${title}${tagPart}${clientLine}`;
 }
 
 // Форматирует блок задач для дневной сводки. Возвращает '' если задач нет.
+// Заголовки секций без эмодзи — минимализм, как и сами строки задач.
 function formatTasksSection(tasks) {
   if (!tasks.length) return '';
   const overdue = tasks.filter((t) => t.is_overdue);
@@ -258,12 +286,12 @@ function formatTasksSection(tasks) {
   let out = '';
   if (today.length) {
     const word = pluralize(today.length, 'задача', 'задачи', 'задач');
-    out += `\n\n📋 На сегодня (${today.length} ${word}):\n` +
+    out += `\n\nНа сегодня (${today.length} ${word}):\n` +
            today.map(formatTaskLine).join('\n');
   }
   if (overdue.length) {
     const word = pluralize(overdue.length, 'задача', 'задачи', 'задач');
-    out += `\n\n⚠️ Просрочено (${overdue.length} ${word}):\n` +
+    out += `\n\nПросрочено (${overdue.length} ${word}):\n` +
            overdue.map(formatTaskLine).join('\n');
   }
   return out;
@@ -278,7 +306,12 @@ async function sendDailySummary(user, dateStr, bookings, tasks, isMasterOwn) {
   // вторая попытка из соседнего тика просто получит false и тихо выйдет.
   if (!(await claimDaily(user.id, dateStr))) return;
 
-  const greetName = user.name ? tg.escapeHtml(user.name) : '';
+  // Только имя, без фамилии — фидбек владельца: «обращаться только по
+  // имени». users.name в нашей системе хранится в формате «Имя Фамилия»
+  // (или просто «Имя», если фамилия не заполнена). Берём первое слово.
+  // \s — любой пробельный, на случай неразрывных пробелов из вставки.
+  const firstName = user.name ? String(user.name).trim().split(/\s+/)[0] : '';
+  const greetName = firstName ? tg.escapeHtml(firstName) : '';
   const greetWith = greetName ? `, ${greetName}` : '';
   const tasksSection = formatTasksSection(tasks);
 
