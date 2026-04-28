@@ -126,6 +126,12 @@ function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, custom
   if (!expectedKop || !label) throw new Error('plan_invalid');
   const u = new URL(PAYFORM_BASE_URL);
 
+  // sys — обязательный параметр Prodamus, идентифицирует витрину/
+  // интеграцию. Без него платёжная страница открывается пустой
+  // (товар не привязан к магазину). Согласован с поддержкой Prodamus
+  // 28.04.2026: для нашего аккаунта sys = 'yalokontent'.
+  u.searchParams.set('sys', 'yalokontent');
+
   // Описываем товар в URL. Цена в рублях, как требует Prodamus.
   // products[0][...] — синтаксис, который Express/PHP-style парсеры
   // на стороне Prodamus распарсят как массив объектов.
