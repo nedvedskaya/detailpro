@@ -99,7 +99,7 @@ async function findCandidates() {
            u.gender,
            u.first_name,
            u.tg_blocked_at,
-           COALESCE(u.timezone, s.timezone, 'Europe/Moscow') AS tz
+           COALESCE(s.timezone, 'Europe/Moscow') AS tz
       FROM saas_meta.studios s
       LEFT JOIN saas_meta.users u
              ON u.studio_id = s.id AND u.role = 'owner'
