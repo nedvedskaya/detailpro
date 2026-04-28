@@ -565,6 +565,85 @@ const DailySummaryTimeField = ({ value, onSave, readOnly }: DailySummaryTimeFiel
 };
 
 // ──────────────────────────────────────────────────────────────────────
+// DemoDataField — две кнопки «Заполнить демо» / «Очистить демо».
+//
+// Для новой студии демо подкладывается автоматически при регистрации
+// (см. server/lib/tenant_provisioning.cjs). Этот блок нужен для двух
+// сценариев:
+//   1) у юзера в студии всё пусто (demo по какой-то причине не зашёл /
+//      зарегистрировался до фичи) — кликает «Заполнить» и видит примеры;
+//   2) пощупал и хочет начать с чистого листа — «Очистить» уносит
+//      всё с is_demo=TRUE, реальные карточки не трогает.
+//
+// Owner-only — гейтинг и в UI, и в бэке (только owner может).
+// ──────────────────────────────────────────────────────────────────────
+const DemoDataField = () => {
+  const [busy, setBusy] = useState<'seed' | 'clear' | null>(null);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState<'seed' | 'clear' | null>(null);
+
+  const callApi = async (kind: 'seed' | 'clear') => {
+    setBusy(kind);
+    setError('');
+    setDone(null);
+    try {
+      const res = await fetch(`/api/profile/demo/${kind}`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+      setDone(kind);
+      // Перезагружаем страницу, чтобы кэшированные списки клиентов / задач /
+      // календаря / финансов подтянули свежее состояние. Без reload юзер
+      // видел бы пустой профиль и думал, что ничего не произошло.
+      setTimeout(() => window.location.reload(), 600);
+    } catch (e: any) {
+      setError(e?.message || 'Не удалось выполнить');
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="px-6 py-4">
+      <p className="text-sm text-zinc-600 leading-relaxed mb-3">
+        Демо — это 2 клиента с авто, записями, задачами и транзакциями.
+        Чтобы привыкнуть к интерфейсу, посмотреть как выглядит заполненная
+        CRM. Удалить можно одной кнопкой ниже — настоящие карточки
+        не пострадают.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => callApi('seed')}
+          disabled={busy !== null}
+          className="px-4 py-2 rounded-xl text-sm font-medium bg-zinc-900 text-white hover:bg-zinc-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy === 'seed' ? 'Заполняем…' : 'Заполнить демо'}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm('Удалить все демо-данные? Реальные карточки не пострадают.')) {
+              callApi('clear');
+            }
+          }}
+          disabled={busy !== null}
+          className="px-4 py-2 rounded-xl text-sm font-medium bg-zinc-100 text-zinc-700 hover:bg-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {busy === 'clear' ? 'Удаляем…' : 'Очистить демо'}
+        </button>
+        {done === 'seed' && <span className="self-center text-xs text-emerald-600">демо добавлено</span>}
+        {done === 'clear' && <span className="self-center text-xs text-emerald-600">демо удалено</span>}
+      </div>
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────
 // Расчёт сколько бонусов применится — нужен ТОЛЬКО для UI-превью (старая
 // перечёркнутая цена + строка «Применятся бонусы: до X»). Реальное значение,
 // которое уйдёт в Prodamus, считает сервер при выдаче intent — фронт
@@ -1782,6 +1861,18 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             value={studio.dailySummaryTime}
             onSave={handleSaveDailySummaryTime}
           />
+        </CollapsibleSection>
+        )}
+
+        {/* ── Демо-данные (только owner). Чтобы новый юзер не упирался
+            в пустые экраны и мог посмотреть на полный цикл «клиент →
+            запись → задача → транзакция», прежде чем создавать своё. */}
+        {role === 'owner' && (
+        <CollapsibleSection
+          title="Демо-данные"
+          subtitle="Заполнить или очистить примеры клиентов и записей"
+        >
+          <DemoDataField />
         </CollapsibleSection>
         )}
 

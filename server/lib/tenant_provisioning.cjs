@@ -31,6 +31,7 @@ const { pool, withTx } = require('./db.cjs');
 const { safeIdent, validateSchemaName, suggestSchemaName } = require('./tenant.cjs');
 const { hashPassword } = require('./auth.cjs');
 const { isValidEmail, assertStrongPassword } = require('./validation.cjs');
+const { seedDemo } = require('./demo_seed.cjs');
 
 // 8-символьный URL-safe код. Алфавит без I/O/0/1, чтобы не путать в наборе вручную.
 const REFERRAL_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -246,6 +247,17 @@ async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword
          ('Зарплата', 'expense', '#f59e0b'),
          ('Расходники', 'expense', '#3b82f6')`
     );
+
+    // 6. Seed: демо-данные (2 клиента + полный цикл) — чтобы новый юзер
+    // не упёрся в пустые экраны. is_demo=TRUE на всех строках; в Профиле
+    // есть кнопка «Очистить демо», которая снесёт всё одной транзакцией.
+    // Падение seed-демо НЕ должно валить регистрацию — оборачиваем в
+    // try/catch и логируем, но не пробрасываем.
+    try {
+      await seedDemo(client, schemaName, userId);
+    } catch (err) {
+      console.error(`[provisioning] demo seed failed for ${schemaName}:`, err.message);
+    }
 
     return { studioId, userId, schemaName, tgLinked };
   });

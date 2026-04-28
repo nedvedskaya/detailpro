@@ -67,6 +67,9 @@ END
 $$;
 
 -- ─── Клиенты ───
+-- is_demo: помечаем seed-данные, которые новый юзер видит при регистрации
+-- (см. server/lib/demo_seed.cjs). Кнопка «Очистить демо» в профиле просто
+-- удаляет всё с is_demo=true, не трогая реальные карточки.
 CREATE TABLE IF NOT EXISTS {{schema}}.clients (
     id           SERIAL PRIMARY KEY,
     name         VARCHAR(255) NOT NULL,
@@ -77,6 +80,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.clients (
     source       VARCHAR(100),         -- откуда пришёл клиент
     birth_date   VARCHAR(20),          -- свободный формат (как в исходном CRM)
     avatar       TEXT,                 -- base64-картинка (как в исходном; на S3 — позже)
+    is_demo      BOOLEAN NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -96,6 +100,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.vehicles (
     color         VARCHAR(50),
     mileage       INTEGER,
     notes         TEXT,
+    is_demo       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -112,6 +117,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.services (
     description  TEXT,
     category_id  INTEGER REFERENCES {{schema}}.categories(id) ON DELETE SET NULL,
     is_active    BOOLEAN NOT NULL DEFAULT true,
+    is_demo      BOOLEAN NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_services_active ON {{schema}}.services(is_active) WHERE is_active;
@@ -131,6 +137,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.bookings (
     payment_status  VARCHAR(50) NOT NULL DEFAULT 'unpaid',
     amount          DECIMAL(10,2),
     notes           TEXT,
+    is_demo         BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -162,6 +169,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.client_records (
     is_paid         BOOLEAN NOT NULL DEFAULT false,
     is_completed    BOOLEAN NOT NULL DEFAULT false,
     tags            JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_demo         BOOLEAN NOT NULL DEFAULT FALSE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -185,6 +193,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.transactions (
     client_id         INTEGER REFERENCES {{schema}}.clients(id) ON DELETE SET NULL,
     created_by        UUID    REFERENCES saas_meta.users(id) ON DELETE SET NULL,
     tags              JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_demo           BOOLEAN NOT NULL DEFAULT FALSE,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_transactions_date    ON {{schema}}.transactions(date DESC);
@@ -207,6 +216,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.tasks (
     vehicle_id    INTEGER REFERENCES {{schema}}.vehicles(id) ON DELETE SET NULL,
     assigned_to   UUID    REFERENCES saas_meta.users(id) ON DELETE SET NULL,
     completed_at  TIMESTAMPTZ,
+    is_demo       BOOLEAN NOT NULL DEFAULT FALSE,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -419,3 +429,17 @@ BEGIN
   END LOOP;
 END
 $cross_tenant_triggers$;
+
+-- ──────────────────────────────────────────────────────────────────────
+-- Идемпотентные ADD COLUMN — для уже созданных студий, которые были
+-- зарегистрированы до появления is_demo. Шаблон гонится через
+-- migrateAllStudios() в server/init.cjs при каждом npm run init.
+-- Новые студии получают is_demo сразу из CREATE TABLE выше.
+-- ──────────────────────────────────────────────────────────────────────
+ALTER TABLE {{schema}}.clients         ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.vehicles        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.services        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.bookings        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.client_records  ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.transactions    ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.tasks           ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;

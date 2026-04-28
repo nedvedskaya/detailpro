@@ -37,6 +37,8 @@ const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
 const tgClient = require('../lib/telegram.cjs');
 const payments = require('../lib/payments.cjs');
+const { withTx } = require('../lib/db.cjs');
+const { seedDemo, clearDemo } = require('../lib/demo_seed.cjs');
 
 const router = express.Router();
 
@@ -712,6 +714,61 @@ router.post('/subscription/resume', requireAuth, async (req, res, next) => {
     [row.studio_id]
   );
   res.json({ ok: true });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/demo/seed
+// Заливает в студию 2 демо-клиента с полным циклом (карточка → авто →
+// записи → задачи → транзакции). Owner-only. Идемпотентно: повторный
+// вызов сначала чистит старый demo по is_demo=TRUE, потом сидит заново.
+// При регистрации новой студии этот же seedDemo вызывается автоматически
+// (см. tenant_provisioning.cjs).
+// ──────────────────────────────────────────────────────────────────────
+router.post('/demo/seed', requireAuth, async (req, res, next) => {
+  try {
+    const u = await pool.query(
+      `SELECT u.role, u.id AS user_id, s.schema_name
+         FROM saas_meta.users u
+         JOIN saas_meta.studios s ON s.id = u.studio_id
+        WHERE u.id = $1`,
+      [req.session.userId]
+    );
+    const row = u.rows[0];
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_seed_demo' });
+    }
+    const stats = await withTx((client) => seedDemo(client, row.schema_name, row.user_id));
+    res.json({ ok: true, ...stats });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// POST /api/profile/demo/clear
+// Удаляет всё с is_demo=TRUE. Owner-only. Безопасно — не трогает
+// реальные карточки клиентов, которые юзер уже создал сам.
+// ──────────────────────────────────────────────────────────────────────
+router.post('/demo/clear', requireAuth, async (req, res, next) => {
+  try {
+    const u = await pool.query(
+      `SELECT u.role, s.schema_name
+         FROM saas_meta.users u
+         JOIN saas_meta.studios s ON s.id = u.studio_id
+        WHERE u.id = $1`,
+      [req.session.userId]
+    );
+    const row = u.rows[0];
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_clear_demo' });
+    }
+    const result = await withTx((client) => clearDemo(client, row.schema_name));
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ──────────────────────────────────────────────────────────────────────
