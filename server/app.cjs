@@ -280,6 +280,21 @@ app.use('/api', requireAuth, requireActiveStudio, documentsRouter);
 const STATIC_DIR = process.env.STATIC_DIR || path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(STATIC_DIR, { maxAge: '1h', index: false }));
 
+// Юридические документы лежат в client/public/legal/<name>/index.html
+// (после vite build → client/dist/legal/<name>/index.html). express.static
+// с index:false автоматически их не подхватывает, а SPA-fallback отдал бы
+// React-приложение. Резолвим руками для путей вида /legal/<name>/ и
+// /legal/<name>. Имя ограничено [a-z0-9-] — защита от path-traversal.
+// /legal/offer.html идёт мимо этого хендлера (точка не матчится regex),
+// его отдаёт express.static выше как обычный файл.
+app.get(/^\/legal\/[a-z0-9-]+\/?$/i, (req, res, next) => {
+  const sub = req.path.replace(/^\/legal\//, '').replace(/\/$/, '');
+  if (!/^[a-z0-9-]+$/i.test(sub)) return next();
+  res.sendFile(path.join(STATIC_DIR, 'legal', sub, 'index.html'), (err) => {
+    if (err) next(); // не нашли документ — пусть SPA-fallback покажет 404 в UI
+  });
+});
+
 // SPA fallback: всё, что НЕ /api/* — отдаём index.html (фронт сам разрулит).
 // Используем регексп вместо glob, чтобы не зависеть от особенностей Express 5.
 app.get(/^\/(?!api\/).*/, (req, res, next) => {
