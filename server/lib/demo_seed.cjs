@@ -73,16 +73,39 @@ async function seedDemo(client, schemaName, ownerId) {
   const serviceIds = svc.rows.map((r) => r.id);
 
   // ── Клиенты ───────────────────────────────────────────────────────
+  // ВАЖНО: UI клиентов хранит марку/модель/VIN/номер в clients.notes
+  // как JSON (см. client/src/utils/helpers.ts → normalizeClient,
+  // buildClientPayload). Таблица vehicles используется для bookings/
+  // client_records (через vehicle_id), но карточка клиента в Клиентах
+  // показывает carBrand/carModel из notes-JSON. Если положить в notes
+  // обычный текст — поле «Автомобиль» на карточке будет пустым.
+  // Заполняем оба места: и notes-JSON (для карточки), и vehicles
+  // (для документов / привязки к записям).
+  const ivanNotes = JSON.stringify({
+    carBrand: 'BMW',
+    carModel: 'X5',
+    vin: '',
+    licensePlate: 'А123ВС777',
+    comment: 'Постоянный клиент. Любит полировку каждые 3 месяца.',
+  });
+  const annaNotes = JSON.stringify({
+    carBrand: 'Toyota',
+    carModel: 'Camry',
+    vin: '',
+    licensePlate: 'В456ОР77',
+    comment: 'Новый клиент, первое посещение.',
+  });
   const cli = await queryInSchema(
     schemaName,
-    `INSERT INTO {{schema}}.clients (name, phone, email, source, notes, is_demo) VALUES
-       ('Иван Петров',    '+7 (999) 123-45-67', 'ivan.petrov@example.com',  'Знакомые',  'Постоянный клиент. Любит полировку каждые 3 месяца.', TRUE),
-       ('Анна Смирнова',  '+7 (999) 987-65-43', 'anna.smirnova@example.com','Instagram', 'Новый клиент, первое посещение.',                       TRUE)
-     RETURNING id`,
-    [],
+    `INSERT INTO {{schema}}.clients (name, phone, email, source, city, notes, is_demo) VALUES
+       ('Иван Петров',    '+7 (999) 123-45-67', 'ivan.petrov@example.com',  'Знакомые',  'Москва',          $1, TRUE),
+       ('Анна Смирнова',  '+7 (999) 987-65-43', 'anna.smirnova@example.com','Instagram', 'Санкт-Петербург', $2, TRUE)
+     RETURNING id, name`,
+    [ivanNotes, annaNotes],
     client
   );
-  const [clientIvanId, clientAnnaId] = cli.rows.map((r) => r.id);
+  const clientIvanId = cli.rows.find((r) => r.name === 'Иван Петров').id;
+  const clientAnnaId = cli.rows.find((r) => r.name === 'Анна Смирнова').id;
 
   // ── Авто (привязаны к клиентам) ───────────────────────────────────
   const veh = await queryInSchema(
