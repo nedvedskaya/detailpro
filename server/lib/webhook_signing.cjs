@@ -48,9 +48,15 @@ function deepSort(value) {
  * Подпись Продамуса (порт PHP `Hmac::create`):
  *   1. Удаляем поля signature/sign из тела (если они там)
  *   2. deepSort
- *   3. JSON.stringify (без escape unicode/слешей — JS делает это by default,
- *      аналог JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES в PHP)
+ *   3. json_encode($data, JSON_UNESCAPED_UNICODE) — БЕЗ JSON_UNESCAPED_SLASHES.
+ *      То есть PHP экранирует '/' → '\/'. JS JSON.stringify слеши НЕ
+ *      экранирует — постпроцессим вручную, иначе HMAC расходится на
+ *      payload'ах с слешами (например payment_type="Visa/MasterCard/МИР").
+ *      Unicode не экранируем — это совпадает с поведением JS by default.
  *   4. HMAC-SHA256, hex
+ *
+ * Проверено на реальном webhook от Prodamus 28.04.2026: до фикса со
+ * слешами подпись не сходилась, после — сошлась.
  *
  * @param {object} payload — уже распарсенный объект из тела запроса
  * @param {string} secret — PRODAMUS_SECRET_KEY
@@ -61,7 +67,7 @@ function prodamusHmac(payload, secret) {
   delete cleaned.signature;
   delete cleaned.sign;
   const sorted = deepSort(cleaned);
-  const json = JSON.stringify(sorted);
+  const json = JSON.stringify(sorted).replace(/\//g, '\\/');
   return crypto.createHmac('sha256', secret).update(json, 'utf8').digest('hex');
 }
 
