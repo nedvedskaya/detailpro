@@ -189,11 +189,11 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                         </div>
                     </div>
                 )}
-                {tags && tags.length > 0 && (
+                {tags && tags.filter(t => !(t as any).type || (t as any).type === 'income' || (t as any).type === 'all').length > 0 && (
                     <div>
                         <span className="text-xs text-gray-400 font-semibold block mb-2">Теги</span>
                         <div className="flex flex-wrap gap-1.5">
-                            {tags.map(tag => (
+                            {tags.filter(t => !(t as any).type || (t as any).type === 'income' || (t as any).type === 'all').map(tag => (
                                 <button
                                     key={tag.id}
                                     type="button"

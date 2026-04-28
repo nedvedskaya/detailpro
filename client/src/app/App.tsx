@@ -1252,14 +1252,20 @@ const App = () => {
   const handleDeleteCategory = async (id) => {
       const previousCategories = [...categories];
       const previousTransactions = [...transactions];
+      const previousClients = clients.map(c => ({...c, records: [...(c.records || [])]}));
       setCategories(prev => removeById(prev, id));
       setTransactions(prev => prev.map(t => matchId(t.category, id) ? {...t, category: ''} : t));
+      setClients(prev => prev.map(c => ({
+        ...c,
+        records: (c.records || []).map(r => matchId(r.category, id) ? {...r, category: ''} : r)
+      })));
 
       try {
         await api.deleteCategory(id);
       } catch (error) {
         setCategories(previousCategories);
         setTransactions(previousTransactions);
+        setClients(previousClients);
         handleApiError(error, 'Не удалось удалить категорию — нет связи с сервером', 'deleteCategory');
       }
   };
@@ -1284,10 +1290,18 @@ const App = () => {
   const handleDeleteTag = async (id) => {
       const previousTags = [...tags];
       const previousTransactions = [...transactions];
+      const previousClients = clients.map(c => ({...c, records: [...(c.records || [])]}));
       setTags(prev => removeById(prev, id));
       setTransactions(prev => prev.map(t => ({
           ...t,
           tags: t.tags ? t.tags.filter(tagId => !matchId(tagId, id)) : []
+      })));
+      setClients(prev => prev.map(c => ({
+        ...c,
+        records: (c.records || []).map(r => ({
+          ...r,
+          tags: Array.isArray(r.tags) ? r.tags.filter(tagId => !matchId(tagId, id)) : (r.tags || [])
+        }))
       })));
 
       try {
@@ -1295,6 +1309,7 @@ const App = () => {
       } catch (error) {
         setTags(previousTags);
         setTransactions(previousTransactions);
+        setClients(previousClients);
         handleApiError(error, 'Не удалось удалить тег — нет связи с сервером', 'deleteTag');
       }
   };
