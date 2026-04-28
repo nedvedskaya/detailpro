@@ -76,7 +76,16 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
   const expectedKop = PLAN_PRICES_KOP[planId];
   // -1 ₽ = 100 коп. См. profile.cjs#calcBonusUsage и комментарий там же.
   const maxBonusUse = Math.max(0, expectedKop - 100);
-  const bonusKop = Math.min(bonusAvailable, maxBonusUse);
+  const bonusKopRaw = Math.min(bonusAvailable, maxBonusUse);
+  // Prodamus принимает discount_value в ЦЕЛЫХ рублях (по их инструкции:
+  // https://help.prodamus.ru/payform/integracii/rest-api/...). Чтобы наш
+  // внутренний учёт (bonusKop в копейках, см. webhook bonus_kop debit)
+  // совпадал ровно с тем, что мы заявили Prodamus как скидку — округляем
+  // bonusKop ВНИЗ до ближайшего рубля. Без этого юзер с бонусом 4899,50 ₽
+  // получил бы скидку 4899 ₽ на payform, но при списании мы бы дебетнули
+  // 4899,50 ₽ — копеечный mismatch в логах. Floor вместо ceil — чтобы
+  // никогда не пытаться списать больше, чем фактическая скидка на чеке.
+  const bonusKop = Math.floor(bonusKopRaw / 100) * 100;
   const finalAmountKop = expectedKop - bonusKop;
 
   const token = crypto.randomBytes(32).toString('base64url');
@@ -95,10 +104,19 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
 
 /**
  * Собирает полный URL payform.ru с подставленными параметрами.
- *   `_param_intent` — токен из createPaymentIntent
- *   `_param_plan`   — id плана (для аудита и резолва в webhook'е)
- *   `customer_email` — заполнит чекаут (UX), на security не влияет
- *   `_param_bonus_kop` + `customer_price` — если бонусы > 0
+ *   `_param_intent`   — токен из createPaymentIntent (наш audit-id)
+ *   `_param_plan`     — id плана (для резолва в webhook'е)
+ *   `customer_email`  — заполнит чекаут (UX), на security не влияет
+ *   `_param_bonus_kop`— наш внутренний counter в копейках, нужен webhook'у
+ *                       для списания с bonus_balance_kop
+ *   `discount_value`  — Prodamus-параметр: размер скидки в ЦЕЛЫХ рублях,
+ *                       снижает финальную сумму на чекауте.
+ *
+ * ВАЖНО: ранее использовался `customer_price` (итоговая сумма). По ответу
+ * поддержки Prodamus (28.04.2026) этот параметр у них не реализован —
+ * нужно передавать `discount_value` (величину скидки). Соответствие:
+ * bonusKop кратен 100 (см. createPaymentIntent), значит discountRub
+ * = bonusKop / 100 — точное совпадение с _param_bonus_kop.
  */
 function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, customerEmail }) {
   const base = PLAN_PAYFORM_URL[planId];
@@ -109,9 +127,9 @@ function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, custom
   if (customerEmail) u.searchParams.set('customer_email', customerEmail);
   if (bonusKop > 0) {
     u.searchParams.set('_param_bonus_kop', String(bonusKop));
-    // Prodamus принимает целые ₽ — округляем вверх, чтобы не уйти в минус
-    // от копеечного остатка после применения бонусов.
-    u.searchParams.set('customer_price', String(Math.ceil(finalAmountKop / 100)));
+    // bonusKop гарантированно кратен 100 (createPaymentIntent делает floor),
+    // деление целочисленное → точная сумма скидки в рублях.
+    u.searchParams.set('discount_value', String(bonusKop / 100));
   }
   return u.toString();
 }

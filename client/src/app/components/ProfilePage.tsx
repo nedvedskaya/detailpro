@@ -708,7 +708,11 @@ async function startPaymentFlow(
   if (email) u.searchParams.set('customer_email', email);
   if (intent.bonusKopApplied > 0) {
     u.searchParams.set('_param_bonus_kop', String(intent.bonusKopApplied));
-    u.searchParams.set('customer_price', String(intent.finalAmountRub));
+    // Prodamus: размер скидки в ЦЕЛЫХ рублях. customer_price у них не
+    // реализован — поддержка ответила 28.04.2026: «размер скидки по оплате
+    // передаётся через параметр discount_value». bonusKopApplied на сервере
+    // приведён к кратности 100, поэтому деление точное.
+    u.searchParams.set('discount_value', String(Math.floor(intent.bonusKopApplied / 100)));
   }
   // Same-window navigation: надёжно работает на любом мобиле, не зависит
   // от popup-блокеров. После оплаты Prodamus вернёт на /profile с query.
