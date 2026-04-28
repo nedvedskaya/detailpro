@@ -35,6 +35,7 @@ const { pool, withTx } = require('../lib/db.cjs');
 const { consumeOneTimeToken, OneTimeTokenError } = require('../lib/one_time_token.cjs');
 const tg = require('../lib/telegram.cjs');
 const { applyGender } = require('../lib/gender.cjs');
+const { planHasDailySummary } = require('../lib/plans.cjs');
 
 const router = express.Router();
 
@@ -682,8 +683,12 @@ async function runOnboardingChecks(chatId, linked) {
     return;
   }
   // 3) Owner и время утренней сводки ещё не выбрано явно → спрашиваем.
-  //    Только у owner-а: время одно на студию, остальные пользуются им же.
-  if (linked.role === 'owner' && linked.daily_summary_time_set === false) {
+  //    Только у owner-а на тарифе «Студия»: на trial/solo функция
+  //    недоступна, спрашивать нечего; чтобы не переспрашивать после
+  //    апгрейда — флаг _set не трогаем (NULL остаётся NULL).
+  if (linked.role === 'owner'
+      && linked.daily_summary_time_set === false
+      && planHasDailySummary(linked.plan)) {
     await askDailySummaryTimeQuestion(chatId, linked.id);
     return;
   }
@@ -854,6 +859,19 @@ async function dispatchCallback(cb) {
       await tg.sendMessage({
         chatId, userId: linked.id, kind: 'dailytime_not_owner',
         text: 'Время утренней сводки настраивает только владелец.',
+      });
+      return;
+    }
+    // Гейтинг по тарифу — на случай гонки: тариф мог понизиться, пока
+    // у юзера в чате висел inline-кейборд из прошлой сессии. Молча
+    // снимаем кейборд (editMessageReplyMarkup), отвечаем причиной.
+    if (!planHasDailySummary(linked.plan)) {
+      await tg.editMessageReplyMarkup(chatId, messageId, null).catch(() => {});
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'dailytime_plan_locked',
+        text:
+          'Утренняя сводка приходит на тарифе «Студия». ' +
+          'Оформить можно в Профиле СРМ.',
       });
       return;
     }
@@ -1383,6 +1401,17 @@ async function handleDailyTimeCommand(message) {
     });
     return;
   }
+  // Гейтинг по тарифу: фича только на «Студия». На trial/solo команда
+  // /время отвечает понятным сообщением и не открывает inline-выбор.
+  if (!planHasDailySummary(linked.plan)) {
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'dailytime_plan_locked',
+      text:
+        'Утренняя сводка приходит на тарифе «Студия». ' +
+        'На текущем тарифе функция недоступна — оформить можно в Профиле СРМ.',
+    });
+    return;
+  }
   await askDailySummaryTimeQuestion(message.chat.id, linked.id);
 }
 
@@ -1393,6 +1422,19 @@ async function handleDailyTimeInput(message, text) {
   const linked = await findLinkedUser(tgId);
   if (!linked || linked.role !== 'owner') {
     await clearState(tgId);
+    return;
+  }
+  // Тариф мог понизиться, пока юзер набирал время — гасим state и
+  // объясняем причину, чтобы он не получал «не понял время» и не
+  // путался.
+  if (!planHasDailySummary(linked.plan)) {
+    await clearState(tgId);
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'dailytime_plan_locked',
+      text:
+        'Утренняя сводка приходит на тарифе «Студия». ' +
+        'Оформить можно в Профиле СРМ.',
+    });
     return;
   }
 

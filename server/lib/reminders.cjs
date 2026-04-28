@@ -28,6 +28,7 @@
 const { pool, queryInSchema } = require('./db.cjs');
 const tg = require('./telegram.cjs');
 const { applyGender } = require('./gender.cjs');
+const { planHasDailySummary } = require('./plans.cjs');
 
 // ──────────────────────────────────────────────────────────────────────
 // Утилиты времени.
@@ -87,16 +88,15 @@ function pluralize(n, one, few, many) {
 // ──────────────────────────────────────────────────────────────────────
 
 async function getActiveStudios() {
-  // Шлём всем активным студиям, включая trial и solo. На лендинге Студия
-  // выделена как «у них напоминания» — это маркетинг для апсейла, но
-  // фактически бот напоминает всем, у кого подключён TG. Оплачен ли
-  // тариф — отдельный вопрос; «бесплатной» функцию делает не cron,
-  // а наличие tg_chat_id у пользователя.
+  // Шлём всем активным студиям, включая trial и solo: hour-before работает
+  // на любом тарифе (это базовый функционал). А вот daily_summary —
+  // фича только тарифа Студия; гейтинг по plan живёт в processStudio
+  // ниже, чтобы выборка студий не дублировалась.
   //
   // daily_summary_time может быть NULL — тогда сводка по этой студии
   // отключена явно (owner выбрал «Не присылать»). hour-before остаётся.
   const r = await pool.query(
-    `SELECT id, schema_name, timezone, daily_summary_time
+    `SELECT id, schema_name, timezone, plan, daily_summary_time
        FROM saas_meta.studios
       WHERE schema_name IS NOT NULL
         AND is_active = TRUE
@@ -381,7 +381,11 @@ async function processStudio(studio, now) {
   }
 
   const nowMin = local.hh * 60 + local.mm;
-  const inDailyWindow = isInDailyWindow(local, studio.daily_summary_time);
+  // Утренняя сводка — фича тарифа Студия. Если студия на trial/solo —
+  // ни в каком окне не шлём, даже если в БД остался ранее выставленный
+  // daily_summary_time (например, тариф понизился со studio до solo).
+  const inDailyWindow = planHasDailySummary(studio.plan)
+    && isInDailyWindow(local, studio.daily_summary_time);
 
   const users = await getStudioUsers(studio.id);
   if (!users.length) return;

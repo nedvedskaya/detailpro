@@ -1848,7 +1848,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
             при онбординге командой /время. Этот блок дублирует ту же
             настройку в CRM — для тех, кто живёт в десктопе и не хочет
             копаться в боте. */}
-        {canEditStudio(role) && (
+        {/* Утренняя сводка — фича тарифа «Студия». На trial/solo секция
+            спрятана, гейтинг дублируется в PATCH /api/profile/studio
+            (server) и в processStudio в reminders.cjs (cron). */}
+        {canEditStudio(role) && studio.plan === 'studio' && (
         <CollapsibleSection
           title="Утренняя сводка в Telegram"
           subtitle={

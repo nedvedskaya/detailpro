@@ -32,7 +32,7 @@ const crypto = require('node:crypto');
 
 const { pool } = require('../lib/db.cjs');
 const { requireAuth } = require('../lib/middleware.cjs');
-const { planMeta, maxUsersForPlan } = require('../lib/plans.cjs');
+const { planMeta, maxUsersForPlan, planHasDailySummary } = require('../lib/plans.cjs');
 const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
 const tgClient = require('../lib/telegram.cjs');
@@ -386,8 +386,12 @@ router.patch('/', requireAuth, async (req, res, next) => {
 router.patch('/studio', requireAuth, async (req, res, next) => {
   try {
     // Проверяем, что owner — только он может править реквизиты студии.
+    // Заодно тянем plan, чтобы гейтить фичи тарифа Студия (утренняя сводка).
     const u = await pool.query(
-      `SELECT role, studio_id FROM saas_meta.users WHERE id = $1`,
+      `SELECT u.role, u.studio_id, s.plan
+         FROM saas_meta.users u
+         JOIN saas_meta.studios s ON s.id = u.studio_id
+        WHERE u.id = $1`,
       [req.session.userId]
     );
     const userRow = u.rows[0];
@@ -432,6 +436,15 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
     // Когда owner явно меняет время через UI, ставим _set = TRUE,
     // чтобы бот при следующем входе не переспрашивал «во сколько?».
     if (Object.prototype.hasOwnProperty.call(body, 'dailySummaryTime')) {
+      // Гейтинг по тарифу: фича доступна ТОЛЬКО на «Студия». На trial/solo
+      // даже выставление в null (отключение сводки) бессмысленно — её
+      // и так не шлют. UI секцию прячет, но защита нужна и здесь, иначе
+      // обходимо через прямой запрос к API.
+      if (!planHasDailySummary(userRow.plan)) {
+        const e = new Error('daily_summary_requires_studio_plan');
+        e.status = 403;
+        throw e;
+      }
       const raw = body.dailySummaryTime;
       if (raw === null || raw === '') {
         fields.daily_summary_time = null;
