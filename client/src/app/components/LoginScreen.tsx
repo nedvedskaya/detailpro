@@ -236,7 +236,13 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
     } rounded-xl px-4 py-3.5 text-base text-zinc-900 placeholder:text-zinc-400 outline-none transition-all`;
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-6 gap-6">
+    <div className="min-h-screen bg-zinc-50 flex flex-col p-6">
+      {/* flex-1 + items-center + justify-center: форма забирает всё
+          доступное вертикальное пространство и центрируется внутри.
+          Футер ниже остаётся плотно у нижнего края экрана. Без этой
+          обёртки justify-center на корне выравнивал группу «форма+
+          футер» как одно целое, и форма уезжала вверх. */}
+      <div className="flex-1 flex flex-col items-center justify-center w-full">
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 p-8">
           <div className="text-center mb-6">
@@ -465,6 +471,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
             ? 'Доступ только для авторизованных пользователей'
             : 'После регистрации сразу попадёте в систему. 3 дня пробного периода.'}
         </p>
+      </div>
       </div>
 
       {/* Подвал с реквизитами и юридическими ссылками. Рендерится только
