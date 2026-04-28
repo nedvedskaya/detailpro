@@ -70,7 +70,10 @@ const FieldInput = ({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500 transition-all"
+      // placeholder:text-zinc-300 + italic: чтобы пример «Toyota / Camry / 2020»
+      // не выглядел заполненным значением. Фидбек: «в спешке не понимаешь
+      // заполнен пункт или нет».
+      className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500 transition-all placeholder:text-zinc-300 placeholder:italic"
     />
   </label>
 );
@@ -384,7 +387,7 @@ export const WorkOrderForm = ({
                       onChange={(e) => updateItem(idx, { name: e.target.value })}
                       placeholder="Название услуги"
                       maxLength={500}
-                      className="col-span-12 sm:col-span-6 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all"
+                      className="col-span-12 sm:col-span-6 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all placeholder:text-zinc-300 placeholder:italic"
                     />
                     <input
                       type="number"
@@ -394,7 +397,7 @@ export const WorkOrderForm = ({
                       value={it.quantity}
                       onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) || 0 })}
                       placeholder="Кол-во"
-                      className="col-span-3 sm:col-span-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all text-right"
+                      className="col-span-3 sm:col-span-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all text-right placeholder:text-zinc-300 placeholder:italic"
                     />
                     <input
                       type="number"
@@ -404,7 +407,7 @@ export const WorkOrderForm = ({
                       value={it.price}
                       onChange={(e) => updateItem(idx, { price: Number(e.target.value) || 0 })}
                       placeholder="Цена"
-                      className="col-span-3 sm:col-span-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all text-right"
+                      className="col-span-3 sm:col-span-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all text-right placeholder:text-zinc-300 placeholder:italic"
                     />
                     {/* На мобиле сумма получает col-span-4, корзина — col-span-2,
                         чтобы «300 000 ₽» помещался без захода на иконку удаления
@@ -461,7 +464,7 @@ export const WorkOrderForm = ({
               <select
                 value={paymentMethod}
                 onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod | '')}
-                className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+                className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
               >
                 <option value="">— не выбран —</option>
                 {PAYMENT_OPTIONS.map((o) => (
@@ -477,7 +480,7 @@ export const WorkOrderForm = ({
                 type="date"
                 value={deliveryDate}
                 onChange={(e) => setDeliveryDate(e.target.value)}
-                className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+                className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
               />
             </div>
             <div>
@@ -488,7 +491,7 @@ export const WorkOrderForm = ({
                 type="time"
                 value={deliveryTime}
                 onChange={(e) => setDeliveryTime(e.target.value)}
-                className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+                className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
               />
             </div>
           </div>
@@ -504,7 +507,7 @@ export const WorkOrderForm = ({
               placeholder="Если оставить пустым — подставится текст из реквизитов студии"
               rows={2}
               maxLength={5000}
-              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
             />
           </div>
 
@@ -519,7 +522,7 @@ export const WorkOrderForm = ({
               placeholder="Особые условия, материалы заказчика и т.п."
               rows={2}
               maxLength={5000}
-              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
             />
           </div>
 
@@ -577,7 +580,7 @@ export const WorkOrderForm = ({
               value={priceQuery}
               onChange={(e) => setPriceQuery(e.target.value)}
               placeholder="Поиск по названию"
-              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-200 text-sm outline-none focus:border-orange-400"
+              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-zinc-200 text-sm outline-none focus:border-orange-400 placeholder:text-zinc-300 placeholder:italic"
               autoFocus
             />
           </div>

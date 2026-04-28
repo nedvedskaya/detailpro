@@ -410,7 +410,10 @@ const EditableField = <K extends string>({
             disabled={readOnly}
             onChange={(e) => handleChange(e.target.value)}
             onBlur={handleBlur}
-            className={`flex-1 bg-transparent outline-none border-b border-transparent transition-colors resize-none leading-snug ${
+            // placeholder:text-zinc-300 + italic — фидбек: «в спешке не понимаешь
+            // заполнен пункт или нет». Светлый курсив сразу читается как пример,
+            // в отличие от валидного значения текстом zinc-900.
+            className={`flex-1 bg-transparent outline-none border-b border-transparent transition-colors resize-none leading-snug placeholder:text-zinc-300 placeholder:italic placeholder:font-normal ${
               readOnly ? 'text-zinc-500 cursor-default' : 'text-zinc-900 focus:border-zinc-300'
             }`}
           />
@@ -423,7 +426,7 @@ const EditableField = <K extends string>({
             disabled={readOnly}
             onChange={(e) => handleChange(e.target.value)}
             onBlur={handleBlur}
-            className={`flex-1 bg-transparent outline-none border-b border-transparent transition-colors ${
+            className={`flex-1 bg-transparent outline-none border-b border-transparent transition-colors placeholder:text-zinc-300 placeholder:italic placeholder:font-normal ${
               readOnly ? 'text-zinc-500 cursor-default' : 'text-zinc-900 focus:border-zinc-300'
             }`}
           />

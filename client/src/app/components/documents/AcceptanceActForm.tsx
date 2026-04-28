@@ -67,7 +67,10 @@ const FieldInput = ({
       value={value}
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500 transition-all"
+      // placeholder:text-zinc-300 + italic: чтобы пример «Toyota / Camry / 2020»
+      // не выглядел заполненным значением. Фидбек: «в спешке не понимаешь
+      // заполнен пункт или нет».
+      className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-orange-500 transition-all placeholder:text-zinc-300 placeholder:italic"
     />
   </label>
 );
@@ -296,7 +299,7 @@ export const AcceptanceActForm = ({
               value={mileage}
               onChange={(e) => setMileage(e.target.value)}
               placeholder="например, 124 500"
-              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
             />
           </div>
 
@@ -379,7 +382,7 @@ export const AcceptanceActForm = ({
               placeholder="Свободное описание царапин, сколов, вмятин с указанием расположения"
               rows={3}
               maxLength={5000}
-              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
             />
           </div>
 
@@ -394,7 +397,7 @@ export const AcceptanceActForm = ({
               placeholder="Например: «Не заявлены» / «Регистратор, navigator»"
               rows={2}
               maxLength={2000}
-              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm"
+              className="w-full bg-white border border-zinc-200 rounded-lg p-3 text-sm outline-none focus:border-orange-500 transition-all shadow-sm placeholder:text-zinc-300 placeholder:italic"
             />
           </div>
 
