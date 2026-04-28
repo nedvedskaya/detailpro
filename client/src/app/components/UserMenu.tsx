@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LogOut, User, Settings, ChevronDown } from 'lucide-react';
+import { LogOut, User, Settings, ChevronDown, BookOpen } from 'lucide-react';
 import { getUser, getStudio, logout } from '@/utils/auth';
 import { isAdmin } from '@/utils/permissions';
 
@@ -7,6 +7,11 @@ interface UserMenuProps {
   onLogout: () => void;
   onShowProfile?: () => void;
   onShowAdmin?: () => void;
+  // Открывает раздел «Материалы» — пока заглушка «в разработке»,
+  // позже там магазин допматериалов (технокарты, чек-листы и т.п.).
+  // Доступно всем юзерам, без гейтинга по роли — каждый сотрудник
+  // студии может почитать что планируется.
+  onShowMaterials?: () => void;
   networkIndicator?: React.ReactNode;
 }
 
@@ -24,7 +29,7 @@ function formatAccessUntil(value: string | null | undefined): { label: string; t
   return { label: `Подписка до ${label}`, tone: 'ok' };
 }
 
-export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicator }: UserMenuProps) => {
+export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, onShowMaterials, networkIndicator }: UserMenuProps) => {
   const user = getUser();
   const studio = getStudio();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -131,6 +136,20 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, networkIndicato
                 <Settings size={16} className="text-zinc-600" />
                 <span className="text-sm font-medium text-zinc-700">
                   Админ-панель
+                </span>
+              </button>
+            )}
+            {onShowMaterials && (
+              <button
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  onShowMaterials();
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-50 transition-colors group border-b border-zinc-100"
+              >
+                <BookOpen size={16} className="text-zinc-600" />
+                <span className="text-sm font-medium text-zinc-700">
+                  Материалы
                 </span>
               </button>
             )}

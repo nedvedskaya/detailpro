@@ -25,6 +25,7 @@ import { CalendarGrid } from '@/app/components/CalendarGrid';
 import { LoginScreen } from '@/app/components/LoginScreen';
 import { ResetPasswordPage } from '@/app/components/ResetPasswordPage';
 import { ProfilePage } from '@/app/components/ProfilePage';
+import { MaterialsPage } from '@/app/components/MaterialsPage';
 import { UserMenu } from '@/app/components/UserMenu';
 import { ClientDetails } from '@/app/components/ClientDetails';
 import { AutocompleteInput } from '@/app/components/ui/AutocompleteInput';
@@ -353,6 +354,7 @@ const App = () => {
   // поэтому refresh страницы не сбрасывает экран.
   const [showProfile, setShowProfileState] = useState(() => pathname === '/profile');
   const [showAdmin, setShowAdminState] = useState(() => pathname === '/admin');
+  const [showMaterials, setShowMaterialsState] = useState(() => pathname === '/materials');
   const setShowProfile = (v: boolean) => {
     setShowProfileState(v);
     try {
@@ -361,7 +363,7 @@ const App = () => {
         window.history.pushState({}, '', target);
       }
     } catch (_) { /* SSR/sandbox */ }
-    if (v) setShowAdminState(false);
+    if (v) { setShowAdminState(false); setShowMaterialsState(false); }
   };
   const setShowAdmin = (v: boolean) => {
     setShowAdminState(v);
@@ -371,7 +373,20 @@ const App = () => {
         window.history.pushState({}, '', target);
       }
     } catch (_) { /* SSR/sandbox */ }
-    if (v) setShowProfileState(false);
+    if (v) { setShowProfileState(false); setShowMaterialsState(false); }
+  };
+  // Раздел «Материалы» — заглушка «в разработке», позже превратится
+  // в магазин допматериалов. Маршрут /materials, такая же логика
+  // pushState + popstate-синхронизация, как у Profile/Admin.
+  const setShowMaterials = (v: boolean) => {
+    setShowMaterialsState(v);
+    try {
+      const target = v ? '/materials' : '/';
+      if (window.location.pathname !== target) {
+        window.history.pushState({}, '', target);
+      }
+    } catch (_) { /* SSR/sandbox */ }
+    if (v) { setShowProfileState(false); setShowAdminState(false); }
   };
   // Кнопка «назад» в браузере: синхронизируем стейт с новым pathname.
   useEffect(() => {
@@ -380,6 +395,7 @@ const App = () => {
         const p = window.location.pathname;
         setShowProfileState(p === '/profile');
         setShowAdminState(p === '/admin');
+        setShowMaterialsState(p === '/materials');
       } catch (_) {}
     };
     window.addEventListener('popstate', onPop);
@@ -613,6 +629,10 @@ const App = () => {
 
   if (showProfile) {
     return <ProfilePage onBack={() => setShowProfile(false)} />;
+  }
+
+  if (showMaterials) {
+    return <MaterialsPage onBack={() => setShowMaterials(false)} />;
   }
 
   // ── Subscription gate ──────────────────────────────────────────────
@@ -1321,7 +1341,13 @@ const App = () => {
   return (
     <div className="app-container w-full bg-white flex flex-col overflow-hidden">
       <ToastContainer />
-      <UserMenu onLogout={handleLogout} onShowProfile={() => setShowProfile(true)} onShowAdmin={() => setShowAdmin(true)} networkIndicator={<NetworkIndicator isOnline={isOnline} />} />
+      <UserMenu
+        onLogout={handleLogout}
+        onShowProfile={() => setShowProfile(true)}
+        onShowAdmin={() => setShowAdmin(true)}
+        onShowMaterials={() => setShowMaterials(true)}
+        networkIndicator={<NetworkIndicator isOnline={isOnline} />}
+      />
       
       <div className="flex-1 min-h-0 relative overflow-hidden bg-zinc-50">
           {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} isOnline={isOnline} canEdit={canEdit} />}
