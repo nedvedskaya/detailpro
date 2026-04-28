@@ -261,12 +261,13 @@ function describeAccessUntil(accessUntil: string | null | undefined): { text: st
   if (!target) return { text: 'дата не указана', tone: 'warn' };
   const now = new Date();
   const ms = target.getTime() - now.getTime();
-  // floor, а не ceil: «осталось N дней» = сколько ПОЛНЫХ дней до истечения.
-  // Если регистрация была вчера в 19:17 и доступ до послезавтра в 19:17 —
-  // прошло ~16 часов, осталось 2.3 суток; ceil даст «3» и счётчик не
-  // меняется первые сутки (фидбек: «вчера было 3, сегодня 3 — должен идти
-  // отсчёт»). floor корректно покажет 2 уже на следующий день.
-  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  // ceil, а не floor: пользователь только что зарегистрировался на 3 дня,
+  // access_until = now() + 3 дня минус миллисекунды на запрос. floor дал бы
+  // 2 в момент регистрации (3*86400000 - 50ms / 86400000 ≈ 2.9999...) — это
+  // выглядит как баг «зарегистрировался и сразу осталось на день меньше».
+  // ceil показывает «3 дня» сразу после signup и «2 дня» только когда
+  // прошли полные сутки — соответствует ожиданию пользователя.
+  const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
   if (days < 0) {
     const n = Math.abs(days);
     return { text: `истёк ${n} ${pluralizeDays(n)} назад`, tone: 'expired' };
@@ -1553,9 +1554,10 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     const target = parseDbDate(studio.accessUntil);
     if (!target) return 0;
     const ms = target.getTime() - Date.now();
-    // floor — см. describeAccessUntil выше: «осталось N дней» считается
-    // полными сутками, иначе счётчик «3 дня» висит сутки после регистрации.
-    return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
+    // ceil — см. describeAccessUntil. Сразу после signup access_until ровно
+    // через 3 дня (минус миллисекунды), floor показал бы 2 → пользователь
+    // видит «зарегистрировался и сразу 1 день потерял». ceil даёт честные 3.
+    return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
   })() : 0;
 
   // Можно ли отменить подписку: только owner на платном тарифе
