@@ -592,9 +592,21 @@ export const ClientDetails = ({
           bookingId={openDoc.bookingId}
           bookingTitle={openDoc.title}
           initialItems={(() => {
-            // Если у брони уже заполнен service+amount — стартуем наряд с одной строки.
             const rec = activeRecords.find((r: any) => Number(r.id) === openDoc.bookingId);
             if (!rec) return undefined;
+            // Multi-service: если в брони сохранён массив services
+            // (snapshot из прайса/custom), создаём по строке наряда на
+            // каждую услугу — каждая со своей ценой. Это ровно то,
+            // что юзер выбрал при создании брони.
+            if (Array.isArray(rec.services) && rec.services.length > 0) {
+              return rec.services.map((s: any) => ({
+                name: String(s.name || ''),
+                quantity: 1,
+                price: Number(s.price) || 0,
+              }));
+            }
+            // Legacy fallback: старая бронь без services-массива —
+            // стартуем наряд с одной строки из service+amount.
             const price = Number(rec.amount) || 0;
             const name = String(rec.service || '').trim();
             return name ? [{ name, quantity: 1, price }] : undefined;
