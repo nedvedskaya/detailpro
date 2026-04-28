@@ -225,8 +225,9 @@ async function runFunnel(opts = {}) {
   for (const studio of candidates) {
     stats.checked++;
     try {
-      // Окно отправки — 11:00 локалки. dryRun игнорирует окно.
-      if (!dryRun && !isInSendingWindow(now, studio.tz)) {
+      // Окно отправки — 11:00 локалки. dryRun и forceWindow игнорируют окно
+      // (forceWindow используется для симуляций/QA).
+      if (!dryRun && !opts.forceWindow && !isInSendingWindow(now, studio.tz)) {
         stats.skipped++;
         continue;
       }
