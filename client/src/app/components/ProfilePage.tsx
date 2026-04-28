@@ -674,16 +674,17 @@ const DemoDataField = () => {
 // которое уйдёт в Prodamus, считает сервер при выдаче intent — фронт
 // никогда не отправляет этот расчёт «на доверии».
 //
-// Правило: применить весь баланс, но не больше чем (priceRub - 1) — нужен
-// минимум 1 ₽ оплаты, иначе Prodamus откажет на нулевой сумме и webhook
-// не сработает. Бэк дублирует это правило в server/routes/profile.cjs
-// (intent endpoint).
+// Правило: применить весь баланс, но не больше чем (priceRub - 50) — Prodamus
+// не принимает суммы меньше 50 ₽ («Сумма не может быть меньше 50.00 ₽»).
+// Поэтому остаток бонуса сверх (price - 50) сохраняется на балансе.
+// Бэк дублирует это правило в server/lib/payments.cjs#createPaymentIntent.
 // ──────────────────────────────────────────────────────────────────────
+const MIN_PAYABLE_RUB = 50;
 function calcBonusUsage(priceRub: number, balanceKop: number): { useKop: number; finalRub: number } {
   if (!balanceKop || balanceKop <= 0) return { useKop: 0, finalRub: priceRub };
-  const maxApplyKop = Math.max(0, (priceRub - 1) * 100); // оставить минимум 1 ₽
+  const maxApplyKop = Math.max(0, (priceRub - MIN_PAYABLE_RUB) * 100);
   const useKop = Math.min(balanceKop, maxApplyKop);
-  const finalRub = Math.max(1, Math.ceil(priceRub - useKop / 100));
+  const finalRub = Math.max(MIN_PAYABLE_RUB, Math.ceil(priceRub - useKop / 100));
   return { useKop, finalRub };
 }
 

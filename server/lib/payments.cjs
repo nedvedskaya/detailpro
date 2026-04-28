@@ -75,8 +75,12 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
   }
   const bonusAvailable = Number(sRes.rows[0].bonus_balance_kop) || 0;
   const expectedKop = PLAN_PRICES_KOP[planId];
-  // -1 ₽ = 100 коп. См. profile.cjs#calcBonusUsage и комментарий там же.
-  const maxBonusUse = Math.max(0, expectedKop - 100);
+  // Минимальная сумма к оплате — 50 ₽ (5000 коп). Жёсткое ограничение
+  // Prodamus: при сумме < 50 ₽ платёжная страница отвечает «Сумма не может
+  // быть меньше 50.00 ₽». Поэтому даже если у студии бонусов больше, чем
+  // (price − 50 ₽), скидка обрезается. Остаток бонуса остаётся на балансе.
+  const MIN_PAYABLE_KOP = 5000;
+  const maxBonusUse = Math.max(0, expectedKop - MIN_PAYABLE_KOP);
   const bonusKopRaw = Math.min(bonusAvailable, maxBonusUse);
   // Prodamus принимает discount_value в ЦЕЛЫХ рублях (по их инструкции:
   // https://help.prodamus.ru/payform/integracii/rest-api/...). Чтобы наш
