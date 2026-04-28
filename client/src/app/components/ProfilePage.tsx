@@ -1660,7 +1660,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           Для master'a поля ФИО/телефон показываем в режиме просмотра — его
           данные правит owner через админ-панель. См. canEditOwnProfile().
         */}
-        <CollapsibleSection title="Личные данные" defaultOpen>
+        <CollapsibleSection title="Личные данные">
           <EditableField
             label="Имя"
             fieldKey="firstName"
