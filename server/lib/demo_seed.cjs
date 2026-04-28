@@ -144,16 +144,54 @@ async function seedDemo(client, schemaName, ownerId) {
   const recordAnnaId = records.rows.find((r) => r.client_id === clientAnnaId).id;
 
   // ── Транзакции (финансы) ─────────────────────────────────────────
-  // 8000₽ доход от выполненной работы + 2000₽ аванс от текущей.
+  // 4 транзакции — доход + аванс + 2 расхода — чтобы юзер сразу видел
+  // полноценную аналитику в финансах: разбивку по категориям и тегам.
+  // Теги привязываем по ID (поле transactions.tags хранит массив id),
+  // ищем заранее засиженные дефолтные теги по name+type (см. seed
+  // в 100_tenant_template.sql). Если каких-то тегов нет (на старой
+  // студии до миграции, fail-soft) — транзакция уйдёт без тегов.
+  const tagsRes = await queryInSchema(
+    schemaName,
+    `SELECT id, name, type FROM {{schema}}.tags
+      WHERE (name='Полировка' AND type='income')
+         OR (name='Химчистка' AND type='income')
+         OR (name='Плёнка'    AND type='expense')
+         OR (name='ЗП мастера Ивана' AND type='expense')`,
+    [],
+    client
+  );
+  const findTagId = (name, type) => {
+    const t = tagsRes.rows.find((r) => r.name === name && r.type === type);
+    return t ? t.id : null;
+  };
+  const tagPolish    = findTagId('Полировка', 'income');
+  const tagChemistry = findTagId('Химчистка', 'income');
+  const tagFilm      = findTagId('Плёнка',    'expense');
+  const tagSalary    = findTagId('ЗП мастера Ивана', 'expense');
+
+  // Помощник: массив tag-id в JSONB-формате. `[null]` фильтруем.
+  const jsonbTags = (...ids) => JSON.stringify(ids.filter((x) => x != null));
+
   await queryInSchema(
     schemaName,
     `INSERT INTO {{schema}}.transactions
-        (type, amount, category, description, date, time, client_id, client_record_id, created_by, is_demo) VALUES
-       ('income', 8000, 'Услуги', 'Полировка кузова — Иван Петров (BMW X5)',
-        CURRENT_DATE - INTERVAL '3 days', '16:00', $1, $2, $3, TRUE),
-       ('income', 2000, 'Услуги', 'Аванс — Анна Смирнова (Toyota Camry, химчистка)',
-        CURRENT_DATE, '11:00', $4, $5, $3, TRUE)`,
-    [clientIvanId, recordIvanId, ownerId, clientAnnaId, recordAnnaId],
+        (type, amount, category, description, date, time, client_id, client_record_id, created_by, tags, is_demo) VALUES
+       ('income',  8000,  'Услуги',     'Полировка кузова — Иван Петров (BMW X5)',
+        CURRENT_DATE - INTERVAL '3 days', '16:00', $1,   $2,   $3, $6::jsonb, TRUE),
+       ('income',  2000,  'Услуги',     'Аванс — Анна Смирнова (Toyota Camry, химчистка)',
+        CURRENT_DATE, '11:00',                     $4,   $5,   $3, $7::jsonb, TRUE),
+       ('expense', 4500,  'Расходники', 'Закупка защитной плёнки',
+        CURRENT_DATE - INTERVAL '5 days', '10:30', NULL, NULL, $3, $8::jsonb, TRUE),
+       ('expense', 15000, 'Зарплата',   'ЗП мастера Ивана за неделю',
+        CURRENT_DATE - INTERVAL '1 day',  '18:00', NULL, NULL, $3, $9::jsonb, TRUE)`,
+    [
+      clientIvanId, recordIvanId, ownerId,
+      clientAnnaId, recordAnnaId,
+      jsonbTags(tagPolish),
+      jsonbTags(tagChemistry),
+      jsonbTags(tagFilm),
+      jsonbTags(tagSalary),
+    ],
     client
   );
 
