@@ -236,7 +236,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
     } rounded-xl px-4 py-3.5 text-base text-zinc-900 placeholder:text-zinc-400 outline-none transition-all`;
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-zinc-50 flex flex-col items-center justify-center p-6 gap-6">
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 p-8">
           <div className="text-center mb-6">
