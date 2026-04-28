@@ -297,31 +297,6 @@ router.post('/prodamus', rawParser, async (req, res) => {
   const signatureValid = verifySignatureProdamus(payload, headerSign, secret);
 
   if (!signatureValid) {
-    // TEMP DIAG (удалить после починки): пересчитываем подпись локально
-    // и логируем префиксы expected/received хешей + хешируемый JSON,
-    // чтобы понять, в каком именно месте payload расходится с тем, что
-    // подписывал PHP-код Prodamus.
-    try {
-      const { prodamusHmac } = require('../lib/webhook_signing.cjs');
-      const cleaned = { ...payload };
-      delete cleaned.signature; delete cleaned.sign;
-      const expected = secret ? prodamusHmac(payload, secret) : '<no_secret>';
-      const sortedJson = JSON.stringify((function deepSort(v){
-        if (Array.isArray(v)) return v.map(deepSort);
-        if (v && typeof v === 'object') { const ks = Object.keys(v).sort(); const o={}; for (const k of ks) o[k]=deepSort(v[k]); return o; }
-        return v;
-      })(cleaned));
-      console.error('[webhook-diag]', JSON.stringify({
-        expected_prefix: String(expected).slice(0, 16),
-        received_prefix: String(headerSign).slice(0, 16),
-        received_len: String(headerSign).length,
-        sign_header_keys: Object.keys(req.headers).filter(h => /sign/i.test(h)),
-        json_signed: sortedJson,
-        json_signed_len: sortedJson.length,
-      }));
-    } catch (diagErr) {
-      console.error('[webhook-diag] failed:', diagErr.message);
-    }
     await logWebhook({
       source: 'prodamus', ip, signatureValid: false, rawBody: rawStr,
       status: 401, errorMessage: 'invalid_signature',
@@ -368,7 +343,17 @@ router.post('/prodamus', rawParser, async (req, res) => {
   // Legacy fallback: если intent не пришёл (старый фронт ещё в проде, или
   // первый webhook, выпущенный до миграции) — принимаем payload.studio_id,
   // НО без права трогать чувствительные поля жертвы (см. блок UPDATE ниже).
-  const intentToken = (payload.intent || customFields.intent || '').toString().trim() || null;
+  // Prodamus сохраняет custom-параметры из URL ровно с тем именем, с которым
+  // они переданы (включая префикс `_param_`). До этого мы читали голый
+  // `intent`/`plan`/`bonus_kop` — Prodamus такие поля не присылает, поэтому
+  // studioId оставался null, тариф не активировался. Берём оба варианта
+  // (с префиксом и без) для совместимости со старыми тестовыми webhook'ами.
+  const intentToken = (
+    payload._param_intent ||
+    payload.intent ||
+    customFields.intent ||
+    ''
+  ).toString().trim() || null;
 
   let studioId = null;
   let intentRow = null;
@@ -406,10 +391,16 @@ router.post('/prodamus', rawParser, async (req, res) => {
     studioId = (payload.studio_id || customFields.studio_id || '').toString().trim() || null;
   }
 
-  const planId   = (payload.plan      || customFields.plan      || '').toString().trim() || null;
+  const planId   = (
+    payload._param_plan ||
+    payload.plan ||
+    customFields.plan ||
+    ''
+  ).toString().trim() || null;
   // Бонусы реферальной программы: сколько копеек списать с баланса плательщика.
-  // Передаётся через _param_bonus_kop в payform-URL → top-level `bonus_kop`.
-  const bonusKopRaw = payload.bonus_kop ?? customFields.bonus_kop ?? 0;
+  // Передаётся через _param_bonus_kop в payform-URL — Prodamus сохраняет имя
+  // как есть, без срезания префикса.
+  const bonusKopRaw = payload._param_bonus_kop ?? payload.bonus_kop ?? customFields.bonus_kop ?? 0;
   const bonusKopUsed = Math.max(0, Math.floor(Number(bonusKopRaw) || 0));
 
   // Реквизиты для отключения рекуррента через Prodamus REST setActivity.

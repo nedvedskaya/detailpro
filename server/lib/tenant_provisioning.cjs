@@ -44,8 +44,9 @@ function generateReferralCode() {
 }
 
 const TENANT_TEMPLATE_PATH = path.join(__dirname, '..', 'sql', '100_tenant_template.sql');
-// Триал — 3 дня для всех новых студий. Существующие не трогаем.
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 3;
+// Триал — 7 дней для всех новых студий. Существующие не трогаем.
+// Можно переопределить переменной TRIAL_DAYS в .env.
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 7;
 
 // Загружаем шаблон один раз при старте — это крошечный файл, кешируется.
 let TEMPLATE_SQL_CACHE = null;
