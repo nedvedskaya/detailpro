@@ -192,8 +192,23 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
         setNewCategory({ name: '', color: COLORS[0], type: 'expense' });
     };
     
-    const income = useMemo(() => transactions.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount || 0), 0), [transactions]);
-    const expense = useMemo(() => transactions.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.amount || 0), 0), [transactions]);
+    // Карточка «Баланс» в шапке Операций показывает доходы/расходы только
+    // за ТЕКУЩИЙ календарный месяц — пользователь хочет видеть результат
+    // месяца, а не накопленный итог за всё время. Для аналитики и фильтров
+    // по периоду в других вкладках используется отдельная логика (см.
+    // selectedPeriod ниже), которая на эту карточку не влияет.
+    const monthFilteredTx = useMemo(() => {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = now.getMonth();
+        return transactions.filter(t => {
+            if (!t.date) return false;
+            const d = new Date(t.date);
+            return d.getFullYear() === y && d.getMonth() === m;
+        });
+    }, [transactions]);
+    const income = useMemo(() => monthFilteredTx.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount || 0), 0), [monthFilteredTx]);
+    const expense = useMemo(() => monthFilteredTx.filter(t => t.type === 'expense').reduce((acc, t) => acc + Number(t.amount || 0), 0), [monthFilteredTx]);
     const balance = income - expense;
     
     const handleSaveTransaction = () => {
@@ -674,7 +689,8 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
               {/* Баланс - градиент как в аналитике */}
               <div className="px-6 pt-4 pb-3">
                 <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-3xl p-5 text-center shadow-xl">
-                  <div className="text-sm font-medium text-white mb-2 uppercase tracking-wide">Баланс</div>
+                  <div className="text-sm font-medium text-white mb-1 uppercase tracking-wide">Баланс</div>
+                  <div className="text-[11px] text-white/70 mb-2">за {new Date().toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</div>
                   <div className="text-4xl font-bold text-white mb-4 tracking-tight">{formatMoney(balance)} ₽</div>
                   <div className="flex gap-4 justify-center">
                       <div>
