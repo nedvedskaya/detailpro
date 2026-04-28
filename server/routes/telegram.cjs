@@ -1005,11 +1005,11 @@ async function dispatchCallback(cb) {
     }
 
     if (action === 'b2') {
-      // Переводим юзера в режим «жду сообщение в поддержку» — следующее
-      // его текстовое сообщение dispatchMessage заберёт в handleSupportMessage
-      // и перешлёт админу. Чтобы пользователь увидел осмысленный ответ
-      // именно от воронки, отправляем ему prompt с правильным текстом.
-      await setState(tgUser.id, 'awaiting_support_message');
+      // Отдельный state — отличается от обычного /help только финальным
+      // ack'ом («спасибо за обратную связь!» вместо «передали в поддержку»).
+      // dispatchMessage маршрутизирует его в тот же handleSupportMessage,
+      // но с opts.ackText.
+      await setState(tgUser.id, 'awaiting_funnel_feedback');
       const reply = S1_DAY1_REPLIES.b2();
       await tg.sendMessage({
         chatId, userId: linked.id, kind: 'funnel.s1.day1.b2',
@@ -1321,7 +1321,7 @@ async function handleHelp(message) {
 // ──────────────────────────────────────────────────────────────────────
 // Поддержка: текст пришёл в режиме awaiting_support_message.
 // ──────────────────────────────────────────────────────────────────────
-async function handleSupportMessage(message, linked) {
+async function handleSupportMessage(message, linked, opts = {}) {
   const chatId = message.chat.id;
   const tgUser = message.from || {};
   const text = (message.text || '').trim();
@@ -1379,12 +1379,15 @@ async function handleSupportMessage(message, linked) {
 
   // 3. Сбрасываем стейт и подтверждаем клиенту.
   await clearState(tgUser.id);
+  // Кастомный ack — для feedback'а из воронки прогрева. Стандартный
+  // текст «передали в поддержку» там звучит неуместно, нужен «спасибо
+  // за обратную связь».
+  const ackText = opts.ackText
+    || `Спасибо, передали в поддержку 🛟\nОтвет придёт в этот чат, обычно в течение нескольких часов.`;
   await tg.sendMessage({
-    chatId, userId: linked?.id || null, kind: 'support_received',
+    chatId, userId: linked?.id || null, kind: opts.ackKind || 'support_received',
     replyMarkup: linked ? menuFor(linked) : undefined,
-    text:
-      `Спасибо, передали в поддержку 🛟\n` +
-      `Ответ придёт в этот чат, обычно в течение нескольких часов.`,
+    text: ackText,
   });
 }
 
@@ -1666,6 +1669,15 @@ async function dispatchMessage(message) {
   if (state === 'awaiting_support_message') {
     const linked = await findLinkedUser(tgUser.id);
     return handleSupportMessage(message, linked);
+  }
+  if (state === 'awaiting_funnel_feedback') {
+    // Тот же саппорт-pipeline, но с другим финальным ack-сообщением —
+    // юзер ждёт «спасибо за обратную связь», а не «передали в поддержку».
+    const linked = await findLinkedUser(tgUser.id);
+    return handleSupportMessage(message, linked, {
+      ackKind: 'funnel.feedback_thanks',
+      ackText: 'Спасибо за обратную связь! Передал информацию 😉',
+    });
   }
   if (state === 'awaiting_daily_time') {
     return handleDailyTimeInput(message, text);

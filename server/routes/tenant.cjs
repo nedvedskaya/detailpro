@@ -360,6 +360,12 @@ router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, n
       req, 'bulk_import', 'client', null, null,
       { strategy: strat, ...result.stats, errors: result.errors.length }
     );
+    // Если хоть один клиент реально создан/обновлён — для воронки прогрева
+    // это засчитываем как «первый клиент». Импорт через Excel — частый
+    // первый шаг новичка, без этого воронка решит «нет клиентов».
+    if (result.stats.created > 0 || result.stats.updated > 0) {
+      void markFirstEvent(req.session.studioId, 'first_client_at');
+    }
     res.json({ ok: true, strategy: strat, ...result.stats, errors: result.errors });
   } catch (err) {
     next(err);

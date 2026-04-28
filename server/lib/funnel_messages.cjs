@@ -17,6 +17,18 @@
 
 const APP_ORIGIN = (process.env.APP_ORIGIN || 'https://detailprocrm.ru').replace(/\/$/, '');
 
+// Escape для подстановки пользовательских строк (имя владельца, название
+// студии) в HTML-тексты. Без этого имя вида «Иванов&Co» сломает parseMode='HTML'
+// — Telegram вернёт 400. Маленький локальный helper, чтобы модуль не зависел
+// от server/lib/telegram.cjs (избегаем циклов в require).
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function btnTariffs(label = 'Выбрать тариф') {
   return [{ text: label, url: `${APP_ORIGIN}/profile` }];
 }
@@ -40,7 +52,7 @@ function btnApp(label) {
 const S1 = {
   'day1': ({ name }) => ({
     text:
-      `${name ? name + ', ' : ''}тест-драйв закончился 🏁 Доступ пока поставил на ручник.\n\n` +
+      `${name ? esc(name) + ', ' : ''}тест-драйв закончился 🏁 Доступ пока поставил на ручник.\n\n` +
       `Никаких прогревов и продаж. Просто хочу как напарник спросить: почему мы не поехали дальше? Нажми нужную кнопку — а если хочешь, напиши текстом, что именно не зашло.`,
     inline_keyboard: [
       [{ text: '1 — Не было времени разобраться', callback_data: 'funnel:s1.day1:b1' }],
@@ -143,7 +155,7 @@ const S1_FEEDBACK_THANKS = () => ({
 const S2 = {
   'day1_care': ({ name }) => ({
     text:
-      `${name ? name + ', ' : ''}подписка истекла, доступ на стопе 🤌\n\n` +
+      `${name ? esc(name) + ', ' : ''}подписка истекла, доступ на стопе 🤌\n\n` +
       `Скорее всего, просто замотал{ся/ась} или карта отвязалась. Всю твою базу, историю клиентов накрыл чехлом — всё в полной сохранности.\n\n` +
       `Продлевай тариф, чтобы мастера не потеряли записи, а ты не слови{л/ла} кассовый разрыв.`,
     inline_keyboard: [[{ text: 'Вернуть доступ', url: `${APP_ORIGIN}/profile` }]],
