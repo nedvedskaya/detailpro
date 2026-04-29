@@ -2310,6 +2310,9 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
   const [deletionAt, setDeletionAt] = useState<string | null>(initialDeletion);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Кастомный confirm-модал вместо нативного window.confirm — даёт
+  // место под детальный список потерь и CTA в поддержку.
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const requested = !!deletionAt;
   const effectiveAt = useMemo(() => {
@@ -2319,29 +2322,31 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
     return new Date(t.getTime() + 30 * 24 * 3600 * 1000);
   }, [deletionAt]);
 
-  const handleClick = async () => {
+  const performAction = async () => {
     if (busy) return;
-    if (!requested) {
-      // Двойное подтверждение перед запросом удаления — это необратимое
-      // решение для юзера, нужно явно осознать.
-      const ok = window.confirm(
-        'Удалить аккаунт?\n\n' +
-        'Студия и все данные клиентов будут удалены через 30 дней. ' +
-        'Подписка не возвращается, бонусы сгорают. ' +
-        'До истечения 30 дней можно отменить запрос — нажмите кнопку ещё раз.\n\n' +
-        'Продолжить?'
-      );
-      if (!ok) return;
-    }
     setBusy(true);
     setError('');
     try {
       const res = await api.requestAccountDeletion(requested);
       setDeletionAt(res.deletionRequestedAt);
+      setConfirmOpen(false);
     } catch (err) {
       setError(translateApiError(err, 'Не удалось обработать запрос'));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleClick = () => {
+    if (busy) return;
+    // Для отмены запроса (когда уже запрошено удаление) — без модала, сразу.
+    // Для нового запроса — открываем кастомный confirm с потерями + связь
+    // с поддержкой, чтобы юзер мог передумать.
+    if (requested) {
+      void performAction();
+    } else {
+      setError('');
+      setConfirmOpen(true);
     }
   };
 
@@ -2364,9 +2369,9 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
       </p>
 
       {isOwner && (
-        <div className="text-xs leading-relaxed">
+        <div className="text-[10px] leading-relaxed">
           {requested && effectiveAt ? (
-            <div className="text-zinc-600">
+            <div className="text-zinc-600 text-xs">
               Аккаунт будет удалён{' '}
               <span className="font-medium text-zinc-900">{formatDateRu(effectiveAt)}</span>.{' '}
               <button
@@ -2379,16 +2384,99 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
               </button>
             </div>
           ) : (
+            // Намеренно мелкая, бледная — это destructive-действие, не должно
+            // привлекать внимание. До этого была подчёркнутая ссылка text-xs,
+            // визуально слишком заметная для такой опасной кнопки.
             <button
               type="button"
               onClick={handleClick}
               disabled={busy}
-              className="text-zinc-400 hover:text-red-600 underline underline-offset-2 disabled:opacity-50 transition-colors"
+              className="text-[10px] text-zinc-300 hover:text-red-500 underline-offset-2 hover:underline disabled:opacity-50 transition-colors"
             >
               {busy ? 'Отправляем…' : 'Удалить аккаунт'}
             </button>
           )}
-          {error && <p className="mt-2 text-red-500">{error}</p>}
+          {error && <p className="mt-2 text-red-500 text-xs">{error}</p>}
+        </div>
+      )}
+
+      {/* Кастомный confirm-модал. Раньше был нативный window.confirm —
+          в нём нельзя показать структурированный список потерь и CTA
+          в поддержку. Юзер часто решает удалить аккаунт «горячо», и
+          нам выгоднее дать ему возможность сначала написать в саппорт
+          (вдруг проблему можно решить), чем потерять клиента молча. */}
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-[400] bg-zinc-900/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => !busy && setConfirmOpen(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-bold text-zinc-900 mb-3">
+              Удалить аккаунт?
+            </h2>
+            <p className="text-sm text-zinc-600 mb-4 leading-snug">
+              Студия и все данные удалятся через <span className="font-semibold text-zinc-900">30 дней</span>.
+              До этого момента можно отменить — кнопка «Отменить запрос» появится тут же.
+            </p>
+
+            <div className="bg-red-50 border border-red-100 rounded-xl p-3 mb-4">
+              <p className="text-xs font-semibold text-red-900 mb-2">
+                Что вы потеряете безвозвратно через 30 дней:
+              </p>
+              <ul className="text-xs text-red-900 space-y-1.5 leading-snug">
+                <li>🔸 База клиентов и история работ по их авто</li>
+                <li>🔸 Все заказ-наряды и акты приёмки (PDF)</li>
+                <li>🔸 Финансовая статистика и аналитика</li>
+                <li>🔸 Бонусный баланс по реферальной программе</li>
+                <li>🔸 Привязка к Telegram-боту</li>
+              </ul>
+            </div>
+
+            <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-5">
+              <p className="text-xs text-orange-900 leading-snug mb-2">
+                <span className="font-semibold">Что-то пошло не так?</span>{' '}
+                Часто это можно решить — напишите в поддержку, и мы поможем.
+              </p>
+              <a
+                href="https://t.me/detailpro_bot?start=help"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setConfirmOpen(false)}
+                className="inline-flex items-center justify-center w-full px-3 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold transition-colors"
+              >
+                Написать в поддержку
+              </a>
+            </div>
+
+            <p className="text-xs text-zinc-500 mb-4 leading-snug">
+              Подписка не возвращается, бонусы сгорают.
+              Решение можно отменить в течение 30 дней.
+            </p>
+
+            {error && <p className="mb-3 text-sm text-red-500">{error}</p>}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={busy}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-900 text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={performAction}
+                disabled={busy}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                {busy ? 'Отправляем…' : 'Всё равно удалить'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
