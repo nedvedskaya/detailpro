@@ -18,11 +18,23 @@ interface MaterialsPageProps {
 
 export const MaterialsPage = ({ onBack }: MaterialsPageProps) => {
   return (
+    <>
+      {/* Полоса-маска под статусбаром iOS PWA, чтобы при скролле sticky-шапка
+          не уходила под прозрачные индикаторы (часы/LTE). */}
+      <div
+        aria-hidden
+        style={{
+          position: 'fixed', top: 0, left: 0, right: 0,
+          height: 'env(safe-area-inset-top, 0px)',
+          background: '#ffffff',
+          zIndex: 11,  // выше sticky-шапки (z-10)
+        }}
+      />
     <div
       className="fixed inset-0 bg-zinc-50 overflow-y-auto"
       style={{
         // safe-area-inset-top — отступ под notch / Dynamic Island на iPhone.
-        paddingTop: 'max(env(safe-area-inset-top, 0px), 0px)',
+        paddingTop: 'env(safe-area-inset-top, 0px)',
       }}
     >
       {/* Шапка с кнопкой «Назад» — повторяет паттерн ProfilePage / AdminPanel
@@ -56,5 +68,6 @@ export const MaterialsPage = ({ onBack }: MaterialsPageProps) => {
         </div>
       </div>
     </div>
+    </>
   );
 };

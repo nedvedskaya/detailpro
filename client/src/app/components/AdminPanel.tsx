@@ -467,9 +467,21 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
     // не зависеть от height-цепочки html→body→#root. На iPhone Safari
     // h-full тут раньше «не находил» однозначной высоты родителя при
     // открытом адресном баре, и внутренний overflow-y-auto не скроллился.
+    // top смещён ниже статусбара iOS PWA, иначе шапка с «← Назад» и
+    // «Админ-панель» прячется под индикаторами (часы/LTE).
+    <>
+      <div
+        aria-hidden
+        style={{
+          position: 'fixed', top: 0, left: 0, right: 0,
+          height: 'env(safe-area-inset-top, 0px)',
+          background: '#ffffff',
+          zIndex: 31,  // выше sticky-шапки (z-30) чтобы перекрыть и её
+        }}
+      />
     <div
       className="flex flex-col bg-zinc-50 overflow-hidden"
-      style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+      style={{ position: 'fixed', top: 'env(safe-area-inset-top, 0px)', left: 0, right: 0, bottom: 0 }}
     >
       <div className="sticky top-0 z-30 bg-white shadow-sm shrink-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
@@ -1221,5 +1233,6 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
         </form>
       </Modal>
     </div>
+    </>
   );
 };
