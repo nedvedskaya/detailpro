@@ -135,16 +135,16 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
                   </>
                 ) : (
                   <>
-                    {/* break-words + leading-snug — длинные названия услуг
-                        («Полировка кузова Глянцевый Детейл») переносятся на
-                        следующую строку, а не обрезаются с многоточием.
+                    {/* text-[13px] + break-words: меньший шрифт даёт длинному
+                        названию шанс уместиться в одну строку, но если не
+                        влезает — переносится, а не обрезается.
                         Раньше truncate делал «Полировка кузова Глянцев…» и
                         «Полировка кузова Детейл…» неотличимыми — мастер мог
                         промахнуться с услугой и взять не ту цену. */}
-                    <span className="flex-1 text-sm font-medium text-zinc-900 break-words leading-snug">
+                    <span className="flex-1 text-[13px] font-medium text-zinc-900 break-words leading-snug">
                       {row.name}
                     </span>
-                    <span className="text-sm font-bold text-zinc-900 whitespace-nowrap shrink-0">
+                    <span className="text-[13px] font-bold text-zinc-900 whitespace-nowrap shrink-0">
                       {row.price.toLocaleString('ru-RU')}&nbsp;₽
                     </span>
                   </>
@@ -202,8 +202,8 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
                             пристёгнута справа сверху (items-start). Это
                             критично для безопасности: похожие названия с
                             разной ценой не должны выглядеть одинаково. */}
-                        <span className="flex-1 min-w-0 text-sm font-medium text-zinc-900 break-words leading-snug">{p.name}</span>
-                        <span className="text-sm font-bold text-zinc-700 whitespace-nowrap shrink-0">
+                        <span className="flex-1 min-w-0 text-[13px] font-medium text-zinc-900 break-words leading-snug">{p.name}</span>
+                        <span className="text-[13px] font-bold text-zinc-700 whitespace-nowrap shrink-0">
                           {Number(p.price).toLocaleString('ru-RU')}&nbsp;₽
                         </span>
                       </button>

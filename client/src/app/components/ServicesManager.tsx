@@ -175,7 +175,7 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
                     el.style.height = el.scrollHeight + 'px';
                   }
                 }}
-                className="bg-transparent outline-none text-sm text-zinc-900 disabled:text-zinc-500 resize-none overflow-hidden leading-snug"
+                className="bg-transparent outline-none text-[13px] text-zinc-900 disabled:text-zinc-500 resize-none overflow-hidden leading-snug"
               />
               <input
                 type="number"
@@ -187,7 +187,7 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
                   const cur = items.find((x) => x.id === it.id);
                   if (cur && Number(cur.price) !== Number(it.price)) updateField(it.id, { price: Number(cur.price) || 0 });
                 }}
-                className="bg-transparent outline-none text-sm text-zinc-900 text-right disabled:text-zinc-500 mt-0.5"
+                className="bg-transparent outline-none text-[13px] text-zinc-900 text-right disabled:text-zinc-500 mt-0.5"
               />
               <label className="flex items-center justify-center mt-1">
                 <input
