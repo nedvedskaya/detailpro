@@ -1564,15 +1564,39 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
     // h-full здесь раньше «не находил» однозначной высоты родителя
     // (из-за квирков с -webkit-fill-available / 100dvh при показанном
     // адресном баре), и тач-скролл не работал.
-    <div
-      className="bg-zinc-50 overflow-y-auto overscroll-contain"
-      style={{
-        position: 'fixed',
-        top: 0, left: 0, right: 0, bottom: 0,
-        WebkitOverflowScrolling: 'touch',
-      }}
-    >
-      <div className="max-w-3xl mx-auto p-4 sm:p-6 pb-20">
+    <>
+      {/* iOS PWA standalone: статусбар с часами/LTE прозрачный, и без
+          фоновой полосы под ним viewport-контент при скролле проходит
+          ПОД индикаторами. Перекрываем эту зону белой полосой ровно
+          высоты safe-area-inset-top — она растягивается до notch/Dynamic
+          Island. На Android и в обычном браузере env() = 0, полосы нет. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0,
+          height: 'env(safe-area-inset-top, 0px)',
+          background: '#fafafa',  // совпадает с bg-zinc-50 ниже
+          zIndex: 1,
+        }}
+      />
+      <div
+        className="bg-zinc-50 overflow-y-auto overscroll-contain"
+        style={{
+          position: 'fixed',
+          // top сдвигаем ниже статусбара, чтобы скроллируемая область
+          // физически не могла наложиться на индикаторы.
+          top: 'env(safe-area-inset-top, 0px)',
+          left: 0, right: 0, bottom: 0,
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+      <div
+        className="max-w-3xl mx-auto p-4 sm:p-6"
+        style={{
+          paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))',
+        }}
+      >
         {/* Верхняя кнопка «Назад» */}
         <button
           onClick={onBack}
@@ -2235,7 +2259,8 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           deletionRequestedAt={studio.deletionRequestedAt || null}
         />
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 
