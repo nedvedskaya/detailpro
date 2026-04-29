@@ -1821,13 +1821,32 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                     отдельное согласие по ч. 4 ст. 12 ФЗ-152. Telegram —
                     зарубежные серверы (UK/UAE), для передачи туда ПДн нужно
                     явное согласие, отдельное от регистрационного. */}
+                {/* Кастомный чекбокс (div + tick-svg). Раньше был нативный
+                    <input type=checkbox>, на iOS Safari без accentColor он
+                    рисовался как тонкая пустая рамка — юзер его не видел и
+                    думал, что кнопка «Подключить Telegram» не работает.
+                    Кастомная плашка с явным фоном и SVG-галочкой одинаково
+                    выглядит на всех платформах. */}
                 <label className="flex items-start gap-3 cursor-pointer select-none mb-4">
                   <input
                     type="checkbox"
                     checked={tgCrossBorderConsent}
                     onChange={(e) => setTgCrossBorderConsent(e.target.checked)}
-                    className="mt-1 w-5 h-5 rounded border-zinc-300 accent-zinc-900 cursor-pointer"
+                    className="sr-only peer"
                   />
+                  <span
+                    aria-hidden
+                    className={
+                      'mt-0.5 h-5 w-5 shrink-0 rounded border-2 flex items-center justify-center transition-colors ' +
+                      (tgCrossBorderConsent
+                        ? 'bg-orange-500 border-orange-500 text-white'
+                        : 'bg-white border-zinc-400 text-transparent')
+                    }
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="5 12 10 17 19 7" />
+                    </svg>
+                  </span>
                   <span className="text-xs text-zinc-600 leading-relaxed">
                     При привязке бота ваши данные (идентификатор Telegram,
                     имя пользователя, текст сообщений) передаются Telegram
@@ -1845,10 +1864,13 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                 </label>
 
                 {tgError && <p className="text-sm text-red-500 mb-3">{tgError}</p>}
+                {/* Кнопка ВСЕГДА clickable. Если консента нет — handleTelegramLink
+                    показывает понятную ошибку «поставьте галочку выше», вместо
+                    серой неработающей кнопки, в которой юзер видит баг. */}
                 <button
                   type="button"
                   onClick={handleTelegramLink}
-                  disabled={tgBusy || !tgCrossBorderConsent}
+                  disabled={tgBusy}
                   className="px-4 py-2 rounded-xl bg-zinc-900 text-white text-sm font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {tgBusy ? 'Готовим ссылку…' : 'Подключить Telegram'}

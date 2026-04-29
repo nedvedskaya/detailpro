@@ -135,10 +135,16 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
                   </>
                 ) : (
                   <>
-                    <span className="flex-1 text-sm font-medium text-zinc-900 truncate">
+                    {/* break-words + leading-snug — длинные названия услуг
+                        («Полировка кузова Глянцевый Детейл») переносятся на
+                        следующую строку, а не обрезаются с многоточием.
+                        Раньше truncate делал «Полировка кузова Глянцев…» и
+                        «Полировка кузова Детейл…» неотличимыми — мастер мог
+                        промахнуться с услугой и взять не ту цену. */}
+                    <span className="flex-1 text-sm font-medium text-zinc-900 break-words leading-snug">
                       {row.name}
                     </span>
-                    <span className="text-sm font-bold text-zinc-900 whitespace-nowrap">
+                    <span className="text-sm font-bold text-zinc-900 whitespace-nowrap shrink-0">
                       {row.price.toLocaleString('ru-RU')}&nbsp;₽
                     </span>
                   </>
@@ -189,10 +195,15 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
                         key={p.id}
                         type="button"
                         onClick={() => addFromPrice(p)}
-                        className="w-full flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-zinc-50 text-left border-b border-zinc-100 last:border-b-0"
+                        className="w-full flex items-start justify-between gap-3 px-3 py-2.5 hover:bg-zinc-50 text-left border-b border-zinc-100 last:border-b-0"
                       >
-                        <span className="text-sm font-medium text-zinc-900 truncate">{p.name}</span>
-                        <span className="text-sm font-bold text-zinc-700 whitespace-nowrap">
+                        {/* Без truncate — название переносится на несколько
+                            строк целиком. Кнопка вырастает по высоте, цена
+                            пристёгнута справа сверху (items-start). Это
+                            критично для безопасности: похожие названия с
+                            разной ценой не должны выглядеть одинаково. */}
+                        <span className="flex-1 min-w-0 text-sm font-medium text-zinc-900 break-words leading-snug">{p.name}</span>
+                        <span className="text-sm font-bold text-zinc-700 whitespace-nowrap shrink-0">
                           {Number(p.price).toLocaleString('ru-RU')}&nbsp;₽
                         </span>
                       </button>

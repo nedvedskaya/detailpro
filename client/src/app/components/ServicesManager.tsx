@@ -131,29 +131,51 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
           Прайс пока пустой. Добавьте услуги ниже — они появятся в выпадашке при создании заказ-наряда.
         </p>
       ) : (
+        // Сжал колонки «Цена» (120→90) и «Активна» (80→56), чтобы освободить
+        // больше ширины под название услуги. На мобильном экране это
+        // критично — раньше «Полировка кузова Глянцевый Детейл» обрезалось
+        // до неотличимого «Полировка кузова Гл…», и две разные услуги с
+        // разными ценами выглядели одинаково.
         <div className="border border-zinc-100 rounded-xl overflow-hidden mb-4">
-          <div className="grid grid-cols-[1fr_120px_80px_36px] gap-2 px-3 py-2 bg-zinc-50 text-xs text-zinc-500 font-medium">
+          <div className="grid grid-cols-[1fr_90px_56px_36px] gap-2 px-3 py-2 bg-zinc-50 text-xs text-zinc-500 font-medium">
             <span>Название</span>
             <span className="text-right">Цена, ₽</span>
-            <span className="text-center">Активна</span>
+            <span className="text-center">Акт.</span>
             <span />
           </div>
           {items.map((it) => (
             <div
               key={it.id}
-              className="grid grid-cols-[1fr_120px_80px_36px] gap-2 px-3 py-2 border-t border-zinc-100 items-center"
+              className="grid grid-cols-[1fr_90px_56px_36px] gap-2 px-3 py-2 border-t border-zinc-100 items-start"
             >
-              <input
-                type="text"
+              {/* textarea вместо input — длинные названия переносятся на
+                  следующую строку, не обрезаются. rows=1 + onInput
+                  auto-grow держит высоту по контенту, без полосы прокрутки. */}
+              <textarea
                 value={it.name}
+                rows={1}
                 disabled={!canEdit}
-                onChange={(e) => setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, name: e.target.value } : x)))}
+                onChange={(e) => {
+                  setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, name: e.target.value } : x)));
+                  // auto-resize: считываем scrollHeight, ставим в style.height
+                  const el = e.target as HTMLTextAreaElement;
+                  el.style.height = 'auto';
+                  el.style.height = el.scrollHeight + 'px';
+                }}
                 onBlur={(e) => {
                   const v = e.target.value.trim();
                   if (v && v !== it.name) updateField(it.id, { name: v });
                   else if (!v) setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, name: it.name } : x)));
                 }}
-                className="bg-transparent outline-none text-sm text-zinc-900 disabled:text-zinc-500"
+                ref={(el) => {
+                  // На монтировании растягиваем сразу до полной высоты контента,
+                  // иначе при первой отрисовке будет одна строка с обрезанием.
+                  if (el && el.scrollHeight !== el.clientHeight) {
+                    el.style.height = 'auto';
+                    el.style.height = el.scrollHeight + 'px';
+                  }
+                }}
+                className="bg-transparent outline-none text-sm text-zinc-900 disabled:text-zinc-500 resize-none overflow-hidden leading-snug"
               />
               <input
                 type="number"
@@ -165,9 +187,9 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
                   const cur = items.find((x) => x.id === it.id);
                   if (cur && Number(cur.price) !== Number(it.price)) updateField(it.id, { price: Number(cur.price) || 0 });
                 }}
-                className="bg-transparent outline-none text-sm text-zinc-900 text-right disabled:text-zinc-500"
+                className="bg-transparent outline-none text-sm text-zinc-900 text-right disabled:text-zinc-500 mt-0.5"
               />
-              <label className="flex items-center justify-center">
+              <label className="flex items-center justify-center mt-1">
                 <input
                   type="checkbox"
                   checked={it.is_active}
