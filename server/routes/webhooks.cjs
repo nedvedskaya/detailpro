@@ -828,19 +828,29 @@ router.post('/prodamus', rawParser, async (req, res) => {
         const { markFirstEvent } = require('../lib/funnel.cjs');
         void markFirstEvent(studioId, 'first_paid_at');
       } catch (_) { /* не валим webhook из-за маркера */ }
-      // Не await: ответ Prodamus'у ждать не надо. Если TG ляжет на 30 сек —
-      // не задерживаем webhook-acknowledge.
-      void notifyOwnerOnPayment({
-        studioId,
-        orderId,
-        amountKop,
-        planId,
-        bonusKopUsed,
-        isPaidAfterCancel: result.wasCancelled,
-      });
+      // Авто-списание подписки (recurrent charge) — owner НЕ ждёт явного
+      // подтверждения, он осознанно подписан и не хочет «лишних» сообщений
+      // о каждом списании. Поэтому пишем юзеру только когда payment_init=manual
+      // (он сам нажал «Оплатить»). Админу шлём всегда — для мониторинга.
+      // Известные значения payment_init у Prodamus: manual, auto, recurrent.
+      const initType = String(payload.payment_init || 'manual').toLowerCase();
+      const isAutoCharge = initType === 'auto' || initType === 'recurrent' || initType === 'subscription';
+      if (!isAutoCharge) {
+        // Не await: ответ Prodamus'у ждать не надо. Если TG ляжет на 30 сек —
+        // не задерживаем webhook-acknowledge.
+        void notifyOwnerOnPayment({
+          studioId,
+          orderId,
+          amountKop,
+          planId,
+          bonusKopUsed,
+          isPaidAfterCancel: result.wasCancelled,
+        });
+      }
       // Параллельно — уведомление админу платформы (если оплата не от
       // его собственной студии). Чтобы Оле не приходилось дёргать
       // /платежи в боте, чтобы узнать о свежих оплатах клиентов.
+      // Шлём ВСЕГДА — даже на auto-charge, чтобы админ видел recurring-платежи.
       void notifyAdminOnPayment({
         studioId,
         orderId,

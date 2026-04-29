@@ -25,7 +25,7 @@
 const { pool } = require('./db.cjs');
 const tg = require('./telegram.cjs');
 const { applyGender } = require('./gender.cjs');
-const { S1, S1_PRE, S2 } = require('./funnel_messages.cjs');
+const { S1, S1_PRE, S2, S2_PRE } = require('./funnel_messages.cjs');
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -48,7 +48,8 @@ const SCHEDULE = {
 };
 
 const RENDERERS = {
-  's1.trial_last_day':  (ctx) => S1_PRE['trial_last_day'](ctx),
+  's1.trial_last_day':            (ctx) => S1_PRE['trial_last_day'](ctx),
+  's2.sub_last_day_no_recurrent': (ctx) => S2_PRE['sub_last_day_no_recurrent'](ctx),
   's1.day1':            (ctx) => S1['day1'](ctx),
   's1.day5_pain':       (ctx) => S1['day5_pain'](ctx),
   's1.day14_freedom':   (ctx) => S1['day14_freedom'](ctx),
@@ -94,7 +95,7 @@ async function findCandidates() {
   const r = await pool.query(`
     SELECT s.id, s.schema_name, s.display_name, s.access_until,
            s.first_paid_at, s.referral_code, s.deletion_requested_at,
-           s.cancel_pending,
+           s.cancel_pending, s.prodamus_subscription_id,
            u.id           AS user_id,
            u.tg_chat_id,
            u.gender,
@@ -108,12 +109,16 @@ async function findCandidates() {
        AND (
          -- POST-EXPIRY: подписка истекла, идёт основная воронка (T+1..+29).
          (s.access_until < now() AND (now() - s.access_until) < interval '31 days')
-         -- PRE-EXPIRY: trial вот-вот закончится (последние 24 часа), и
-         -- юзер ни разу не платил. Платным эту ветку не шлём — они и так
-         -- знают про конец и продляют сами.
+         -- PRE-EXPIRY: подписка/trial вот-вот закончится (последние 24 часа).
+         -- Шлём двум сегментам:
+         --   • Не платил (first_paid_at IS NULL) → пишем «trial last day»
+         --   • Платил, но БЕЗ recurring (prodamus_subscription_id IS NULL)
+         --     → пишем «продли вручную, автосписания нет»
+         -- Если есть subscription_id — Prodamus спишет сам, не пишем
+         -- (по решению владельца: «не уведомлять о автоплатежах»).
          OR (s.access_until > now()
              AND s.access_until < now() + interval '24 hours'
-             AND s.first_paid_at IS NULL)
+             AND (s.first_paid_at IS NULL OR s.prodamus_subscription_id IS NULL))
        )
        AND s.deletion_requested_at IS NULL
        AND u.tg_chat_id IS NOT NULL
@@ -131,11 +136,18 @@ function pickEventKind(studio) {
   const nowMs = Date.now();
 
   // PRE-EXPIRY: подписка ещё активна, но истечёт в ближайшие 24 часа.
-  // Только для не-плативших (s1) — платных предупреждать иначе, отдельно.
-  if (accessMs > nowMs && !studio.first_paid_at) {
+  if (accessMs > nowMs) {
     const hoursUntilExpiry = (accessMs - nowMs) / (60 * 60 * 1000);
-    if (hoursUntilExpiry > 0 && hoursUntilExpiry <= 24) {
+    if (hoursUntilExpiry <= 0 || hoursUntilExpiry > 24) return null;
+
+    if (!studio.first_paid_at) {
+      // Не платил — заканчивается trial.
       return 's1.trial_last_day';
+    }
+    // Платил. Если есть recurring (prodamus_subscription_id) — НЕ пингуем,
+    // Prodamus сам спишет, юзер про это не должен думать.
+    if (!studio.prodamus_subscription_id) {
+      return 's2.sub_last_day_no_recurrent';
     }
     return null;
   }

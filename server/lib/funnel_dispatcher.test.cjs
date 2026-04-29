@@ -21,7 +21,7 @@ const { pickEventKind, isInSendingWindow } = require('./funnel_dispatcher.cjs');
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-function makeStudio({ daysExpired, paid, hoursUntilExpiry }) {
+function makeStudio({ daysExpired, paid, hoursUntilExpiry, recurring }) {
   // hoursUntilExpiry > 0 — подписка ещё активна, истечёт через N часов
   // daysExpired >= 0 — подписка истекла N дней назад
   const offsetMs = hoursUntilExpiry != null
@@ -30,6 +30,7 @@ function makeStudio({ daysExpired, paid, hoursUntilExpiry }) {
   return {
     access_until: new Date(Date.now() - offsetMs).toISOString(),
     first_paid_at: paid ? new Date('2026-01-01').toISOString() : null,
+    prodamus_subscription_id: recurring ? 'sub_test_123' : null,
   };
 }
 
@@ -61,8 +62,17 @@ test('pickEventKind: s1.trial_last_day (за 24ч до конца trial)', () =>
   assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 24, paid: false })), 's1.trial_last_day');
   // 25 часов — слишком рано
   assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 25, paid: false })), null);
-  // Платным эту ветку не шлём
-  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 12, paid: true })), null);
+});
+
+test('pickEventKind: s2 pre-expiry — учитываем recurring', () => {
+  // Платил, recurring настроен → ничего не пишем, Prodamus спишет сам
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 12, paid: true, recurring: true })), null);
+  // Платил, recurring НЕТ → напоминаем «продли вручную»
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 12, paid: true, recurring: false })), 's2.sub_last_day_no_recurrent');
+  // Граница 24 часа
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 24, paid: true, recurring: false })), 's2.sub_last_day_no_recurrent');
+  // 25 часов — слишком рано
+  assert.equal(pickEventKind(makeStudio({ hoursUntilExpiry: 25, paid: true, recurring: false })), null);
 });
 
 test('pickEventKind: s2 (платил, истёк)', () => {
