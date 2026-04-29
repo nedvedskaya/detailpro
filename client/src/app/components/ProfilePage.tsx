@@ -1406,7 +1406,14 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
   // без него бэк не выдаст deep-link и не запишет согласие в consents.
   // Сбрасываем при отвязке (handleTelegramUnlink), чтобы при повторной
   // привязке юзер прочитал/принял ещё раз.
-  const [tgCrossBorderConsent, setTgCrossBorderConsent] = useState(false);
+  // Согласие на трансграничную передачу ПДн — для УДОБСТВА pre-checked.
+  // ⚠️ Юридически: РКН по 152-ФЗ считает «истинным» только активно
+  // отмеченное согласие; pre-checked может быть оспорен в проверке как
+  // дефолтное навязывание. Решение владельца: оставить true ради
+  // снижения трения — пользователи всё равно прочитают текст рядом и
+  // могут снять галочку, если не согласны. Текст согласия на странице
+  // не скрыт.
+  const [tgCrossBorderConsent, setTgCrossBorderConsent] = useState(true);
 
   const handleTelegramLink = async () => {
     if (tgBusy) return;
