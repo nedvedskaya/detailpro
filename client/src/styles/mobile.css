@@ -111,6 +111,56 @@
   select {
     font-size: 16px !important;
   }
+
+  /* Глобальный стиль чекбокса — заметная плашка на всех платформах,
+     включая iOS Safari (где нативный <input type="checkbox"> с accentColor
+     рисуется как невидимая тонкая рамка и юзеры не находят чекбокс).
+     Применяется ко ВСЕМ <input type="checkbox">, кроме скрытых через
+     .sr-only / .peer (там рядом стоит свой кастомный div+SVG, который
+     управляется через peer-checked: — этим стилям ниже мы не мешаем,
+     потому что .sr-only с clip:rect(0,0,0,0) делает наш квадрат
+     невидимым в любом случае). */
+  input[type="checkbox"]:not(.sr-only) {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    min-width: 1.25rem;
+    border: 2px solid #a1a1aa;       /* zinc-400 */
+    border-radius: 0.3rem;
+    background: #ffffff;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    vertical-align: middle;
+    position: relative;
+    transition: background-color 0.15s, border-color 0.15s;
+  }
+  input[type="checkbox"]:not(.sr-only):checked {
+    background: #f97316;             /* orange-500 — фирменный цвет */
+    border-color: #f97316;
+  }
+  /* Галочка внутри чекнутого квадрата — рисуем через ::after (две границы
+     CSS под углом 45°). Без SVG, чтобы не зависеть от inline-html-шаблона
+     каждого места использования. */
+  input[type="checkbox"]:not(.sr-only):checked::after {
+    content: '';
+    width: 0.55rem;
+    height: 0.3rem;
+    border-left: 2px solid #ffffff;
+    border-bottom: 2px solid #ffffff;
+    transform: rotate(-45deg) translate(0.5px, -1px);
+  }
+  input[type="checkbox"]:not(.sr-only):disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  input[type="checkbox"]:not(.sr-only):focus-visible {
+    outline: 2px solid #fb923c;      /* orange-400 */
+    outline-offset: 2px;
+  }
   
   /* Фикс для iOS Safari address bar */
   .ios-device {
