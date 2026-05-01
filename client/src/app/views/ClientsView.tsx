@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Search, Download, Plus, ArrowUpDown, Cake, Check } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Search, Download, Plus, ArrowUpDown, Cake, Check, LayoutGrid, List } from 'lucide-react';
 import { ClientListCard } from '@/app/components/clients';
 import { EmptyState, ActionButtons } from '@/app/components/ui';
 import { ClientAvatar } from '@/app/components/ui/ClientAvatar';
@@ -47,6 +47,15 @@ export const ClientsView = ({
   const [isAdding, setIsAdding] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('date');
   const [showSortMenu, setShowSortMenu] = useState(false);
+  const [viewFormat, setViewFormat] = useState<'cards' | 'table'>(() => {
+    return (localStorage.getItem('clients_view_format') as 'cards' | 'table') || 'cards';
+  });
+
+  const toggleViewFormat = () => {
+    const next = viewFormat === 'cards' ? 'table' : 'cards';
+    setViewFormat(next);
+    localStorage.setItem('clients_view_format', next);
+  };
   
   const { search, setSearch, filteredItems } = useSearch({
     items: allClients,
@@ -112,6 +121,13 @@ export const ClientsView = ({
               title="Экспорт в Excel"
             >
               <Download size={16} className="text-orange-600" />
+            </button>
+            <button
+              onClick={toggleViewFormat}
+              className="hidden md:flex w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 items-center justify-center transition-all active:scale-95"
+              title={viewFormat === 'cards' ? 'Переключить на таблицу' : 'Переключить на блоки'}
+            >
+              {viewFormat === 'cards' ? <List size={16} className="text-zinc-600" /> : <LayoutGrid size={16} className="text-zinc-600" />}
             </button>
             
             <div className="relative">
@@ -224,76 +240,74 @@ export const ClientsView = ({
             title={search ? 'Клиенты не найдены' : 'Нет клиентов'}
             description={search ? 'Попробуйте изменить параметры поиска' : 'Нажмите + чтобы добавить первого клиента'}
           />
-        ) : (
-          <>
-            {/* Мобиле — карточки */}
-            <div className="md:hidden space-y-3 desktop-grid-2">
-              {sortedItems.map(client => (
-                <ClientListCard
-                  key={client.id}
-                  client={client}
-                  onOpen={() => onOpenClient(client)}
-                  onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
-                  onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
-                />
-              ))}
-            </div>
-
-            {/* Десктоп — таблица */}
-            <table className="hidden md:table w-full border-collapse">
-              <thead>
-                <tr className="border-b-2 border-zinc-200 text-left">
-                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest pl-2">Клиент</th>
-                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Автомобиль</th>
-                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Телефон</th>
-                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Статус</th>
-                  <th className="pb-3"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedItems.map(client => {
-                  const hasActiveBooking = (client.records || []).some((r: any) => !r.isCompleted);
-                  const hasBirthday = isBirthdayToday(client.birthDate);
-                  return (
-                    <tr
-                      key={client.id}
-                      onClick={() => onOpenClient(client)}
-                      className="border-b border-zinc-100 hover:bg-orange-50 cursor-pointer group transition-colors"
-                    >
-                      <td className="py-3 pl-2">
-                        <div className="flex items-center gap-3">
-                          <ClientAvatar name={client.name} avatar={client.avatar} size="sm" />
-                          <div>
-                            <div className="font-bold text-zinc-900 leading-tight">{String(client.name || '')}</div>
-                            {hasBirthday && <span className="text-xs text-orange-500 font-bold">ДР сегодня</span>}
-                          </div>
+        ) : viewFormat === 'table' ? (
+          /* Таблица — только на десктопе, если выбран этот формат */
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-b-2 border-zinc-200 text-left">
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest pl-2">Клиент</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Автомобиль</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Телефон</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Статус</th>
+                <th className="pb-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedItems.map(client => {
+                const hasActiveBooking = (client.records || []).some((r: any) => !r.isCompleted);
+                const hasBirthday = isBirthdayToday(client.birthDate);
+                return (
+                  <tr
+                    key={client.id}
+                    onClick={() => onOpenClient(client)}
+                    className="border-b border-zinc-100 hover:bg-orange-50 cursor-pointer group transition-colors"
+                  >
+                    <td className="py-3 pl-2">
+                      <div className="flex items-center gap-3">
+                        <ClientAvatar name={client.name} avatar={client.avatar} size="sm" />
+                        <div>
+                          <div className="font-bold text-zinc-900 leading-tight">{String(client.name || '')}</div>
+                          {hasBirthday && <span className="text-xs text-orange-500 font-bold">ДР сегодня</span>}
                         </div>
-                      </td>
-                      <td className="py-3 text-sm text-zinc-600">{String(client.carBrand || '')} {String(client.carModel || '')}</td>
-                      <td className="py-3 text-sm text-zinc-600">{String(client.phone || '')}</td>
-                      <td className="py-3">
-                        {hasActiveBooking && (
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700">
-                            Активная запись
-                          </span>
+                      </div>
+                    </td>
+                    <td className="py-3 text-sm text-zinc-600">{String(client.carBrand || '')} {String(client.carModel || '')}</td>
+                    <td className="py-3 text-sm text-zinc-600">{String(client.phone || '')}</td>
+                    <td className="py-3">
+                      {hasActiveBooking && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700">
+                          Активная запись
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 pr-2">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {canEdit && (
+                          <ActionButtons
+                            onEdit={() => onEditClient({ client, mode: 'base' })}
+                            onDelete={() => onDeleteClient(client.id)}
+                          />
                         )}
-                      </td>
-                      <td className="py-3 pr-2">
-                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {canEdit && (
-                            <ActionButtons
-                              onEdit={() => onEditClient({ client, mode: 'base' })}
-                              onDelete={() => onDeleteClient(client.id)}
-                            />
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          /* Карточки */
+          <div className="space-y-3 desktop-grid-2">
+            {sortedItems.map(client => (
+              <ClientListCard
+                key={client.id}
+                client={client}
+                onOpen={() => onOpenClient(client)}
+                onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
+                onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>
