@@ -2027,7 +2027,7 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
         {/* ── Демо-данные (только owner). Чтобы новый юзер не упирался
             в пустые экраны и мог посмотреть на полный цикл «клиент →
             запись → задача → транзакция», прежде чем создавать своё. */}
-        {role === 'owner' && (
+        {role === 'owner' && isTrial && (
         <CollapsibleSection
           title="Демо-данные"
           subtitle="Заполнить или очистить примеры клиентов и записей"
