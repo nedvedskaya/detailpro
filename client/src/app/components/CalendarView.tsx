@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Overlay } from './ui/Overlay';
 import { Plus, X, ChevronLeft, ChevronRight, CalendarDays, ChevronRight as ChevronRightIcon, Copy, CheckCircle2, DollarSign } from 'lucide-react';
 import { formatDate, formatTime, getDateStr, findCategoryById, isDateInRange } from '@/utils/helpers';
 import { LAYOUT_CLASSES } from '@/utils/styleConstants';
@@ -158,7 +159,7 @@ export const CalendarView = ({
             </div>
             
             {selectedDate && (
-                <div className="absolute inset-0 z-[150] bg-zinc-900/50 backdrop-blur-sm flex items-end animate-in fade-in desktop-sheet-center" onClick={() => setSelectedDate(null)}>
+                <Overlay position="absolute" zIndex={150} onClick={() => setSelectedDate(null)}>
                     <div className="w-full bg-white rounded-t-[32px] p-6 shadow-2xl overflow-y-auto" style={{maxHeight: '80dvh', paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 20px))'}} onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-between items-center mb-6">
                             <div>
@@ -280,7 +281,7 @@ export const CalendarView = ({
                             </div>
                         )}
                     </div>
-                </div>
+                </Overlay>
             )}
         </div>
     );

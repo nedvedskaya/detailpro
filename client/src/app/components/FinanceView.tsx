@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Overlay } from './ui/Overlay';
 import { Plus, X, ArrowDownLeft, ArrowUpRight, Wallet, Edit3, Trash2, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Tag, BarChart3, ChevronDown, Download } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { TransactionItem } from '@/app/components/TransactionItem';
@@ -354,7 +355,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     return (
       <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
         {isAdding && (
-            <div className="fixed inset-0 z-[260] bg-zinc-900/50 backdrop-blur-sm flex items-end animate-in fade-in desktop-sheet-center" onClick={() => {
+            <Overlay zIndex={260} onClick={() => {
                 setIsAdding(false); 
                 setEditingTransaction(null); 
                 setNewTransaction(getInitialTransactionState());
@@ -566,7 +567,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                         </Button>
                     </div>
                 </div>
-            </div>
+            </Overlay>
         )}
 
         {/* Модальное окно добавления категории */}

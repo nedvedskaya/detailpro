@@ -20,4 +20,4 @@ export { AutocompleteInput } from './AutocompleteInput';
 export { SearchInput } from './SearchInput';
 export { NetworkIndicator } from './NetworkIndicator';
 export { ToastContainer, showToast } from './Toast';
-export { ClientAvatar } from './ClientAvatar';
+export { ClientAvatar } from './ClientAvatar';export { Overlay } from "./Overlay";
