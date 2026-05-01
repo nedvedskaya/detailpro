@@ -439,6 +439,7 @@ export const AcceptanceActForm = ({
               {saving ? 'Сохраняем…' : 'Сохранить'}
             </button>
           </div>
+          <p className="text-center text-[11px] text-zinc-400 mt-1 leading-snug">Сохраняя карточку, вы подтверждаете наличие законных оснований и согласия клиента на обработку его персональных данных</p>
 
           <div className="text-[11px] text-zinc-400 text-center">
             Загружено фотографий: {photosCount}

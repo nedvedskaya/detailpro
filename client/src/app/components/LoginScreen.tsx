@@ -418,7 +418,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
                 </a>{' '}
                 и{' '}
                 <a href="/legal/personal-data-consent" className="text-zinc-900 underline" target="_blank" rel="noreferrer">
-                  Согласием на обработку ПДн
+                  Согласием
                 </a>
               </Consent>
               <Consent
@@ -481,9 +481,9 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
           <button
             onClick={handleSubmit}
-            disabled={isLoading}
+            disabled={isLoading || (mode === 'signup' && (!consentPersonalData || !consentTerms))}
             className={`w-full bg-zinc-900 text-white text-base font-medium py-3.5 rounded-xl transition-all ${
-              isLoading ? 'opacity-70 cursor-not-allowed' : 'hover:bg-orange-600 active:scale-[0.98]'
+              isLoading || (mode === 'signup' && (!consentPersonalData || !consentTerms)) ? 'opacity-40 cursor-not-allowed' : 'hover:bg-orange-600 active:scale-[0.98]'
             }`}
           >
             {isLoading ? (

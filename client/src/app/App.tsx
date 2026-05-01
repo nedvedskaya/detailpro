@@ -299,13 +299,14 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
             
             {/* Кнопка сохранения внизу */}
             <div className="pt-6 pb-4">
-                <button 
+                <button
                     onClick={handleSave}
                     disabled={isSaving}
                     className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${isSaving ? 'bg-zinc-300 text-zinc-500 cursor-wait' : 'bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98]'}`}
                 >
                     {isSaving ? 'Сохранение...' : 'Сохранить клиента'}
                 </button>
+                <p className="text-center text-[11px] text-zinc-400 mt-2 leading-snug">Сохраняя карточку, вы подтверждаете наличие законных оснований и согласия клиента на обработку его персональных данных</p>
             </div>
         </div>
     </div>

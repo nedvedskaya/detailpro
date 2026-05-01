@@ -1412,7 +1412,7 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
   // снижения трения — пользователи всё равно прочитают текст рядом и
   // могут снять галочку, если не согласны. Текст согласия на странице
   // не скрыт.
-  const [tgCrossBorderConsent, setTgCrossBorderConsent] = useState(true);
+  const [tgCrossBorderConsent, setTgCrossBorderConsent] = useState(false);
 
   const handleTelegramLink = async () => {
     if (tgBusy) return;
@@ -1854,14 +1854,14 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
                     </svg>
                   </span>
                   <span className="text-[11px] text-zinc-500 leading-snug">
-                    Данные (Telegram ID, username, сообщения) передаются Telegram Inc. за рубеж. Согласен на трансграничную передачу ПДн.{' '}
+                    Я даю согласие на трансграничную передачу персональных данных компании Telegram Messenger Inc. в соответствии с разделом 6{' '}
                     <a
                       href="/legal/personal-data-consent"
                       target="_blank"
                       rel="noreferrer"
                       className="text-zinc-700 underline"
                     >
-                      Подробнее
+                      Согласия на обработку ПДн
                     </a>.
                   </span>
                 </label>
