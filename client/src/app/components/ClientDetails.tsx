@@ -255,7 +255,7 @@ export const ClientDetails = ({
         {/* Бронь */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">{editingRecordId ? 'Редактирование записи' : 'Запись'}</span>
+            <span className="text-xs font-black text-orange-500 uppercase tracking-widest">{editingRecordId ? 'Редактирование записи' : 'Запись'}</span>
             {!isAddingRecord && !editingRecordId && (
               <button onClick={() => setIsAddingRecord(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>
                 + Добавить
@@ -558,7 +558,7 @@ export const ClientDetails = ({
         {/* Задачи */}
         {!editingRecordId && <div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</span>
+            <span className="text-xs font-black text-orange-500 uppercase tracking-widest">Задачи</span>
             <button onClick={() => setIsAddingTask(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>+ Создать</button>
           </div>
           {isAddingTask && (
