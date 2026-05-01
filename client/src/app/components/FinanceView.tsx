@@ -693,7 +693,8 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
             <div className="flex-1 overflow-y-auto pb-32 bg-zinc-50">
               {/* Баланс - градиент как в аналитике */}
               <div className="px-6 pt-4 pb-3">
-                <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-3xl p-5 text-center shadow-xl">
+                {/* Мобиле — вертикальный блок */}
+                <div className="md:hidden bg-gradient-to-br from-orange-500 to-orange-600 rounded-3xl p-5 text-center shadow-xl">
                   <div className="text-sm font-medium text-white mb-1 uppercase tracking-wide">Баланс</div>
                   <div className="text-[11px] text-white/70 mb-2">за {new Date().toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</div>
                   <div className="text-4xl font-bold text-white mb-4 tracking-tight">{formatMoney(balance)} ₽</div>
@@ -707,6 +708,25 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
                           <div className="text-xs text-white/80 mb-1">{TRANSACTION_TYPES.expense.label}</div>
                           <div className="text-xl font-bold text-white">−{formatMoney(expense)}</div>
                       </div>
+                  </div>
+                </div>
+                {/* Десктоп — компактная горизонтальная полоса */}
+                <div className="hidden md:flex bg-gradient-to-r from-orange-500 to-orange-600 rounded-2xl px-8 py-4 items-center shadow-lg gap-8">
+                  <div>
+                    <div className="text-[10px] font-bold text-white/70 uppercase tracking-widest">Баланс</div>
+                    <div className="text-xs text-white/60">за {new Date().toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}</div>
+                  </div>
+                  <div className="text-3xl font-black text-white tracking-tight">{formatMoney(balance)} ₽</div>
+                  <div className="w-px bg-white/20 self-stretch my-1"></div>
+                  <div className="flex gap-6">
+                    <div>
+                      <div className="text-[10px] text-white/70 mb-0.5">{TRANSACTION_TYPES.income.label}</div>
+                      <div className="text-lg font-bold text-white">+{formatMoney(income)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-white/70 mb-0.5">{TRANSACTION_TYPES.expense.label}</div>
+                      <div className="text-lg font-bold text-white">−{formatMoney(expense)}</div>
+                    </div>
                   </div>
                 </div>
               </div>
