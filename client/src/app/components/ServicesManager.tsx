@@ -1,7 +1,20 @@
 /**
- * ServicesManager — простой прайс-лист услуг.
- * Плоский список: название + цена. Поиск — в ServicesPicker при выборе услуги.
- * При любом изменении вызывает onServicesChange() — синхронизирует прайс в App.
+ * ServicesManager — менеджер прайс-листа услуг студии.
+ *
+ * Использует CRUD `/api/services` (см. server/routes/tenant.cjs):
+ *   GET    — все читают
+ *   POST/PUT/DELETE — owner и manager (мастер read-only)
+ *
+ * UX:
+ *   • inline-редактирование name/price/duration с onBlur-сохранением
+ *   • чекбокс «активна» — мгновенный PUT
+ *   • удаление — confirm + DELETE
+ *   • новая услуга — форма внизу с одной кнопкой «Добавить»
+ *
+ * При любом изменении вызывает onServicesChange() — синхронизирует прайс
+ * в App.tsx без перезагрузки страницы (новая услуга сразу видна в брони).
+ *
+ * Подключается в ProfilePage внутри отдельной секции, видимой owner+manager.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
