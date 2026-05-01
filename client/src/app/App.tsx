@@ -217,13 +217,13 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 </div>
                 <textarea name="comment" value={String(formData.comment || '')} onChange={handleChange} placeholder="Комментарий..." rows={3} className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium outline-none focus:border-orange-500 resize-none shadow-sm"/>
             </div>
-            <div className="space-y-4 pt-2 border-t border-zinc-200">
+            <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Запись</h3>
+                    <h3 className="text-xs font-black text-orange-500 uppercase tracking-widest">Запись</h3>
                     <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Запись</ActionButton>
                 </div>
                 {isRecordFormOpen && (
-                    <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
+                    <div className="bg-white border border-orange-100 p-4 rounded-xl space-y-3">
                         <AppointmentInputs
                             data={recordInput}
                             onChange={(e) => {
@@ -254,7 +254,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 )}
                 <div className="space-y-2">
                     {newRecords.map(r => (
-                        <div key={r.id} className="bg-white p-3 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
+                        <div key={r.id} className="bg-white p-3 rounded-xl border border-orange-100 flex items-center justify-between shadow-sm">
                             <div>
                                 <p className="text-sm font-bold text-zinc-800">{String(r.service || '')}</p>
                                 <div className="flex items-center gap-2">
@@ -268,7 +268,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                     ))}
                 </div>
             </div>
-            <div className="space-y-4 pt-2 border-t border-zinc-200">
+            <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 space-y-4">
                 <div className="flex items-center justify-between"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</h3><ActionButton variant="metal" size="md" onClick={() => setIsTaskFormOpen(!isTaskFormOpen)}>+ Задача</ActionButton></div>
                 {isTaskFormOpen && (
                     <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
