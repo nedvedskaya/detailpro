@@ -806,81 +806,123 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
         {/* Контент: Аналитика */}
         {activeSection === 'analytics' && (
             <div className="flex-1 overflow-y-auto pb-24 bg-white">
-                {/* Минималистичная шапка */}
+                {/* Шапка: мобиле — вертикально, десктоп — одна строка */}
                 <div className="px-6 pt-6 pb-4">
-                    {/* Переключатель Расходы/Доходы */}
-                    <div className="flex gap-3 mb-4">
-                        <button
-                            onClick={() => setViewMode('expense')}
-                            className={`flex-1 py-3 rounded-2xl text-base font-semibold transition-all ${
-                                viewMode === 'expense'
-                                ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30'
-                                : 'bg-gray-100 text-gray-400'
-                            }`}
-                        >
-                            {TRANSACTION_TYPES.expense.labelPlural}
-                        </button>
-                        <button
-                            onClick={() => setViewMode('income')}
-                            className={`flex-1 py-3 rounded-2xl text-base font-semibold transition-all ${
-                                viewMode === 'income'
-                                ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30'
-                                : 'bg-gray-100 text-gray-400'
-                            }`}
-                        >
-                            {TRANSACTION_TYPES.income.labelPlural}
-                        </button>
-                    </div>
-
-                    {/* Фильтры времени */}
-                    <div className="flex gap-2">
-                        {[
-                            { value: 'day', label: 'День' },
-                            { value: 'week', label: 'Неделя' },
-                            { value: 'month', label: 'Месяц' },
-                            { value: 'year', label: 'Год' }
-                        ].map((filter) => (
+                    {/* Мобиле */}
+                    <div className="md:hidden">
+                        <div className="flex gap-3 mb-4">
                             <button
-                                key={filter.value}
-                                onClick={() => setTimeFilter(filter.value as any)}
-                                className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
-                                    timeFilter === filter.value
-                                    ? 'text-orange-500 bg-orange-50'
-                                    : 'text-gray-400 bg-transparent'
+                                onClick={() => setViewMode('expense')}
+                                className={`flex-1 py-3 rounded-2xl text-base font-semibold transition-all ${
+                                    viewMode === 'expense'
+                                    ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30'
+                                    : 'bg-gray-100 text-gray-400'
                                 }`}
                             >
-                                {filter.label}
+                                {TRANSACTION_TYPES.expense.labelPlural}
                             </button>
-                        ))}
+                            <button
+                                onClick={() => setViewMode('income')}
+                                className={`flex-1 py-3 rounded-2xl text-base font-semibold transition-all ${
+                                    viewMode === 'income'
+                                    ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30'
+                                    : 'bg-gray-100 text-gray-400'
+                                }`}
+                            >
+                                {TRANSACTION_TYPES.income.labelPlural}
+                            </button>
+                        </div>
+                        <div className="flex gap-2">
+                            {[
+                                { value: 'day', label: 'День' },
+                                { value: 'week', label: 'Неделя' },
+                                { value: 'month', label: 'Месяц' },
+                                { value: 'year', label: 'Год' }
+                            ].map((filter) => (
+                                <button
+                                    key={filter.value}
+                                    onClick={() => setTimeFilter(filter.value as any)}
+                                    className={`flex-1 py-2 rounded-xl text-sm font-medium transition-all ${
+                                        timeFilter === filter.value
+                                        ? 'text-orange-500 bg-orange-50'
+                                        : 'text-gray-400 bg-transparent'
+                                    }`}
+                                >
+                                    {filter.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    {/* Десктоп — одна компактная строка */}
+                    <div className="hidden md:flex items-center gap-3">
+                        <div className="flex gap-2">
+                            <button onClick={() => setViewMode('expense')} className={`px-4 py-1.5 rounded-xl text-sm font-semibold transition-all ${viewMode === 'expense' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}>
+                                {TRANSACTION_TYPES.expense.labelPlural}
+                            </button>
+                            <button onClick={() => setViewMode('income')} className={`px-4 py-1.5 rounded-xl text-sm font-semibold transition-all ${viewMode === 'income' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}>
+                                {TRANSACTION_TYPES.income.labelPlural}
+                            </button>
+                        </div>
+                        <div className="w-px h-5 bg-zinc-200 shrink-0" />
+                        <div className="flex gap-1">
+                            {[
+                                { value: 'day', label: 'День' },
+                                { value: 'week', label: 'Неделя' },
+                                { value: 'month', label: 'Месяц' },
+                                { value: 'year', label: 'Год' }
+                            ].map((filter) => (
+                                <button key={filter.value} onClick={() => setTimeFilter(filter.value as any)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${timeFilter === filter.value ? 'text-orange-500 bg-orange-50' : 'text-gray-400 hover:bg-gray-50'}`}>
+                                    {filter.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="w-px h-5 bg-zinc-200 shrink-0" />
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => navigateTime('prev')} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 transition-all">
+                                <ChevronLeft size={16} className="text-gray-400" />
+                            </button>
+                            <span className="text-sm font-semibold text-gray-900 min-w-[100px] text-center">{getDateLabel()}</span>
+                            <button onClick={() => navigateTime('next')} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 transition-all">
+                                <ChevronRight size={16} className="text-gray-400" />
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                {/* Навигация по датам */}
-                <div className="px-6 pb-6 flex items-center justify-center gap-4">
-                    <button 
-                        onClick={() => navigateTime('prev')} 
+                {/* Навигация по датам — только мобиле */}
+                <div className="md:hidden px-6 pb-6 flex items-center justify-center gap-4">
+                    <button
+                        onClick={() => navigateTime('prev')}
                         className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-gray-50 transition-all"
                     >
                         <ChevronLeft size={20} className="text-gray-400" />
                     </button>
                     <span className="text-lg font-semibold text-gray-900 min-w-[140px] text-center">{getDateLabel()}</span>
-                    <button 
-                        onClick={() => navigateTime('next')} 
+                    <button
+                        onClick={() => navigateTime('next')}
                         className="w-10 h-10 rounded-full flex items-center justify-center hover:bg-gray-50 transition-all"
                     >
                         <ChevronRight size={20} className="text-gray-400" />
                     </button>
                 </div>
 
-                {/* Компактная главная метрика */}
+                {/* Главная метрика */}
                 <div className="px-4 pb-4">
-                    <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-5 text-center shadow-lg">
+                    {/* Мобиле */}
+                    <div className="md:hidden bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-5 text-center shadow-lg">
                         <div className="text-xs font-semibold text-orange-100 mb-1 uppercase tracking-wide">
                             {TRANSACTION_TYPES[viewMode as keyof typeof TRANSACTION_TYPES]?.labelPlural}
                         </div>
                         <div className="text-4xl font-black text-white tracking-tight">
                             {formatMoney(totalAmount)} ₽
                         </div>
+                    </div>
+                    {/* Десктоп — компактная строка */}
+                    <div className="hidden md:flex bg-gradient-to-r from-orange-500 to-orange-600 rounded-xl px-6 py-3 items-center gap-4 shadow-sm">
+                        <span className="text-xs font-bold text-orange-100 uppercase tracking-widest">
+                            {TRANSACTION_TYPES[viewMode as keyof typeof TRANSACTION_TYPES]?.labelPlural}
+                        </span>
+                        <span className="text-2xl font-black text-white tracking-tight">{formatMoney(totalAmount)} ₽</span>
                     </div>
                 </div>
 
