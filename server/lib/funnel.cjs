@@ -19,6 +19,7 @@
  */
 
 const { pool } = require('./db.cjs');
+const { FIVE_MINUTES_MS } = require('./constants.cjs');
 
 const ALLOWED_FIELDS = new Set([
   'first_client_at',
@@ -53,7 +54,7 @@ async function markFirstEvent(studioId, field) {
  * чтобы не нагружать БД на каждый /api/profile или /api/clients.
  */
 const lastActiveCache = new Map(); // studioId -> ms
-const LAST_ACTIVE_THROTTLE_MS = 5 * 60 * 1000;
+const LAST_ACTIVE_THROTTLE_MS = FIVE_MINUTES_MS;
 
 async function touchLastActive(studioId) {
   if (!studioId) return;

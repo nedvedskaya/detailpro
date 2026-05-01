@@ -32,6 +32,7 @@
  */
 
 const { FixedWindowLimiter } = require('./rate_limit.cjs');
+const { FIVE_MINUTES_MS } = require('./constants.cjs');
 
 // ──────────────────────────────────────────────────────────────────────
 // Базовый логгер
@@ -87,7 +88,7 @@ function maskEmail(email) {
 // истечению окна — limit'ер сам ротирует записи.
 // ──────────────────────────────────────────────────────────────────────
 const IP_BURST_THRESHOLD = 50;
-const IP_BURST_WINDOW_MS = 5 * 60 * 1000;
+const IP_BURST_WINDOW_MS = FIVE_MINUTES_MS;
 
 const ipErrorCounter = new FixedWindowLimiter({
   name: 'ip.burst',

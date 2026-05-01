@@ -23,6 +23,7 @@
  */
 
 const express = require('express');
+const { FIFTEEN_MINUTES_MS, ONE_HOUR_MS } = require('../lib/constants.cjs');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
 const { consumeOneTimeToken, OneTimeTokenError } = require('../lib/one_time_token.cjs');
@@ -80,23 +81,23 @@ const { FixedWindowLimiter } = require('../lib/rate_limit.cjs');
 
 const loginByEmail = new FixedWindowLimiter({
   name: 'login.email',
-  max: 5, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
+  max: 5, windowMs: FIFTEEN_MINUTES_MS, blockMs: FIFTEEN_MINUTES_MS,
 });
 const loginByIp = new FixedWindowLimiter({
   name: 'login.ip',
-  max: 30, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
+  max: 30, windowMs: FIFTEEN_MINUTES_MS, blockMs: FIFTEEN_MINUTES_MS,
 });
 const resetByEmail = new FixedWindowLimiter({
   name: 'reset.email',
-  max: 3, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
+  max: 3, windowMs: FIFTEEN_MINUTES_MS, blockMs: FIFTEEN_MINUTES_MS,
 });
 const resetByIp = new FixedWindowLimiter({
   name: 'reset.ip',
-  max: 10, windowMs: 60 * 60 * 1000, blockMs: 60 * 60 * 1000,
+  max: 10, windowMs: ONE_HOUR_MS, blockMs: ONE_HOUR_MS,
 });
 const signupByIp = new FixedWindowLimiter({
   name: 'signup.ip',
-  max: 5, windowMs: 60 * 60 * 1000, blockMs: 60 * 60 * 1000,
+  max: 5, windowMs: ONE_HOUR_MS, blockMs: ONE_HOUR_MS,
 });
 
 // ──────────────────────────────────────────────────────────────────────

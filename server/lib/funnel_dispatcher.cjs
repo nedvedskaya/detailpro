@@ -23,11 +23,12 @@
  */
 
 const { pool } = require('./db.cjs');
+const { ONE_DAY_MS, ONE_HOUR_MS } = require('./constants.cjs');
 const tg = require('./telegram.cjs');
 const { applyGender } = require('./gender.cjs');
 const { S1, S1_PRE, S2, S2_PRE } = require('./funnel_messages.cjs');
 
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+// ONE_DAY_MS импортирован из lib/constants
 
 // Тайминги в днях после истечения access_until → event_kind.
 const SCHEDULE = {
@@ -141,7 +142,7 @@ function pickEventKind(studio) {
 
   // PRE-EXPIRY: подписка ещё активна, но истечёт в ближайшие 24 часа.
   if (accessMs > nowMs) {
-    const hoursUntilExpiry = (accessMs - nowMs) / (60 * 60 * 1000);
+    const hoursUntilExpiry = (accessMs - nowMs) / ONE_HOUR_MS;
     if (hoursUntilExpiry <= 0 || hoursUntilExpiry > 24) return null;
 
     if (!studio.first_paid_at) {

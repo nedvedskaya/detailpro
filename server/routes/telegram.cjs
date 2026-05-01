@@ -30,6 +30,7 @@
  */
 
 const express = require('express');
+const { FIFTEEN_MINUTES_MS, ONE_DAY_MS } = require('../lib/constants.cjs');
 const { parseTimeHHMM } = require('../lib/time_parser.cjs');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
@@ -59,7 +60,7 @@ function isAdmin(tgUserId) {
 
 // TTL стейта «жду сообщение в поддержку» — иначе случайный текст недели спустя
 // попадёт в support_requests как обращение.
-const STATE_TTL_MS = 15 * 60 * 1000;
+const STATE_TTL_MS = FIFTEEN_MINUTES_MS;
 
 // ──────────────────────────────────────────────────────────────────────
 // Постоянное меню для привязанного пользователя.
@@ -1165,7 +1166,7 @@ function describeAccessUntil(accessUntil) {
   // floor: «осталось N дней» = ПОЛНЫХ суток до access_until. ceil показывал
   // одно и то же значение первые ~24 часа после регистрации (2.3 дня → «3»),
   // юзер обоснованно жаловался: «вчера было 3, сегодня 3 — должен идти отсчёт».
-  const days = Math.floor((target.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+  const days = Math.floor((target.getTime() - Date.now()) / ONE_DAY_MS);
   if (days < 0)  return { text: `доступ истёк ${Math.abs(days)} дн. назад`, expired: true };
   if (days === 0) return { text: 'истекает сегодня', expired: false };
   return { text: `осталось ${days} ${pluralizeDays(days)}`, expired: false };

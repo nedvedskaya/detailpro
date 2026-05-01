@@ -1,3 +1,4 @@
+const { ONE_HOUR_MS } = require('./constants.cjs');
 'use strict';
 /**
  * In-memory rate-limiter.
@@ -38,7 +39,7 @@ class FixedWindowLimiter {
     /** @type {Map<string, { firstAt:number, count:number, blockedUntil:number }>} */
     this.records = new Map();
     // Чистка раз в час; unref чтобы не держать процесс живым.
-    this._timer = setInterval(() => this._sweep(), 60 * 60 * 1000);
+    this._timer = setInterval(() => this._sweep(), ONE_HOUR_MS);
     this._timer.unref();
   }
 

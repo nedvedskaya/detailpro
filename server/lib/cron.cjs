@@ -23,6 +23,7 @@
  */
 
 const { pool } = require('./db.cjs');
+const { FIVE_MINUTES_MS, ONE_DAY_MS } = require('./constants.cjs');
 const { cleanupExpiredSessions } = require('./auth.cjs');
 const reminders = require('./reminders.cjs');
 const funnelDispatcher = require('./funnel_dispatcher.cjs');
@@ -30,9 +31,9 @@ const cleanup = require('./cleanup.cjs');
 const birthdays = require('./birthdays.cjs');
 
 const ACTIVITY_RETENTION_DAYS = Number(process.env.ACTIVITY_RETENTION_DAYS) || 90;
-const CRON_INTERVAL_MS = Number(process.env.CRON_INTERVAL_MS) || 24 * 60 * 60 * 1000;
+const CRON_INTERVAL_MS = Number(process.env.CRON_INTERVAL_MS) || ONE_DAY_MS;
 // Тикер TG-напоминаний. 5 минут — окна 9:00-9:09 и 55-65 мин его покрывают.
-const REMINDERS_INTERVAL_MS = Number(process.env.REMINDERS_INTERVAL_MS) || 5 * 60 * 1000;
+const REMINDERS_INTERVAL_MS = Number(process.env.REMINDERS_INTERVAL_MS) || FIVE_MINUTES_MS;
 
 let timer = null;
 let remindersTimer = null;

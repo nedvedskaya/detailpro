@@ -15,6 +15,7 @@
  */
 
 const crypto = require('node:crypto');
+const { ONE_HOUR_MS } = require('./constants.cjs');
 const { pool } = require('./db.cjs');
 
 // План → форма Prodamus + цена. Должны совпадать с TARIFF_GROUPS на фронте
@@ -44,7 +45,7 @@ const PLAN_LABELS_RU = {
 
 const VALID_PLAN_IDS = Object.keys(PLAN_PRICES_KOP);
 
-const PAYMENT_INTENT_TTL_MS = 60 * 60 * 1000; // 60 минут
+const PAYMENT_INTENT_TTL_MS = ONE_HOUR_MS;
 
 /**
  * Создаёт payment_intent под указанную студию + план + пользователя.
