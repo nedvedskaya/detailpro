@@ -15,6 +15,9 @@ ca.crt
 dist/
 *.tsbuildinfo
 
+# Старые root-owned папки на сервере (после миграции с rsync на git pull)
+*_old_root/
+
 # Apple Pages document templates (binary, держим локально)
 *.pages
 
