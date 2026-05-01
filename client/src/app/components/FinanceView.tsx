@@ -354,7 +354,7 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     return (
       <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
         {isAdding && (
-            <div className="fixed inset-0 z-[260] bg-zinc-900/50 backdrop-blur-sm flex items-end animate-in fade-in" onClick={() => {
+            <div className="fixed inset-0 z-[260] bg-zinc-900/50 backdrop-blur-sm flex items-end animate-in fade-in desktop-sheet-center" onClick={() => {
                 setIsAdding(false); 
                 setEditingTransaction(null); 
                 setNewTransaction(getInitialTransactionState());
