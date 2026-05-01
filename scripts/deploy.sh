@@ -103,16 +103,19 @@ if [ "${DEPLOY_SKIP_BACKUP:-0}" != "1" ]; then
 fi
 
 # ── 2. Удалённо: git pull + npm ci + build + init ──────────────────────
-# Сервер сам тянет последнюю main с GitHub. ssh-сессия выполняет всё
-# в одном heredoc, чтобы прерывание любого шага останавливало деплой.
+# Сервер сам тянет последнюю main с GitHub. Скрипт пишем в /tmp на сервере
+# и выполняем — НЕ через heredoc-stdin, потому что npm ci/build читают
+# stdin и съедают остаток скрипта (получаем exit 243 после server npm ci).
 log "remote: git pull origin main + npm ci + build"
-ssh "${REMOTE}" bash -se <<EOF
+
+REMOTE_SCRIPT=$(cat <<'REMOTE_EOF'
+#!/usr/bin/env bash
 set -euo pipefail
-cd "${DEPLOY_PATH}"
+cd __DEPLOY_PATH__
 
 # Перед pull убедимся что нет случайных правок (например, кто-то редактировал
 # файл напрямую вне git). При наличии — стоп, чтобы не потерять изменения.
-if [ -n "\$(git status --porcelain)" ]; then
+if [ -n "$(git status --porcelain)" ]; then
   echo "FAIL: на сервере есть незакоммиченные изменения:" >&2
   git status --short >&2
   echo "Залогинься и закоммить через 'git add -A && git commit && git push origin main', потом повтори деплой." >&2
@@ -124,23 +127,29 @@ fi
 git fetch --quiet origin main
 git reset --hard origin/main
 
-echo "[remote] HEAD: \$(git log -1 --oneline)"
+echo "[remote] HEAD: $(git log -1 --oneline)"
 
-# Прод-зависимости сервера (без dev — не нужен tsc/eslint)
-npm ci --omit=dev
+# Прод-зависимости сервера (без dev — не нужен tsc/eslint).
+# </dev/null — чтобы npm не пытался читать stdin (иначе ssh-сессия рвётся).
+npm ci --omit=dev </dev/null
 
 # Сборка фронта прямо на сервере (раньше собирали локально и rsync'или
-# client/dist; теперь dist в .gitignore не уезжает в GitHub, поэтому
-# собираем на проде).
-cd "${DEPLOY_PATH}/client"
-npm ci --silent
-npm run build
-cd "${DEPLOY_PATH}"
+# client/dist; теперь dist в .gitignore не уезжает в GitHub).
+cd __DEPLOY_PATH__/client
+npm ci --silent </dev/null
+npm run build </dev/null
+cd __DEPLOY_PATH__
 
 # Применяем глобальные миграции (000_*.sql, 018_*.sql и т.д.).
 # Идемпотентно, IF NOT EXISTS / DROP IF EXISTS внутри.
-npm run init
-EOF
+npm run init </dev/null
+REMOTE_EOF
+)
+# Подставляем DEPLOY_PATH в плейсхолдер.
+REMOTE_SCRIPT="${REMOTE_SCRIPT//__DEPLOY_PATH__/${DEPLOY_PATH}}"
+
+# Заливаем скрипт на сервер и выполняем.
+echo "$REMOTE_SCRIPT" | ssh "${REMOTE}" "cat > /tmp/saas-deploy.sh && bash /tmp/saas-deploy.sh"
 
 # ── 3. Restart ─────────────────────────────────────────────────────────
 # Отдельной ssh-сессией с -tt (PTY): на VPS sudoers содержит Defaults use_pty,
