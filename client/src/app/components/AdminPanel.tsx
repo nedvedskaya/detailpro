@@ -361,12 +361,22 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
 
   const handleEditOpen = (u: StudioUser) => {
     setEditTarget(u);
-    const defaultPerms = u.role === 'master' ? MASTER_PRESET : MANAGER_PRESET;
+    const defaultPerms = u.role === 'master' ? { ...MASTER_PRESET } : { ...MANAGER_PRESET };
     const perms = u.permissions as SectionPermissions | null | undefined;
+    let initPerms: SectionPermissions;
+    if (perms) {
+      initPerms = { ...defaultPerms, ...perms };
+    } else {
+      // Фолбэк для старых менеджеров с can_view_finance=false
+      initPerms = { ...defaultPerms };
+      if (u.role === 'manager' && u.can_view_finance === false) {
+        initPerms.finance = 'none';
+      }
+    }
     setEditForm({
       name: u.name,
       role: u.role === 'owner' ? 'owner' : u.role,
-      permissions: perms ? { ...defaultPerms, ...perms } : { ...defaultPerms },
+      permissions: initPerms,
     });
   };
 
