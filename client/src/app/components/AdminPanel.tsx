@@ -32,7 +32,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Activity, UserPlus, Shield, ShieldOff, Clock,
   ArrowLeft, Trash2, Edit3, KeyRound, Copy, Check, RefreshCw, X, ChevronDown,
-  Lock, BarChart3,
+  Lock, BarChart3, Search,
 } from 'lucide-react';
 import { AnalyticsDashboard } from '@/app/components/admin/AnalyticsDashboard';
 import { api } from '@/utils/api';
@@ -182,6 +182,7 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
   const [filterAction, setFilterAction] = useState<string>('');
   const [filterFrom, setFilterFrom] = useState<string>('');
   const [filterTo, setFilterTo] = useState<string>('');
+  const [logSearch, setLogSearch] = useState<string>('');
 
   // ── Add-модалка ──
   const [showAddModal, setShowAddModal] = useState(false);
@@ -733,6 +734,22 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
         {/* ─────────── Активность ─────────── */}
         {activeTab === 'activity' && (
           <div className="space-y-3">
+            {/* Поиск */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={16} />
+              <input
+                type="text"
+                placeholder="Поиск по логам..."
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+                className="w-full bg-white border border-zinc-200 rounded-xl py-2.5 pl-9 pr-4 text-sm font-medium outline-none focus:border-orange-500 transition-all"
+              />
+              {logSearch && (
+                <button onClick={() => setLogSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600">
+                  <X size={14} />
+                </button>
+              )}
+            </div>
             {/* Фильтры */}
             <div className="bg-white border border-zinc-200 rounded-2xl p-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
@@ -806,46 +823,52 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
             ) : logs.length === 0 ? (
               <div className="text-center py-12 text-zinc-400 font-medium">Записей нет</div>
             ) : (
+              (() => {
+                const q = logSearch.toLowerCase().trim();
+                const filteredLogs = q
+                  ? logs.filter(l =>
+                      (l.user_name || '').toLowerCase().includes(q) ||
+                      (l.entity_name || '').toLowerCase().includes(q) ||
+                      (l.details || '').toLowerCase().includes(q) ||
+                      getActionLabel(l.action, l.entity_type || undefined).toLowerCase().includes(q)
+                    )
+                  : logs;
+                return (
               <>
-                {/*
-                  Компактный однострочный лог: точка-индикатор + бейдж + имя
-                  сотрудника + сущность (truncate) слева, время справа.
-                  Детали (log.details) — отдельной мелкой строкой только если
-                  есть. Высота карточки ≈ 36–48px вместо ~92px ранее.
-                */}
                 <div className="space-y-1">
-                  {logs.map((log) => {
+                  {filteredLogs.length === 0 && (
+                    <div className="text-center py-8 text-zinc-400 text-sm font-medium">Ничего не найдено</div>
+                  )}
+                  {filteredLogs.map((log) => {
                     const tone = getActionTone(log.action);
                     const label = getActionLabel(log.action, log.entity_type);
+                    const detailsText = log.details ? formatLogDetails(log.details) : null;
                     return (
-                      <div key={log.id} className="bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TONE_DOT[tone]}`} />
-                          <span className={`text-xs font-bold px-1.5 py-0.5 rounded border whitespace-nowrap shrink-0 ${TONE_BADGE[tone]}`}>
-                            {label}
-                          </span>
-                          <span className="text-xs font-bold text-zinc-800 truncate shrink-0 max-w-[40%]">
-                            {log.user_name || 'Система'}
-                          </span>
-                          {log.entity_name && (
-                            <span className="text-xs text-zinc-500 truncate min-w-0">
-                              · {formatEntityName(log.entity_name)}
-                            </span>
+                      <div key={log.id} className="flex items-start gap-2.5 px-3 py-2 bg-white rounded-xl border border-zinc-100 hover:border-zinc-200 transition-colors">
+                        <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${TONE_DOT[tone]}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-[11px] font-black uppercase tracking-wide ${
+                              tone === 'danger' ? 'text-red-500' :
+                              tone === 'warning' ? 'text-amber-600' :
+                              tone === 'success' ? 'text-green-600' :
+                              'text-zinc-500'
+                            }`}>{label}</span>
+                            <span className="text-xs font-bold text-zinc-800">{log.user_name || 'Система'}</span>
+                            {log.entity_name && (
+                              <span className="text-xs text-zinc-500 truncate">— {formatEntityName(log.entity_name)}</span>
+                            )}
+                          </div>
+                          {detailsText && (
+                            <p className="text-[11px] text-zinc-400 leading-snug mt-0.5 truncate">{detailsText}</p>
                           )}
-                          <span className="text-xs text-zinc-400 font-medium whitespace-nowrap ml-auto shrink-0">
-                            {formatDateTime(log.created_at)}
-                          </span>
                         </div>
-                        {log.details && (
-                          <p className="text-xs text-zinc-500 leading-snug whitespace-pre-line mt-0.5 ml-3.5 truncate">
-                            {formatLogDetails(log.details)}
-                          </p>
-                        )}
+                        <span className="text-[11px] text-zinc-400 whitespace-nowrap shrink-0 mt-0.5">{formatDateTime(log.created_at)}</span>
                       </div>
                     );
                   })}
                 </div>
-                {logsHasMore && (
+                {logsHasMore && !q && (
                   <button
                     onClick={() => loadLogs(false)}
                     disabled={logsLoading}
@@ -855,6 +878,8 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
                   </button>
                 )}
               </>
+                );
+              })()
             )}
           </div>
         )}
