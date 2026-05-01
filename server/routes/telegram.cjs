@@ -295,6 +295,30 @@ function welcomeText() {
   );
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// denyIfNotOwner — сокращает 5 повторяющихся блоков:
+//   if (linked.role !== 'owner') {
+//     await tg.sendMessage({ chatId, userId, kind, text, replyMarkup });
+//     return;
+//   }
+// Возвращает true если отказали (вызывающий делает return),
+// false если linked — owner (продолжаем хендлер).
+//
+// Случаи silent-отказа (handleDailyTimeInput) НЕ покрыты — там нужно
+// clearState + return без сообщения, helper не шлёт ничего.
+// ──────────────────────────────────────────────────────────────────────
+async function denyIfNotOwner(linked, { chatId, kind, text, replyMarkup }) {
+  if (linked && linked.role === 'owner') return false;
+  await tg.sendMessage({
+    chatId,
+    userId: linked && linked.id,
+    kind,
+    text,
+    ...(replyMarkup ? { replyMarkup } : {}),
+  });
+  return true;
+}
+
 const jsonParser = express.json({ limit: '256kb' });
 
 function verifyTgSecret(req) {
@@ -838,13 +862,11 @@ async function dispatchCallback(cb) {
       // Подделка callback_data — игнорим.
       return;
     }
-    if (linked.role !== 'owner') {
-      await tg.sendMessage({
-        chatId, userId: linked.id, kind: 'tz_not_owner',
-        text: 'Часовой пояс студии меняет только владелец.',
-      });
-      return;
-    }
+    if (await denyIfNotOwner(linked, {
+      chatId,
+      kind: 'tz_not_owner',
+      text: 'Часовой пояс студии меняет только владелец.',
+    })) return;
     await pool.query(
       `UPDATE saas_meta.studios
           SET timezone = $1, timezone_set = TRUE
@@ -871,13 +893,11 @@ async function dispatchCallback(cb) {
 
   // ── dailytime:HH:MM | dailytime:custom | dailytime:off ─────────────
   if (data.startsWith('dailytime:')) {
-    if (linked.role !== 'owner') {
-      await tg.sendMessage({
-        chatId, userId: linked.id, kind: 'dailytime_not_owner',
-        text: 'Время утренней сводки настраивает только владелец.',
-      });
-      return;
-    }
+    if (await denyIfNotOwner(linked, {
+      chatId,
+      kind: 'dailytime_not_owner',
+      text: 'Время утренней сводки настраивает только владелец.',
+    })) return;
     // Гейтинг по тарифу — на случай гонки: тариф мог понизиться, пока
     // у юзера в чате висел inline-кейборд из прошлой сессии. Молча
     // снимаем кейборд (editMessageReplyMarkup), отвечаем причиной.
@@ -1092,16 +1112,14 @@ async function handleReferral(message) {
     });
     return;
   }
-  if (linked.role !== 'owner') {
-    await tg.sendMessage({
-      chatId: message.chat.id, userId: linked.id, kind: 'referral_not_owner',
-      replyMarkup: STAFF_MENU_KEYBOARD,
-      text:
-        'Реферальная программа доступна только владельцу студии. ' +
-        'Если есть вопросы, нажми «❓ Помощь».',
-    });
-    return;
-  }
+  if (await denyIfNotOwner(linked, {
+    chatId: message.chat.id,
+    kind: 'referral_not_owner',
+    replyMarkup: STAFF_MENU_KEYBOARD,
+    text:
+      'Реферальная программа доступна только владельцу студии. ' +
+      'Если есть вопросы, нажми «❓ Помощь».',
+  })) return;
 
   const summary = await pool.query(
     `SELECT
@@ -1204,16 +1222,14 @@ async function handleTariffs(message) {
   }
 
   // Только owner — менять тариф может только он. Остальным — сообщение покороче.
-  if (linked.role !== 'owner') {
-    await tg.sendMessage({
-      chatId: message.chat.id, userId: linked.id, kind: 'tariffs_not_owner',
-      replyMarkup: STAFF_MENU_KEYBOARD,
-      text:
-        `Тариф у студии один на всех, рулит им владелец. ` +
-        `Если хочешь что-то изменить, скажи ему, пусть зайдёт в СРМ → Профиль.`,
-    });
-    return;
-  }
+  if (await denyIfNotOwner(linked, {
+    chatId: message.chat.id,
+    kind: 'tariffs_not_owner',
+    replyMarkup: STAFF_MENU_KEYBOARD,
+    text:
+      `Тариф у студии один на всех, рулит им владелец. ` +
+      `Если хочешь что-то изменить, скажи ему, пусть зайдёт в СРМ → Профиль.`,
+  })) return;
 
   // Достаём бонус-баланс — упомянем в сообщении, что он применится при оплате.
   const summary = await pool.query(
@@ -1802,15 +1818,13 @@ async function handleDailyTimeCommand(message) {
     });
     return;
   }
-  if (linked.role !== 'owner') {
-    await tg.sendMessage({
-      chatId: message.chat.id, userId: linked.id, kind: 'dailytime_not_owner',
-      text:
-        'Время утренней сводки настраивает только владелец студии. ' +
-        'Сводка приходит всем сотрудникам в одно и то же время.',
-    });
-    return;
-  }
+  if (await denyIfNotOwner(linked, {
+    chatId: message.chat.id,
+    kind: 'dailytime_not_owner',
+    text:
+      'Время утренней сводки настраивает только владелец студии. ' +
+      'Сводка приходит всем сотрудникам в одно и то же время.',
+  })) return;
   // Гейтинг по тарифу: фича только на «Студия». На trial/solo команда
   // /время отвечает понятным сообщением и не открывает inline-выбор.
   if (!planHasDailySummary(linked.plan)) {
