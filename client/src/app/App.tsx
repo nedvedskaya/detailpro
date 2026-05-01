@@ -217,7 +217,58 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 </div>
                 <textarea name="comment" value={String(formData.comment || '')} onChange={handleChange} placeholder="Комментарий..." rows={3} className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium outline-none focus:border-orange-500 resize-none shadow-sm"/>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-4 pt-2 border-t border-zinc-200">
+                <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Запись</h3>
+                    <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Запись</ActionButton>
+                </div>
+                {isRecordFormOpen && (
+                    <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
+                        <AppointmentInputs
+                            data={recordInput}
+                            onChange={(e) => {
+                                if (e.target.name === '_batch') {
+                                    setRecordInput(prev => ({...prev, ...e.target.value}));
+                                } else {
+                                    setRecordInput(prev => ({...prev, [e.target.name]: e.target.value}));
+                                }
+                            }}
+                            categories={categories}
+                            tags={tags}
+                            masters={users}
+                            priceList={priceList}
+                        />
+                        <button
+                            onClick={() => {
+                                if(recordInput.service && recordInput.amount) {
+                                    setNewRecords([...newRecords, {...recordInput, id: `temp_rec_${Date.now()}`}]);
+                                    setRecordInput(getInitialRecordState());
+                                    setIsRecordFormOpen(false);
+                                }
+                            }}
+                            className={`w-full py-3 rounded-lg text-sm font-bold ${BTN_METAL_DARK}`}
+                        >
+                            Добавить запись
+                        </button>
+                    </div>
+                )}
+                <div className="space-y-2">
+                    {newRecords.map(r => (
+                        <div key={r.id} className="bg-white p-3 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
+                            <div>
+                                <p className="text-sm font-bold text-zinc-800">{String(r.service || '')}</p>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-zinc-400">{formatDate(r.date)} {String(r.time || '')}</span>
+                                    <span className="text-xs font-bold text-orange-500">{formatMoney(r.amount)} ₽</span>
+                                    {r.paymentStatus && r.paymentStatus !== 'none' && <PaymentBadge status={r.paymentStatus} size="xs" />}
+                                </div>
+                            </div>
+                            <button onClick={() => { setNewRecords(newRecords.filter(item => item.id !== r.id)); }} className="text-zinc-300 hover:text-red-500 transition-colors"><X size={16}/></button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+            <div className="space-y-4 pt-2 border-t border-zinc-200">
                 <div className="flex items-center justify-between"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</h3><ActionButton variant="metal" size="md" onClick={() => setIsTaskFormOpen(!isTaskFormOpen)}>+ Задача</ActionButton></div>
                 {isTaskFormOpen && (
                     <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
@@ -241,57 +292,6 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                         <div key={t.id} className="bg-white p-3 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
                             <div><p className="text-sm font-bold text-zinc-800">{String(t.title || '')}</p><span className="text-xs text-zinc-400">{formatDate(t.date)} {String(t.time || '')}</span></div>
                             <button onClick={() => { setNewTasks(newTasks.filter(item => item.id !== t.id)); }} className="text-zinc-300 hover:text-red-500 transition-colors"><X size={16}/></button>
-                        </div>
-                    ))}
-                </div>
-            </div>
-            <div className="space-y-4 pt-2 border-t border-zinc-200">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Запись</h3>
-                    <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Запись</ActionButton>
-                </div>
-                {isRecordFormOpen && (
-                    <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
-                        <AppointmentInputs
-                            data={recordInput}
-                            onChange={(e) => {
-                                if (e.target.name === '_batch') {
-                                    setRecordInput(prev => ({...prev, ...e.target.value}));
-                                } else {
-                                    setRecordInput(prev => ({...prev, [e.target.name]: e.target.value}));
-                                }
-                            }}
-                            categories={categories}
-                            tags={tags}
-                            masters={users}
-                            priceList={priceList}
-                        />
-                        <button 
-                            onClick={() => { 
-                                if(recordInput.service && recordInput.amount) { 
-                                    setNewRecords([...newRecords, {...recordInput, id: `temp_rec_${Date.now()}`}]); 
-                                    setRecordInput(getInitialRecordState()); 
-                                    setIsRecordFormOpen(false); 
-                                } 
-                            }} 
-                            className={`w-full py-3 rounded-lg text-sm font-bold ${BTN_METAL_DARK}`}
-                        >
-                            Добавить запись
-                        </button>
-                    </div>
-                )}
-                <div className="space-y-2">
-                    {newRecords.map(r => (
-                        <div key={r.id} className="bg-white p-3 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
-                            <div>
-                                <p className="text-sm font-bold text-zinc-800">{String(r.service || '')}</p>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs text-zinc-400">{formatDate(r.date)} {String(r.time || '')}</span>
-                                    <span className="text-xs font-bold text-orange-500">{formatMoney(r.amount)} ₽</span>
-                                    {r.paymentStatus && r.paymentStatus !== 'none' && <PaymentBadge status={r.paymentStatus} size="xs" />}
-                                </div>
-                            </div>
-                            <button onClick={() => { setNewRecords(newRecords.filter(item => item.id !== r.id)); }} className="text-zinc-300 hover:text-red-500 transition-colors"><X size={16}/></button>
                         </div>
                     ))}
                 </div>
