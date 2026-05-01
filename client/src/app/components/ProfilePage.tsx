@@ -44,6 +44,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Overlay } from './ui/Overlay';
 import { ChevronDown } from 'lucide-react';
 import { api } from '@/utils/api';
 import { translateApiError } from '@/utils/errorMessages';
@@ -2400,8 +2401,11 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
           нам выгоднее дать ему возможность сначала написать в саппорт
           (вдруг проблему можно решить), чем потерять клиента молча. */}
       {confirmOpen && (
-        <div
-          className="fixed inset-0 z-[400] bg-zinc-900/70 backdrop-blur-sm flex items-center justify-center p-4"
+        <Overlay
+          zIndex={400}
+          darkness={70}
+          align="center"
+          className="p-4"
           onClick={() => !busy && setConfirmOpen(false)}
         >
           <div
@@ -2471,7 +2475,7 @@ const ProfileFooterLinks = ({ isOwner, deletionRequestedAt: initialDeletion }: P
               </button>
             </div>
           </div>
-        </div>
+        </Overlay>
       )}
     </div>
   );

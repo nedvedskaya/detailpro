@@ -1,4 +1,5 @@
 import React, { ReactNode, useEffect } from 'react';
+import { Overlay } from './Overlay';
 import { X } from 'lucide-react';
 
 interface ModalProps {
@@ -74,24 +75,14 @@ export const Modal = ({
     full: 'max-w-full',
   };
 
-  const positionClasses = position === 'bottom'
-    ? 'items-end'
-    : 'items-center justify-center';
-
   const containerClasses = position === 'bottom'
     ? 'w-full rounded-t-[32px] pb-32'
     : `${maxWidthClasses[maxWidth]} rounded-3xl`;
 
-  // На десктопе bottom-sheet превращаем в центрированный диалог: класс
-  // .desktop-sheet-center перебивает items-end и ужимает контейнер по ширине.
-  // На мобильной версии действуют только мобильные правила.
-  const desktopOverride = position === 'bottom' ? 'desktop-sheet-center' : '';
-
   return (
-    <div
-      // z-[260]: выше нижнего таб-бара (z-[250] в App.tsx), иначе таб-бар
-      // перекрывает кнопку «Закрыть» внизу модалки и тапы по ней не доходят.
-      className={`fixed inset-0 z-[260] bg-zinc-900/50 backdrop-blur-sm flex ${positionClasses} ${desktopOverride} animate-in fade-in`}
+    <Overlay
+      zIndex={260}
+      align={position === 'bottom' ? 'bottom' : 'center'}
       onClick={onClose}
     >
       <div
@@ -112,6 +103,6 @@ export const Modal = ({
         </div>
         {children}
       </div>
-    </div>
+    </Overlay>
   );
 };

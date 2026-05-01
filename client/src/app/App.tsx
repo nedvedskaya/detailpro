@@ -15,7 +15,7 @@ const LazyAdminPanel = React.lazy(() => import('@/app/components/AdminPanel').th
 import { Button } from '@/app/components/ui/Button';
 import { Modal } from '@/app/components/ui/Modal';
 import { ToggleGroup } from '@/app/components/ui/ToggleGroup';
-import { Badge, ActionButton, TabButton, ContactButtons } from '@/app/components/ui';
+import { Badge, ActionButton, TabButton, ContactButtons, Overlay } from '@/app/components/ui';
 import { ClientCard, ClientListCard } from '@/app/components/clients';
 import { ClientAvatar } from '@/app/components/ui/ClientAvatar';
 import { BookingCard } from '@/app/components/bookings';
@@ -1453,7 +1453,7 @@ const App = () => {
           один CTA — «Перейти к тарифам». Профиль не за requireActiveStudio,
           поэтому страница тарифов всегда доступна и юзер сможет оплатить. */}
       {subscriptionLocked && !showProfile && (
-        <div className="fixed inset-0 z-[300] bg-zinc-900/80 backdrop-blur-sm flex items-center justify-center p-6">
+        <Overlay zIndex={300} darkness={80} align="center" className="p-6">
           <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-sm w-full text-center">
             <div className="text-5xl mb-4">🔒</div>
             <h2 className="text-xl font-bold text-zinc-900 mb-2">Подписка истекла</h2>
@@ -1473,7 +1473,7 @@ const App = () => {
               Выйти из аккаунта
             </button>
           </div>
-        </div>
+        </Overlay>
       )}
       {/* Глобальные правила (html/body/#root height + overflow + scrollbar)
           перенесены в client/src/styles/mobile.css, чтобы применяться ВСЕГДА —
