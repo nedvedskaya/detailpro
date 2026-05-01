@@ -7,7 +7,7 @@ import { showToast } from '@/app/components/ui/Toast';
  * Сетка фотографий с загрузкой и удалением.
  *
  * Лимиты согласованы с бэком:
- *   • до 30 фото на бронь (MAX_PHOTOS_PER_BOOKING в documents.cjs)
+ *   • до 30 фото на запись (MAX_PHOTOS_PER_BOOKING в documents.cjs)
  *   • до 10 MB на файл (multer limit)
  *   • рекомендуемый минимум — 8 (предупреждение, не блок)
  */
@@ -59,7 +59,7 @@ export const PhotoUploader = ({ bookingId, photoType = 'acceptance', onCountChan
     if (!files || files.length === 0) return;
     const free = MAX_PHOTOS - photos.length;
     if (free <= 0) {
-      showToast(`Лимит ${MAX_PHOTOS} фото на бронь`, 'warning');
+      showToast(`Лимит ${MAX_PHOTOS} фото на запись`, 'warning');
       return;
     }
     const list = Array.from(files).slice(0, free);

@@ -45,11 +45,9 @@ async function resolveServices(schemaName, rawServices, pgClient = null) {
       fromPrice.push({ idx, service_id: sid });
       return;
     }
-    // Ручная строка
+    // Ручная строка — пустые пропускаем молча (юзер добавил, не заполнил).
     const name = typeof row.name === 'string' ? row.name.trim() : '';
-    if (!name) {
-      const e = new Error('service_name_required'); e.status = 400; throw e;
-    }
+    if (!name) return;
     if (name.length > NAME_MAX_LEN) {
       const e = new Error('service_name_too_long'); e.status = 400; throw e;
     }

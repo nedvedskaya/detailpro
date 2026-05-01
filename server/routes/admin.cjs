@@ -100,12 +100,24 @@ async function countActiveUsers(studioId) {
 async function fetchOwnUserOfStudio(userId, studioId) {
   const r = await pool.query(
     `SELECT id, email, name, first_name, last_name, phone, avatar_path,
-            role, is_active, created_at, can_view_finance, last_login_at
+            role, is_active, created_at, can_view_finance, permissions, last_login_at
        FROM saas_meta.users
       WHERE id = $1 AND studio_id = $2`,
     [userId, studioId]
   );
   return r.rows[0] || null;
+}
+
+// Валидирует и нормализует permissions JSONB: принимает объект {clients,tasks,calendar,finance},
+// каждое поле — 'edit'|'view'|'none'. Неизвестные значения → 'none'. Если null — возвращает null.
+function sanitizePermissions(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const VALID = ['edit', 'view', 'none'];
+  const result = {};
+  for (const key of ['clients', 'tasks', 'calendar', 'finance']) {
+    result[key] = VALID.includes(raw[key]) ? raw[key] : 'none';
+  }
+  return result;
 }
 
 async function fetchStudioPlan(studioId) {
@@ -122,7 +134,7 @@ async function fetchStudioPlan(studioId) {
 router.get('/users', async (req, res, next) => {
   const r = await pool.query(
     `SELECT id, email, name, first_name, last_name, phone, avatar_path,
-            role, is_active, created_at, can_view_finance, last_login_at
+            role, is_active, created_at, can_view_finance, permissions, last_login_at
        FROM saas_meta.users
       WHERE studio_id = $1
       ORDER BY created_at`,
@@ -136,7 +148,7 @@ router.get('/users', async (req, res, next) => {
 // Body: { email, password, name?, firstName?, lastName?, phone?, role? }
 // ──────────────────────────────────────────────────────────────────────
 router.post('/users', async (req, res, next) => {
-  const { email, password, name, firstName, lastName, phone, role, can_view_finance } = req.body || {};
+  const { email, password, name, firstName, lastName, phone, role, can_view_finance, permissions } = req.body || {};
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'email_invalid' });
   }
@@ -168,6 +180,11 @@ router.post('/users', async (req, res, next) => {
     ? false
     : (can_view_finance === undefined ? true : Boolean(can_view_finance));
 
+  // permissions — опциональный объект тонкой настройки доступа по разделам.
+  // null = используются дефолты роли на клиенте. sanitizePermissions отбрасывает
+  // невалидные значения, чтобы не положить мусор в JSONB.
+  const finalPermissions = permissions ? sanitizePermissions(permissions) : null;
+
   // Проверка лимита тарифа: solo=1, studio/trial=3, cancelled=0.
   const plan = await fetchStudioPlan(req.session.studioId);
   const currentUsers = await countActiveUsers(req.session.studioId);
@@ -194,14 +211,14 @@ router.post('/users', async (req, res, next) => {
   try {
     r = await pool.query(
       `INSERT INTO saas_meta.users
-         (studio_id, email, password_hash, role, name, first_name, last_name, phone, is_active, can_view_finance)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9)
+         (studio_id, email, password_hash, role, name, first_name, last_name, phone, is_active, can_view_finance, permissions)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, $9, $10)
          RETURNING id, email, name, first_name, last_name, phone, avatar_path,
-                   role, is_active, created_at, can_view_finance, last_login_at`,
+                   role, is_active, created_at, can_view_finance, permissions, last_login_at`,
       [
         req.session.studioId, email.toLowerCase(), passwordHash, finalRole,
         composedName, firstNameC, lastNameC, phoneC,
-        finalFinance,
+        finalFinance, finalPermissions ? JSON.stringify(finalPermissions) : null,
       ]
     );
   } catch (err) {
@@ -225,7 +242,7 @@ router.put('/users/:id', async (req, res, next) => {
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
   if (!target) return res.status(404).json({ error: 'user_not_found' });
 
-  const { name, role, is_active, can_view_finance } = req.body || {};
+  const { name, role, is_active, can_view_finance, permissions } = req.body || {};
 
   // Длина name. Раньше принималась строка любого размера → DB-constraint
   // или silent truncation. Если name НЕ передан — оставляем текущее
@@ -275,13 +292,24 @@ router.put('/users/:id', async (req, res, next) => {
     newFinance = target.can_view_finance !== false;
   }
 
+  // permissions: если прислали — санируем и сохраняем. null явный → сброс к дефолтам роли.
+  // undefined (не прислали) → оставляем текущее значение из БД.
+  let newPermissions;
+  if (permissions === null) {
+    newPermissions = null;
+  } else if (permissions !== undefined) {
+    newPermissions = sanitizePermissions(permissions);
+  } else {
+    newPermissions = target.permissions || null;
+  }
+
   const r = await pool.query(
     `UPDATE saas_meta.users
-        SET name = $1, role = $2, is_active = $3, can_view_finance = $4
-      WHERE id = $5 AND studio_id = $6
+        SET name = $1, role = $2, is_active = $3, can_view_finance = $4, permissions = $5
+      WHERE id = $6 AND studio_id = $7
       RETURNING id, email, name, first_name, last_name, phone, avatar_path,
-                role, is_active, created_at, can_view_finance, last_login_at`,
-    [newName, newRole, newActive, newFinance, id, req.session.studioId]
+                role, is_active, created_at, can_view_finance, permissions, last_login_at`,
+    [newName, newRole, newActive, newFinance, newPermissions ? JSON.stringify(newPermissions) : null, id, req.session.studioId]
   );
 
   // Diff для аудита: что реально поменялось. Все строки сразу на русском —
@@ -294,6 +322,9 @@ router.put('/users/:id', async (req, res, next) => {
   if (newActive !== target.is_active) changes.push(`активен: ${yn(target.is_active)} → ${yn(newActive)}`);
   if (newFinance !== (target.can_view_finance !== false)) {
     changes.push(`финансы: ${yn(target.can_view_finance !== false)} → ${yn(newFinance)}`);
+  }
+  if (JSON.stringify(newPermissions) !== JSON.stringify(target.permissions || null)) {
+    changes.push('права: обновлены');
   }
   if (changes.length > 0) {
     audit(req, 'update', r.rows[0], { details: changes.join('; ') });
@@ -523,6 +554,14 @@ router.get('/analytics', async (req, res, next) => {
           AND t.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
         GROUP BY 1
       ),
+      exp AS (
+        SELECT date_trunc('month', t.date)::date AS m,
+               COALESCE(SUM(t.amount), 0)::numeric AS expense
+        FROM {{schema}}.transactions t
+        WHERE t.type = 'expense'
+          AND t.date >= (date_trunc('month', CURRENT_DATE) - ($1::int - 1) * interval '1 month')::date
+        GROUP BY 1
+      ),
       orders AS (
         SELECT date_trunc('month', cr.date)::date AS m,
                COUNT(*)::int AS orders
@@ -539,10 +578,12 @@ router.get('/analytics', async (req, res, next) => {
       )
       SELECT m.m AS month_date,
              COALESCE(r.revenue, 0)::numeric AS revenue,
+             COALESCE(e.expense, 0)::numeric AS expense,
              COALESCE(o.orders, 0)::int AS orders,
              COALESCE(n.new_clients, 0)::int AS new_clients
       FROM months m
       LEFT JOIN rev    r ON r.m = m.m
+      LEFT JOIN exp    e ON e.m = m.m
       LEFT JOIN orders o ON o.m = m.m
       LEFT JOIN newc   n ON n.m = m.m
       ORDER BY m.m ASC
@@ -552,11 +593,14 @@ router.get('/analytics', async (req, res, next) => {
     const byMonth = byMonthRes.rows.map((r) => {
       const d = new Date(r.month_date);
       const revenue = Number(r.revenue);
+      const expense = Number(r.expense || 0);
       const orders  = Number(r.orders);
       return {
         label: monthLabelsRu[d.getMonth()],
         month_key: r.month_date,
         revenue,
+        expense,
+        balance: revenue - expense,
         orders,
         new_clients: Number(r.new_clients),
         avg_check: orders > 0 ? Math.round(revenue / orders) : 0,

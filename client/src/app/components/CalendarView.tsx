@@ -67,7 +67,7 @@ export const CalendarView = ({
                  <div className={LAYOUT_CLASSES.modal}>
                     <div className={LAYOUT_CLASSES.modalContent}>
                         <div className="flex justify-between items-center">
-                            <h3 className="text-xl font-black">Новая бронь</h3>
+                            <h3 className="text-xl font-black">Новая запись</h3>
                             <button onClick={() => setIsAdding(false)} className="bg-zinc-100 p-3 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center"><X size={22}/></button>
                         </div>
                         <div className="space-y-4">
@@ -123,6 +123,7 @@ export const CalendarView = ({
                  <ClientForm
                      onSave={async (data: any, tasks: any, records: any) => {
                          const saved = await onAddClient(data, tasks, records);
+                         if (saved === false) return;
                          // Подставляем имя нового клиента в текущую форму брони.
                          const name = saved?.name || data?.name || '';
                          if (name) setNewEntry((prev: any) => ({ ...prev, clientName: name }));
@@ -162,7 +163,7 @@ export const CalendarView = ({
                         <div className="flex justify-between items-center mb-6">
                             <div>
                                 <h3 className="text-2xl font-black whitespace-nowrap">{formatDate(selectedDate)}</h3>
-                                <p className="text-sm text-zinc-400 font-medium mt-1">{selectedDateEvents.length} {selectedDateEvents.length === 1 ? 'бронь' : 'броней'}</p>
+                                <p className="text-sm text-zinc-400 font-medium mt-1">{selectedDateEvents.length} {selectedDateEvents.length === 1 ? 'запись' : 'записей'}</p>
                             </div>
                             <div className="flex gap-2">
                                 <Button 
@@ -181,7 +182,7 @@ export const CalendarView = ({
                         {selectedDateEvents.length === 0 ? (
                             <div className="text-center py-12 text-zinc-400">
                                 <CalendarDays size={48} className="mx-auto mb-3 opacity-30" />
-                                <p className="font-semibold">Нет броней на этот день</p>
+                                <p className="font-semibold">Нет записей на этот день</p>
                             </div>
                         ) : (
                             <div className="space-y-3">

@@ -108,7 +108,7 @@ export const BookingCard = ({
           
           {record.endDate && (
             <div>
-              <span className="text-zinc-400 font-medium">Дата окончания</span>
+              <span className="text-zinc-400 font-medium">Дата выдачи</span>
               <div className="flex items-center gap-1 mt-1">
                 <Calendar size={12} className="text-zinc-500" />
                 <p className="font-bold text-zinc-800 whitespace-nowrap">{formatDate(record.endDate)}</p>

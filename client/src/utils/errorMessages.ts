@@ -83,6 +83,19 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
   not_found:               'Запись не найдена',
   name_required:           'Укажите название',
 
+  // Услуги в записях
+  service_name_required:   'Укажите название услуги',
+  service_price_invalid:   'Укажите корректную сумму услуги',
+  service_not_found:       'Услуга из прайса не найдена — обновите страницу',
+  service_row_invalid:     'Некорректная строка услуги',
+  // Клиенты
+  client_name_required:    'Укажите имя клиента',
+  client_phone_required:   'Укажите номер телефона',
+  // Задачи
+  task_title_required:     'Укажите название задачи',
+  // Записи
+  record_date_required:    'Укажите дату записи',
+
   // Аналитика / тариф
   plan_required:                       'Раздел доступен на тарифе «Студия»',
   daily_summary_requires_studio_plan:  'Утренняя сводка приходит на тарифе «Студия». Оформите тариф в разделе «Подписка»',

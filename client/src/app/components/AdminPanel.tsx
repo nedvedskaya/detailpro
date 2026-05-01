@@ -49,6 +49,7 @@ interface AdminPanelProps {
   onBack: () => void;
   /** kept for backwards compat — Тариф вкладка убрана, кнопка не вызывается. */
   onOpenProfile?: () => void;
+  onUsersChange?: () => void;
 }
 
 type AdminTab = 'users' | 'activity' | 'analytics';
@@ -88,7 +89,7 @@ const TONE_DOT: Record<'green' | 'blue' | 'red' | 'gray', string> = {
   gray: 'bg-zinc-400',
 };
 
-export const AdminPanel = ({ onBack }: AdminPanelProps) => {
+export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
   const currentUser = getUser();
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
   // Per-user busy-индикатор для inline-toggle «Видит финансы».
@@ -182,12 +183,13 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
       setUsersLoading(true);
       const data = await api.getAdminUsers();
       setUsers(data || []);
+      onUsersChange?.();
     } catch (e) {
       console.error('Error loading users:', e);
     } finally {
       setUsersLoading(false);
     }
-  }, []);
+  }, [onUsersChange]);
 
   const loadLimits = useCallback(async () => {
     try {
@@ -601,12 +603,14 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                           </p>
                         </div>
                       </div>
+                      {!isOwner && (
                       <div className="col-span-2">
                         <span className="text-zinc-400 font-medium">Видит разделы</span>
                         <p className="font-bold text-zinc-800 mt-0.5 leading-snug">
                           {getVisibleSectionLabels(u.role, u.can_view_finance).join(', ')}
                         </p>
                       </div>
+                      )}
                       <div className="col-span-2">
                         <span className="text-zinc-400 font-medium">Дата регистрации</span>
                         <p className="font-bold text-zinc-800 mt-0.5">
@@ -649,11 +653,6 @@ export const AdminPanel = ({ onBack }: AdminPanelProps) => {
                           <EyeOff size={14} className="text-zinc-500" /> «Финансы» скрыты
                         </span>
                         <span className="text-xs font-medium text-zinc-400">мастер не видит финансы</span>
-                      </div>
-                    ) : isOwner ? (
-                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200 text-zinc-700">
-                        <Shield size={14} className="text-zinc-500" />
-                        <span className="text-xs font-bold">Полный доступ ко всем разделам</span>
                       </div>
                     ) : null}
 

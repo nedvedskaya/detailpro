@@ -453,6 +453,20 @@ export const api = {
     return send<void>('DELETE', `/services/${id}`);
   },
 
+  // ────── service categories ──────
+  getServiceCategories() {
+    return get<any[]>('/service-categories');
+  },
+  createServiceCategory(data: { name: string; color?: string }) {
+    return send<any>('POST', '/service-categories', data);
+  },
+  updateServiceCategory(id: number, data: { name: string; color?: string }) {
+    return send<any>('PUT', `/service-categories/${id}`, data);
+  },
+  deleteServiceCategory(id: number) {
+    return send<void>('DELETE', `/service-categories/${id}`);
+  },
+
   // ────── bookings (записи в календаре) ──────
   getBookings() {
     return get<any[]>('/bookings');
@@ -757,6 +771,8 @@ export interface AnalyticsByMonth {
   label: string;       // «Апр» — короткий русский месяц
   month_key: string;   // ISO date «2026-04-01» — для ключей
   revenue: number;
+  expense: number;
+  balance: number;
   orders: number;
   new_clients: number;
   avg_check: number;

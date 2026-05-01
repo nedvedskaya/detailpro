@@ -104,11 +104,7 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, onShowMaterials
               <div className="px-4 py-3 border-b border-zinc-100">
                 <div className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Студия</div>
                 <div className="text-sm font-semibold text-zinc-900 truncate">{studio.displayName || studio.name}</div>
-                {subscription && (
-                  <div className={`mt-1.5 inline-block px-2 py-0.5 rounded-md text-[11px] font-medium border ${subscriptionToneClass}`}>
-                    {subscription.label}
-                  </div>
-                )}
+
               </div>
             )}
             {onShowProfile && (

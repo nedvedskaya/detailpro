@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.categories (
     id           SERIAL PRIMARY KEY,
     name         VARCHAR(255) NOT NULL,
     type         VARCHAR(50) NOT NULL DEFAULT 'expense'
-                 CHECK (type IN ('income', 'expense')),
+                 CHECK (type IN ('income', 'expense', 'service')),
     color        VARCHAR(20),
     icon         VARCHAR(50),
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.client_records (
     booking_id      INTEGER REFERENCES {{schema}}.bookings(id) ON DELETE SET NULL,
     category_id     INTEGER REFERENCES {{schema}}.categories(id) ON DELETE SET NULL,
     master_id       UUID    REFERENCES saas_meta.users(id) ON DELETE SET NULL,
-    service_name    VARCHAR(255) NOT NULL,
+    service_name    TEXT NOT NULL,
     description     TEXT,
     amount          DECIMAL(10,2) NOT NULL DEFAULT 0,
     advance         DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -209,7 +209,7 @@ CREATE INDEX IF NOT EXISTS idx_client_records_booking ON {{schema}}.client_recor
 -- ─── Финансовые транзакции ───
 CREATE TABLE IF NOT EXISTS {{schema}}.transactions (
     id                SERIAL PRIMARY KEY,
-    type              VARCHAR(50) NOT NULL CHECK (type IN ('income', 'expense')),
+    type              VARCHAR(50) NOT NULL CHECK (type IN ('income', 'expense', 'service')),
     amount            DECIMAL(10,2) NOT NULL,
     category_id       INTEGER REFERENCES {{schema}}.categories(id) ON DELETE SET NULL,
     category          VARCHAR(255),         -- денормализация на момент создания

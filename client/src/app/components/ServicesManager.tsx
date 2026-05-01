@@ -11,9 +11,12 @@
  *   • удаление — confirm + DELETE
  *   • новая услуга — форма внизу с одной кнопкой «Добавить»
  *
+ * При любом изменении вызывает onServicesChange() — синхронизирует прайс
+ * в App.tsx без перезагрузки страницы (новая услуга сразу видна в брони).
+ *
  * Подключается в ProfilePage внутри отдельной секции, видимой owner+manager.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { api } from '@/utils/api';
 
@@ -27,21 +30,18 @@ interface Service {
 }
 
 interface ServicesManagerProps {
-  /** Если false — режим только-чтение (для master). */
   canEdit: boolean;
+  onServicesChange?: () => void;
 }
 
-const fmtRub = (n: number | string): string => {
-  const v = Number(n) || 0;
-  return v.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
-};
+const fmtRub = (n: number | string) =>
+  Math.round(Number(n) || 0).toLocaleString('ru-RU');
 
-export function ServicesManager({ canEdit }: ServicesManagerProps) {
+export function ServicesManager({ canEdit, onServicesChange }: ServicesManagerProps) {
   const [items, setItems] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Форма добавления.
   const [newName, setNewName] = useState('');
   const [newPrice, setNewPrice] = useState('');
   const [adding, setAdding] = useState(false);
@@ -55,7 +55,6 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
     return () => { mounted = false; };
   }, []);
 
-  // Локальный патч + PUT. Откатываем при ошибке.
   const updateField = async (id: number, patch: Partial<Service>) => {
     const before = items;
     const next = items.map((it) => (it.id === id ? { ...it, ...patch } : it));
@@ -70,6 +69,7 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
         description: cur.description,
         is_active: cur.is_active,
       });
+      onServicesChange?.();
     } catch (e: any) {
       setItems(before);
       setError(e?.message || 'Не удалось сохранить');
@@ -85,14 +85,13 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
       const created = await api.createService({
         name,
         price: Number(newPrice) || 0,
-        // duration сохраняем как 60 минут "под капотом" — пока не используется в UI,
-        // но колонка NOT NULL в БД и старые записи могут полагаться на это поле.
         duration: 60,
         is_active: true,
       });
       setItems((arr) => [...arr, created].sort((a, b) => a.name.localeCompare(b.name)));
       setNewName('');
       setNewPrice('');
+      onServicesChange?.();
     } catch (e: any) {
       setError(e?.message || 'Не удалось добавить');
     } finally {
@@ -108,56 +107,40 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
     setItems(items.filter((x) => x.id !== id));
     try {
       await api.deleteService(id);
+      onServicesChange?.();
     } catch (e: any) {
       setItems(before);
       setError(e?.message || 'Не удалось удалить');
     }
   };
 
-  if (loading) {
-    return <div className="px-6 py-4 text-sm text-zinc-400">Загрузка…</div>;
-  }
+  if (loading) return <div className="px-6 py-4 text-sm text-zinc-400">Загрузка…</div>;
 
   return (
     <div className="px-6 py-4">
       {error && (
-        <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
-          {error}
-        </div>
+        <div className="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">{error}</div>
       )}
 
       {items.length === 0 ? (
         <p className="text-sm text-zinc-500 mb-4">
-          Прайс пока пустой. Добавьте услуги ниже — они появятся в выпадашке при создании заказ-наряда.
+          Прайс пока пустой. Добавьте услуги ниже — они появятся в выборе услуг при создании записи.
         </p>
       ) : (
-        // Сжал колонки «Цена» (120→90) и «Активна» (80→56), чтобы освободить
-        // больше ширины под название услуги. На мобильном экране это
-        // критично — раньше «Полировка кузова Глянцевый Детейл» обрезалось
-        // до неотличимого «Полировка кузова Гл…», и две разные услуги с
-        // разными ценами выглядели одинаково.
         <div className="border border-zinc-100 rounded-xl overflow-hidden mb-4">
-          <div className="grid grid-cols-[1fr_90px_56px_36px] gap-2 px-3 py-2 bg-zinc-50 text-xs text-zinc-500 font-medium">
+          <div className="grid grid-cols-[1fr_90px_36px] gap-2 px-3 py-2 bg-zinc-50 text-xs text-zinc-500 font-medium">
             <span>Название</span>
             <span className="text-right">Цена, ₽</span>
-            <span className="text-center">Акт.</span>
             <span />
           </div>
           {items.map((it) => (
-            <div
-              key={it.id}
-              className="grid grid-cols-[1fr_90px_56px_36px] gap-2 px-3 py-2 border-t border-zinc-100 items-start"
-            >
-              {/* textarea вместо input — длинные названия переносятся на
-                  следующую строку, не обрезаются. rows=1 + onInput
-                  auto-grow держит высоту по контенту, без полосы прокрутки. */}
+            <div key={it.id} className="grid grid-cols-[1fr_90px_36px] gap-2 px-3 py-2 border-t border-zinc-100 items-start">
               <textarea
                 value={it.name}
                 rows={1}
                 disabled={!canEdit}
                 onChange={(e) => {
                   setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, name: e.target.value } : x)));
-                  // auto-resize: считываем scrollHeight, ставим в style.height
                   const el = e.target as HTMLTextAreaElement;
                   el.style.height = 'auto';
                   el.style.height = el.scrollHeight + 'px';
@@ -168,36 +151,28 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
                   else if (!v) setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, name: it.name } : x)));
                 }}
                 ref={(el) => {
-                  // На монтировании растягиваем сразу до полной высоты контента,
-                  // иначе при первой отрисовке будет одна строка с обрезанием.
                   if (el && el.scrollHeight !== el.clientHeight) {
                     el.style.height = 'auto';
                     el.style.height = el.scrollHeight + 'px';
                   }
                 }}
-                className="bg-transparent outline-none text-[13px] text-zinc-900 disabled:text-zinc-500 resize-none overflow-hidden leading-snug"
+                className="bg-transparent outline-none text-sm text-zinc-900 disabled:text-zinc-500 resize-none overflow-hidden leading-snug"
               />
               <input
-                type="number"
-                value={it.price}
+                type="text"
+                inputMode="numeric"
+                value={fmtRub(it.price)}
                 disabled={!canEdit}
-                min={0}
-                onChange={(e) => setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, price: e.target.value } : x)))}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9]/g, '');
+                  setItems((arr) => arr.map((x) => (x.id === it.id ? { ...x, price: raw === '' ? 0 : Number(raw) } : x)));
+                }}
                 onBlur={() => {
                   const cur = items.find((x) => x.id === it.id);
                   if (cur && Number(cur.price) !== Number(it.price)) updateField(it.id, { price: Number(cur.price) || 0 });
                 }}
-                className="bg-transparent outline-none text-[13px] text-zinc-900 text-right disabled:text-zinc-500 mt-0.5"
+                className="bg-transparent outline-none text-sm text-zinc-900 text-right disabled:text-zinc-500 mt-0.5"
               />
-              <label className="flex items-center justify-center mt-1">
-                <input
-                  type="checkbox"
-                  checked={it.is_active}
-                  disabled={!canEdit}
-                  onChange={(e) => updateField(it.id, { is_active: e.target.checked })}
-                  className="h-4 w-4 rounded border-zinc-300 text-orange-500 focus:ring-orange-400"
-                />
-              </label>
               {canEdit ? (
                 <button
                   type="button"
@@ -214,10 +189,6 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
       )}
 
       {canEdit && (
-        // Мобиль: имя занимает всю ширину сверху, ниже — цена + кнопка.
-        // Десктоп (sm+): три колонки в одну строку. Раньше на мобиле
-        // grid-cols-[1fr_120px_auto] ужимал «Например: Полировка ЛКП…»,
-        // а кнопку «Добавить» выпинывало за правый край экрана.
         <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_120px_auto] gap-2 items-center">
           <input
             type="text"
@@ -250,15 +221,12 @@ export function ServicesManager({ canEdit }: ServicesManagerProps) {
       )}
 
       {!canEdit && (
-        <p className="text-xs text-zinc-400 mt-1">
-          Только владелец и менеджер могут редактировать прайс. У вас режим просмотра.
-        </p>
+        <p className="text-xs text-zinc-400 mt-1">Только владелец и менеджер могут редактировать прайс.</p>
       )}
 
       {items.length > 0 && (
         <p className="text-xs text-zinc-400 mt-3">
-          Всего услуг: {items.length} · активных: {items.filter((x) => x.is_active).length}.
-          Сумма по активным: {fmtRub(items.filter((x) => x.is_active).reduce((s, x) => s + (Number(x.price) || 0), 0))} ₽.
+          Всего: {items.length} · Сумма: {fmtRub(items.reduce((s, x) => s + (Number(x.price) || 0), 0))} ₽
         </p>
       )}
     </div>

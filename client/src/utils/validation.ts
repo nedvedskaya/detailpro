@@ -19,3 +19,49 @@ export const isValidEmail = (v: unknown): v is string =>
 
 export const isValidPassword = (v: unknown): v is string =>
   typeof v === 'string' && v.length >= PASSWORD_MIN_LENGTH;
+
+
+// Типы для результатов валидации
+export type ValidationErrors = Record<string, string>;
+
+// Клиент — имя и телефон обязательны
+export function validateClient(data: { name?: string; phone?: string }): ValidationErrors {
+  const errors: ValidationErrors = {};
+  if (!data.name?.trim()) errors.name = "Укажите имя клиента";
+  if (!data.phone?.trim()) errors.phone = "Укажите номер телефона";
+  return errors;
+}
+
+// Задача — название обязательно
+export function validateTask(data: { title?: string }): ValidationErrors {
+  const errors: ValidationErrors = {};
+  if (!data.title?.trim()) errors.title = "Укажите название задачи";
+  return errors;
+}
+
+// Транзакция — сумма обязательна и должна быть > 0
+export function validateTransaction(data: { amount?: number | string }): ValidationErrors {
+  const errors: ValidationErrors = {};
+  const amount = Number(data.amount);
+  if (!amount || amount <= 0) errors.amount = "Укажите сумму";
+  return errors;
+}
+
+// Запись (client-record) — дата обязательна
+export function validateClientRecord(data: { date?: string }): ValidationErrors {
+  const errors: ValidationErrors = {};
+  if (!data.date?.trim()) errors.date = "Укажите дату записи";
+  return errors;
+}
+
+// Бронирование — дата обязательна
+export function validateBooking(data: { date?: string }): ValidationErrors {
+  const errors: ValidationErrors = {};
+  if (!data.date?.trim()) errors.date = "Укажите дату записи";
+  return errors;
+}
+
+// Общая проверка: есть ли ошибки
+export function hasErrors(errors: ValidationErrors): boolean {
+  return Object.keys(errors).length > 0;
+}

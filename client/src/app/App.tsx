@@ -56,6 +56,7 @@ import { bootstrap as authBootstrap, getUser, getStudio, setSession, logout, isA
 import type { Studio, UserData, Role } from '@/utils/types';
 import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canEditEntities, canEditTasks, canViewFinance } from '@/utils/permissions';
 import { api } from '@/utils/api';
+import { validateClient, validateTask, hasErrors } from '@/utils/validation';
 
 // --- HELPER COMPONENTS ---
 
@@ -246,8 +247,8 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
             </div>
             <div className="space-y-4 pt-2 border-t border-zinc-200">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Бронь</h3>
-                    <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Бронь</ActionButton>
+                    <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Запись</h3>
+                    <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Запись</ActionButton>
                 </div>
                 {isRecordFormOpen && (
                     <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
@@ -275,7 +276,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                             }} 
                             className={`w-full py-3 rounded-lg text-sm font-bold ${BTN_METAL_DARK}`}
                         >
-                            Добавить бронь
+                            Добавить запись
                         </button>
                     </div>
                 )}
@@ -300,8 +301,8 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
             <div className="pt-6 pb-4">
                 <button 
                     onClick={handleSave}
-                    disabled={isSaving || !formData.name || !formData.name.trim()}
-                    className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${isSaving ? 'bg-zinc-300 text-zinc-500 cursor-wait' : formData.name && formData.name.trim() ? 'bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98]' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'}`}
+                    disabled={isSaving}
+                    className={`w-full py-4 rounded-xl text-lg font-bold transition-all ${isSaving ? 'bg-zinc-300 text-zinc-500 cursor-wait' : 'bg-orange-500 text-white hover:bg-orange-600 active:scale-[0.98]'}`}
                 >
                     {isSaving ? 'Сохранение...' : 'Сохранить клиента'}
                 </button>
@@ -653,7 +654,7 @@ const App = () => {
   }
 
   if (showProfile) {
-    return <ProfilePage onBack={() => setShowProfile(false)} />;
+    return <ProfilePage onBack={() => setShowProfile(false)} onServicesChange={() => api.getServices().then(data => setPriceList(data || []))} />;
   }
 
   if (showMaterials) {
@@ -670,7 +671,7 @@ const App = () => {
   // 402 не возвращается, чтобы не было асимметрии «UI пускает, API нет».
 
   if (showAdmin) {
-    return <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyAdminPanel onBack={() => setShowAdmin(false)} /></React.Suspense>;
+    return <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyAdminPanel onBack={() => setShowAdmin(false)} onUsersChange={() => api.getUsers().then((data: any) => setStudioUsers(data || []))} /></React.Suspense>;
   }
 
   // ── Permissions для CRM-views ────────────────────────────────────────
@@ -753,17 +754,36 @@ const App = () => {
   const createRecordTransactions = async (rec: any, client: any, savedRecordId: any) => {
       const carInfo = `${client.carBrand || ''} ${client.carModel || ''}`.trim();
       const service = rec.service || 'Услуга';
-      const category = rec.category || '';
-      const tags = rec.tags || [];
+
+      // Авто-категория: ищем "Услуги" среди income-категорий
+      const servicesCat = categories.find((c: any) => c.name === 'Услуги' && c.type === 'income');
+      const category = servicesCat ? String(servicesCat.id) : (rec.category || '');
+
+      // Авто-теги: из названий услуг в записи
+      const serviceNames: string[] = (rec.services || []).map((s: any) => s.name).filter(Boolean);
+      const autoTagIds: (string | number)[] = [];
+      for (const name of serviceNames) {
+        const existing = tags.find((t: any) => t.name?.toLowerCase() === name.toLowerCase());
+        if (existing) {
+          autoTagIds.push(existing.id);
+        } else {
+          try {
+            const created = await api.createTag({ name, type: 'income', color: '#a3a3a3' });
+            setTags((prev: any[]) => [...prev, created]);
+            autoTagIds.push(created.id);
+          } catch (_) {}
+        }
+      }
+      const recordTags = (autoTagIds.length > 0 ? autoTagIds : (rec.tags || [])).map(String);
 
       if (rec.advance && parseFloat(rec.advance) > 0) {
-        await addTransaction(rec.advance, `Аванс: ${service}`, carInfo, 'income', client.name, category, rec.advanceDate || rec.date, savedRecordId, tags);
+        await addTransaction(rec.advance, `Аванс: ${service}`, carInfo, 'income', client.name, category, rec.advanceDate || rec.date, savedRecordId, recordTags);
       }
 
       if (rec.paymentStatus === 'paid' && rec.amount && parseFloat(rec.amount) > 0) {
         const remaining = parseFloat(rec.amount) - (parseFloat(rec.advance) || 0);
         if (remaining > 0) {
-          await addTransaction(remaining, `Оплата: ${service}`, carInfo, 'income', client.name, category, null, savedRecordId, tags);
+          await addTransaction(remaining, `Оплата: ${service}`, carInfo, 'income', client.name, category, null, savedRecordId, recordTags);
         }
       }
   };
@@ -771,8 +791,25 @@ const App = () => {
   const createEditRecordTransactions = async (rec: any, oldRecord: any, client: any, savedRecordId: any) => {
       const carInfo = `${client.carBrand || ''} ${client.carModel || ''}`.trim();
       const service = rec.service || 'Услуга';
-      const category = rec.category || '';
-      const tags = rec.tags || [];
+
+      // Авто-категория и теги (аналогично createRecordTransactions)
+      const servicesCat = categories.find((c: any) => c.name === 'Услуги' && c.type === 'income');
+      const category = servicesCat ? String(servicesCat.id) : (rec.category || '');
+      const serviceNames: string[] = (rec.services || []).map((s: any) => s.name).filter(Boolean);
+      const autoTagIds: (string | number)[] = [];
+      for (const name of serviceNames) {
+        const existing = tags.find((t: any) => t.name?.toLowerCase() === name.toLowerCase());
+        if (existing) {
+          autoTagIds.push(existing.id);
+        } else {
+          try {
+            const created = await api.createTag({ name, type: 'income', color: '#a3a3a3' });
+            setTags((prev: any[]) => [...prev, created]);
+            autoTagIds.push(created.id);
+          } catch (_) {}
+        }
+      }
+      const recordTags = (autoTagIds.length > 0 ? autoTagIds : (rec.tags || [])).map(String);
       const newAdvance = parseFloat(rec.advance) || 0;
       const oldAdvance = parseFloat(oldRecord?.advance) || 0;
       const newAmount = parseFloat(rec.amount) || 0;
@@ -780,25 +817,30 @@ const App = () => {
       const wasPaid = oldRecord?.isPaid || oldRecord?.paymentStatus === 'paid';
 
       if (newAdvance > oldAdvance) {
-        await addTransaction(newAdvance - oldAdvance, `Аванс: ${service}`, carInfo, 'income', client.name, category, rec.advanceDate || rec.date, savedRecordId, tags);
+        await addTransaction(newAdvance - oldAdvance, `Аванс: ${service}`, carInfo, 'income', client.name, category, rec.advanceDate || rec.date, savedRecordId, recordTags);
       } else if (newAdvance < oldAdvance) {
-        await addTransaction(oldAdvance - newAdvance, `Корректировка аванса: ${service}`, carInfo, 'expense', client.name, category, rec.advanceDate || rec.date, savedRecordId, tags);
+        await addTransaction(oldAdvance - newAdvance, `Корректировка аванса: ${service}`, carInfo, 'expense', client.name, category, rec.advanceDate || rec.date, savedRecordId, recordTags);
       }
 
       if (rec.paymentStatus === 'paid' && !wasPaid) {
         const remaining = newAmount - newAdvance;
         if (remaining > 0) {
-          await addTransaction(remaining, `Оплата: ${service}`, carInfo, 'income', client.name, category, null, savedRecordId, tags);
+          await addTransaction(remaining, `Оплата: ${service}`, carInfo, 'income', client.name, category, null, savedRecordId, recordTags);
         }
       } else if (wasPaid && rec.paymentStatus === 'paid' && newAmount !== oldAmount) {
         const diff = newAmount - oldAmount;
         if (diff !== 0) {
-          await addTransaction(Math.abs(diff), `Корректировка: ${service}`, carInfo, diff > 0 ? 'income' : 'expense', client.name, category, null, savedRecordId, tags);
+          await addTransaction(Math.abs(diff), `Корректировка: ${service}`, carInfo, diff > 0 ? 'income' : 'expense', client.name, category, null, savedRecordId, recordTags);
         }
       }
   };
 
   const handleAddClient = async (data, tks, recs) => {
+      const clientErrors = validateClient({ name: data.name, phone: data.phone });
+      if (hasErrors(clientErrors)) {
+        showToast(Object.values(clientErrors)[0], 'error');
+        return false;
+      }
       const now = Date.now();
       const tempId = `temp_${now}`;
 
@@ -905,7 +947,7 @@ const App = () => {
           records: ((prev.find(cl => cl.id === clientId)?.records) || [])
             .filter(r => r.id !== tempRecordId)
         } as any));
-        handleApiError(error, 'Ошибка сохранения брони', 'createClientRecord');
+        handleApiError(error, 'Ошибка сохранения записи', 'createClientRecord');
         return false;
       }
   };
@@ -952,7 +994,7 @@ const App = () => {
               .map(r => r.id === recordId ? oldRecord : r)
           } as any));
         }
-        handleApiError(error, 'Ошибка обновления брони', 'updateClientRecord');
+        handleApiError(error, 'Ошибка обновления записи', 'updateClientRecord');
         return false;
       }
   };
@@ -1229,6 +1271,11 @@ const App = () => {
   };
 
   const handleSaveClient = async (updatedClient) => {
+      const clientErrors = validateClient({ name: updatedClient.name, phone: updatedClient.phone });
+      if (hasErrors(clientErrors)) {
+        showToast(Object.values(clientErrors)[0], 'error');
+        return false;
+      }
       const previousClients = [...clients];
       setClients(prev => updateById(prev, updatedClient.id, {
         ...updatedClient,
@@ -1239,7 +1286,9 @@ const App = () => {
       } catch (error) {
         setClients(previousClients);
         handleApiError(error, 'Нет связи с сервером. Изменения не сохранены.', 'updateClient', 'warning');
+        return false;
       }
+      return true;
   };
   
   const handleAddCategory = async (category) => {
@@ -1396,7 +1445,7 @@ const App = () => {
           {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEdit} /></React.Suspense>}
 
           {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} priceList={priceList} userRole={userRole} canEdit={canEdit} />}
-          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {await handleSaveClient(upd); setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
+          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {const ok = await handleSaveClient(upd); if (ok === false) return; setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
       </div>
       <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
 

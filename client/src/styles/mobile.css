@@ -376,3 +376,11 @@ body[data-modal-open] .desktop-tabbar {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+/* На десктопе возвращаем font-size инпутов к значению из Tailwind-класса.
+   На мобиле 16px !important остаётся — это нужно чтобы iOS Safari не зумировал
+   страницу при фокусе на поле ввода. */
+@media (min-width: 768px) {
+  input, textarea, select {
+    font-size: inherit !important;
+  }
+}

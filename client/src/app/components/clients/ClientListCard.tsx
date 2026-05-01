@@ -59,7 +59,7 @@ export const ClientListCard = ({
             )}
             {hasActiveBooking && (
               <Badge variant="status">
-                Активная бронь
+                Активная запись
               </Badge>
             )}
           </div>

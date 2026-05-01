@@ -1516,7 +1516,7 @@ async function buildAdminOverviewText() {
                u.email, u.tg_username, u.tg_user_id
           FROM saas_meta.studios s
           LEFT JOIN saas_meta.users u ON u.studio_id = s.id AND u.role = 'owner'
-         ORDER BY s.created_at DESC LIMIT 5`),
+         ORDER BY s.created_at DESC LIMIT 10`),
       pool.query(`
         SELECT p.processed_at, p.amount_kop, p.plan,
                s.display_name
@@ -1552,8 +1552,8 @@ async function buildAdminOverviewText() {
     `📊 <b>АДМИН-ПАНЕЛЬ</b>`,
     `<i>${fmtDateTimeShort(new Date())} МСК</i>`,
     ``,
-    `👥 <b>Студии</b>: ${s.total} всего`,
-    `   сегодня: ${s.today} · неделя: ${s.week} · месяц: ${s.month}`,
+    `👥 <b>Студии</b>: всего ${s.total} / сегодня +${s.today}`,
+    `   неделя: ${s.week} · месяц: ${s.month}`,
     `   активных: ${s.active} (${planSummary})`,
     ``,
     `💰 <b>Платежи</b> (paid):`,
@@ -1561,7 +1561,7 @@ async function buildAdminOverviewText() {
     `   неделя:  ${p.week_n} шт. — ${fmtRubKop(p.week_kop)}`,
     `   месяц:   ${p.month_n} шт. — ${fmtRubKop(p.month_kop)}`,
     ``,
-    `📲 <b>Telegram</b>: ${tgStats.tg_total} всего · +${tgStats.tg_today} за сутки`,
+    `📲 <b>Telegram</b> (привязок): ${tgStats.tg_total} всего · +${tgStats.tg_today} сегодня`,
     ``,
     `📝 <b>Последние регистрации</b>:`,
     lastStudios,

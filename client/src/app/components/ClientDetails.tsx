@@ -16,6 +16,7 @@ import { BTN_METAL, CARD_METAL } from '@/utils/constants';
 import { PaymentBadge } from '@/app/components/ui/PaymentBadge';
 import { formatDate, formatTime, formatMoney, getDateStr, findCategoryById, matchId } from '@/utils/helpers';
 import { getInitialTaskState, getInitialRecordState } from '@/utils/initialStates';
+import { validateClientRecord, validateTask, hasErrors } from '@/utils/validation';
 import { sanitizeTelUrl, sanitizeWhatsAppUrl, sanitizeTelegramUrl, safeOpenLink } from '@/utils/sanitize';
 
 interface ClientDetailsProps {
@@ -110,6 +111,11 @@ export const ClientDetails = ({
   };
   
   const handleSaveTask = () => {
+    const taskErrors = validateTask({ title: newTask.title });
+    if (hasErrors(taskErrors)) {
+      alert(Object.values(taskErrors)[0]);
+      return;
+    }
     if (editingTask) {
       onEditTask({ ...editingTask, ...newTask, urgency: newTask.isUrgent ? 'high' : 'low' });
       setEditingTask(null);
@@ -237,7 +243,7 @@ export const ClientDetails = ({
               <span className="text-4xl font-black text-white">{formatMoney(totalEarnings)}</span>
               <span className="text-lg font-bold text-orange-100">₽</span>
             </div>
-            <p className="text-xs text-orange-100 mt-1 font-medium">За {clientRecords.filter((r: any) => r.paymentStatus === 'paid').length} {clientRecords.filter((r: any) => r.paymentStatus === 'paid').length === 1 ? 'бронь' : 'броней'}</p>
+            <p className="text-xs text-orange-100 mt-1 font-medium">За {clientRecords.filter((r: any) => r.paymentStatus === 'paid').length} {clientRecords.filter((r: any) => r.paymentStatus === 'paid').length === 1 ? 'запись' : 'записей'}</p>
           </div>
         )}
         <div className="bg-white p-5 rounded-2xl border border-zinc-200 text-zinc-700 leading-relaxed text-sm shadow-sm">{String(client.comment || "Нет заметок.")}</div>
@@ -247,7 +253,7 @@ export const ClientDetails = ({
         {/* Бронь */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">{editingRecordId ? 'Редактирование брони' : 'Бронь'}</span>
+            <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">{editingRecordId ? 'Редактирование записи' : 'Запись'}</span>
             {!isAddingRecord && !editingRecordId && (
               <button onClick={() => setIsAddingRecord(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>
                 + Добавить
@@ -259,7 +265,7 @@ export const ClientDetails = ({
           )}
           
           {(isAddingRecord || editingRecordId) && (
-            <div className="space-y-4 mb-4">
+            <div className="space-y-4 mb-4 bg-zinc-50 border border-zinc-200 rounded-2xl p-4">
               <AppointmentInputs data={newRecord} onChange={(e: any) => {
                 if (e.target.name === '_batch') {
                   setNewRecord(prev => ({...prev, ...e.target.value}));
@@ -283,6 +289,11 @@ export const ClientDetails = ({
                   variant="primary"
                   disabled={savingRecord}
                   onClick={async () => {
+                    const recErrors = validateClientRecord({ date: newRecord.date });
+                    if (hasErrors(recErrors)) {
+                      alert(Object.values(recErrors)[0]);
+                      return;
+                    }
                     setSavingRecord(true);
                     try {
                       let success;
@@ -320,11 +331,11 @@ export const ClientDetails = ({
                     <div className="rounded-2xl bg-zinc-100 border border-zinc-200 shadow-md overflow-hidden">
                       <div className={`h-1.5 ${topBarColor}`}></div>
                       
-                      <div className="p-5 space-y-4">
+                      <div className="p-3 space-y-2.5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <CalendarDays size={18} className={iconColor} />
-                            <span className="text-sm font-bold text-zinc-900">Активная бронь</span>
+                            <span className="text-sm font-bold text-zinc-900">Активная запись</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <PaymentBadge status={record.paymentStatus} size="md" />
@@ -332,7 +343,7 @@ export const ClientDetails = ({
                         </div>
                         
                         <div>
-                          <h3 className="text-2xl font-black text-zinc-900 leading-tight">{String(record.service || '')}</h3>
+                          <h3 className="text-sm font-semibold text-zinc-900 leading-snug line-clamp-2">{String(record.service || '')}</h3>
                           {category && (
                             <div className="flex items-center gap-1.5 mt-2">
                               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: category.color }} />
@@ -357,7 +368,7 @@ export const ClientDetails = ({
                           <div className="flex items-center gap-2 flex-1">
                             <CalendarDays size={16} className="text-orange-500 shrink-0" />
                             <div>
-                              <p className="text-base font-bold text-zinc-900 whitespace-nowrap">{formatDate(record.date)}</p>
+                              <p className="text-sm font-bold text-zinc-900 whitespace-nowrap">{formatDate(record.date)}</p>
                               {record.endDate && record.endDate !== record.date && (
                                 <p className="text-xs text-orange-500 font-medium mt-0.5 whitespace-nowrap">→ {formatDate(record.endDate)}</p>
                               )}
@@ -365,7 +376,7 @@ export const ClientDetails = ({
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-base">⏰</span>
-                            <p className="text-base font-bold text-zinc-900">{formatTime(record.time)}</p>
+                            <p className="text-sm font-bold text-zinc-900">{formatTime(record.time)}</p>
                           </div>
                         </div>
                         
@@ -373,7 +384,7 @@ export const ClientDetails = ({
                           <div className="flex items-center justify-between pt-4 border-t border-zinc-100">
                             <span className="text-sm text-zinc-500 font-medium">Сумма</span>
                             <div className="text-right">
-                              <p className="text-2xl font-black text-orange-500">{formatMoney(record.amount)} ₽</p>
+                              <p className="text-base font-bold text-orange-500">{formatMoney(record.amount)} ₽</p>
                             </div>
                           </div>
                         )}
@@ -462,7 +473,7 @@ export const ClientDetails = ({
             </div>
           ) : !isAddingRecord && !editingRecordId && (
             <div className="p-4 rounded-xl border border-dashed border-zinc-300 text-center text-xs text-zinc-400 italic">
-              Нет активных броней
+              Нет активных записей
             </div>
           )}
           
@@ -473,7 +484,7 @@ export const ClientDetails = ({
                 className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all"
               >
                 <History size={12} />
-                Архив броней ({archivedRecords.length})
+                Архив записей ({archivedRecords.length})
                 <ChevronDown size={12} className={`transition-transform ${showRecordsArchive ? 'rotate-180' : ''}`} />
               </button>
               {showRecordsArchive && (
@@ -492,12 +503,12 @@ export const ClientDetails = ({
                           
                           <button 
                             onClick={() => {
-                              if (window.confirm('Восстановить бронь? Связанная транзакция будет удалена из финансов.')) {
+                              if (window.confirm('Восстановить запись? Связанная транзакция будет удалена из финансов.')) {
                                 onRestoreRecord(client.id, record.id);
                               }
                             }} 
                             className="p-1.5 rounded-lg bg-gradient-to-b from-orange-500 to-orange-600 text-white shadow-sm hover:shadow-md active:scale-90 transition-all duration-200"
-                            title="Восстановить бронь"
+                            title="Восстановить запись"
                           >
                             <RotateCcw size={14} />
                           </button>

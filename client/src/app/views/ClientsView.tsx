@@ -10,7 +10,7 @@ type SortMode = 'name' | 'car' | 'date';
 
 interface ClientsViewProps {
   allClients: any[];
-  onAddClient: (data: any, tasks: any[], records?: any[]) => void;
+  onAddClient: (data: any, tasks: any[], records?: any[]) => Promise<any>;
   onDeleteClient: (id: number) => void;
   onOpenClient: (client: any) => void;
   onEditClient: (params: { client: any; mode: string }) => void;
@@ -92,8 +92,9 @@ export const ClientsView = ({
     <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
       {isAdding && (
         <ClientForm
-          onSave={(d: any, t: any, r: any, shouldClose?: boolean) => {
-            onAddClient(d, t, r);
+          onSave={async (d: any, t: any, r: any, shouldClose?: boolean) => {
+            const ok = await onAddClient(d, t, r);
+            if (ok === false) return;
             if (shouldClose !== false) setIsAdding(false);
           }}
           onCancel={() => setIsAdding(false)}

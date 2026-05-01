@@ -126,6 +126,9 @@ export const AnalyticsDashboard = ({ plan: _plan, onUpgrade: _onUpgrade }: Props
         <TopServicesCard data={data} />
         <RetentionCard data={data} />
       </div>
+
+      {/* ── Баланс по месяцам ── */}
+      <MonthlyBalanceCard data={data} />
     </div>
   );
 };
@@ -437,6 +440,53 @@ function Row({ label, value, badge }: {
         )}
       </span>
     </li>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Баланс по месяцам — таблица: месяц / доход / расход / баланс
+// ──────────────────────────────────────────────────────────────────────
+function MonthlyBalanceCard({ data }: { data: AnalyticsResponse | null }) {
+  const rows = data ? [...(data.by_month || [])].reverse() : [];
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <div className="mb-3">
+        <div className="text-sm font-semibold text-zinc-900">Баланс по месяцам</div>
+        <div className="text-xs text-zinc-500">Доходы, расходы и итог за каждый месяц</div>
+      </div>
+      {rows.length === 0 ? (
+        <div className="py-6 text-center text-sm text-zinc-400">Нет данных за период</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-zinc-100">
+                <th className="py-2 text-left font-medium text-zinc-500">Месяц</th>
+                <th className="py-2 text-right font-medium text-zinc-500">Доход</th>
+                <th className="py-2 text-right font-medium text-zinc-500">Расход</th>
+                <th className="py-2 text-right font-medium text-zinc-500">Баланс</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-50">
+              {rows.map((r) => {
+                const bal = r.balance ?? (r.revenue - (r.expense ?? 0));
+                const balColor = bal > 0 ? 'text-green-600' : bal < 0 ? 'text-red-500' : 'text-zinc-400';
+                return (
+                  <tr key={r.month_key} className="hover:bg-zinc-50 transition-colors">
+                    <td className="py-2 font-medium text-zinc-900">{r.label}</td>
+                    <td className="py-2 text-right text-green-600 font-medium">+{fmtMoney(r.revenue)}</td>
+                    <td className="py-2 text-right text-red-500 font-medium">−{fmtMoney(r.expense ?? 0)}</td>
+                    <td className={`py-2 text-right font-bold ${balColor}`}>
+                      {bal >= 0 ? '+' : '−'}{fmtMoney(Math.abs(bal))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

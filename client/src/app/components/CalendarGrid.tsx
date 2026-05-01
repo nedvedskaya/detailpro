@@ -240,7 +240,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                                 onDateClick(date);
                             }}
                         >
-                            {ev.isFirst ? (ev.service || ev.title || 'Бронь') : ''}
+                            {ev.isFirst ? (ev.service || ev.title || 'Запись') : ''}
                         </div>
                     );
                 })}
