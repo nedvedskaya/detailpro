@@ -347,7 +347,6 @@ router.patch('/', requireAuth, requireNotMaster, async (req, res, next) => {
       },
     });
   } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
 });
@@ -490,7 +489,6 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
       },
     });
   } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
 });

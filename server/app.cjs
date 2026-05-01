@@ -355,6 +355,17 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ error: 'check_violation', constraint: err.constraint || null });
   }
 
+  // Кастомные ошибки с err.status (4xx) — бросаются из бизнес-логики хендлеров.
+  // Раньше в каждом роуте писали:
+  //   } catch (err) {
+  //     if (err.status === 400) return res.status(400).json({ error: err.message });
+  //     next(err);
+  //   }
+  // Теперь handler сам это делает — в роутах достаточно `next(err)`.
+  if (typeof err.status === 'number' && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message || 'bad_request' });
+  }
+
   res.status(500).json({ error: 'internal_error' });
 });
 

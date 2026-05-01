@@ -771,7 +771,6 @@ router.put('/acceptance-acts/:bookingId', canWrite, async (req, res, next) => {
     void markFirstEvent(req.session.studioId, 'first_acceptance_at');
     res.json(upd.rows[0] || r.rows[0]);
   } catch (err) {
-    if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
 });
