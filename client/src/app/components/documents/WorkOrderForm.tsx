@@ -380,51 +380,55 @@ export const WorkOrderForm = ({
               {items.map((it, idx) => {
                 const sum = (Number(it.quantity) || 0) * (Number(it.price) || 0);
                 return (
-                  <div key={idx} className="grid grid-cols-12 gap-2 px-3 py-3 items-center">
-                    <input
-                      type="text"
-                      value={it.name}
-                      onChange={(e) => updateItem(idx, { name: e.target.value })}
-                      placeholder="Название услуги"
-                      maxLength={500}
-                      className="col-span-12 sm:col-span-6 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all placeholder:text-zinc-300 placeholder:italic"
-                    />
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      max={99999}
-                      value={it.quantity}
-                      onChange={(e) => updateItem(idx, { quantity: Number(e.target.value) || 0 })}
-                      placeholder="Кол-во"
-                      className="col-span-3 sm:col-span-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all text-right placeholder:text-zinc-300 placeholder:italic"
-                    />
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min={0}
-                      step={0.01}
-                      value={it.price}
-                      onChange={(e) => updateItem(idx, { price: Number(e.target.value) || 0 })}
-                      placeholder="Цена"
-                      className="col-span-3 sm:col-span-2 bg-white border border-zinc-200 rounded-lg p-2.5 text-sm outline-none focus:border-orange-500 transition-all text-right placeholder:text-zinc-300 placeholder:italic"
-                    />
-                    {/* На мобиле сумма получает col-span-4, корзина — col-span-2,
-                        чтобы «300 000 ₽» помещался без захода на иконку удаления
-                        и трогать кнопку было удобно пальцем. На десктопе
-                        возвращаемся к компактным col-span-1. */}
-                    <div className="col-span-4 sm:col-span-1 text-sm font-bold text-zinc-900 text-right whitespace-nowrap overflow-hidden text-ellipsis">
-                      {fmtRub(sum)}
+                  <div key={idx} className="px-2 py-2 space-y-1">
+                    {/* Строка 1: название + удалить */}
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={it.name}
+                        onChange={(e) => updateItem(idx, { name: e.target.value })}
+                        placeholder="Название услуги"
+                        maxLength={500}
+                        className="flex-1 min-w-0 bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-orange-500 transition-all placeholder:text-zinc-300 placeholder:italic"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeItem(idx)}
+                        disabled={items.length <= 1}
+                        className="p-1.5 text-zinc-400 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                        aria-label="Удалить услугу"
+                      >
+                        <Trash2 size={15} />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => removeItem(idx)}
-                      disabled={items.length <= 1}
-                      className="col-span-2 sm:col-span-1 flex justify-center text-zinc-400 hover:text-red-600 disabled:opacity-30 disabled:cursor-not-allowed"
-                      aria-label="Удалить услугу"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                    {/* Строка 2: кол-во × сумма (редактируемая) */}
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={it.quantity > 1 ? String(it.quantity) : ''}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, '');
+                          updateItem(idx, { quantity: Number(v) || 1 });
+                        }}
+                        placeholder="1"
+                        className="w-12 bg-white border border-zinc-200 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-orange-500 transition-all text-center placeholder:text-zinc-300"
+                      />
+                      <span className="text-xs text-zinc-400 shrink-0">×</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={sum > 0 ? String(Math.round(sum)) : ''}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/\D/g, '');
+                          const newSum = Number(raw) || 0;
+                          updateItem(idx, { price: newSum / (Number(it.quantity) || 1) });
+                        }}
+                        placeholder="Стоимость"
+                        className="flex-1 min-w-0 bg-transparent outline-none text-sm font-bold text-zinc-900 text-right placeholder:text-zinc-300 placeholder:font-normal"
+                      />
+                      <span className="text-sm text-zinc-500 shrink-0">₽</span>
+                    </div>
                   </div>
                 );
               })}

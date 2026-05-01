@@ -77,7 +77,7 @@ export const BookingFormFields = ({
 
         {showEndDate && (
           <FormField
-            label="Дата окончания"
+            label="Дата выдачи"
             name="endDate"
             type="date"
             value={bookingData.endDate || ''}

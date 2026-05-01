@@ -170,7 +170,7 @@ export const ACTION_LABELS: Record<string, string> = {
 // Карта названий сущностей для расшифровки entity_name вида "booking#8"
 // (так пишет server/routes/documents.cjs — entity_name = `booking#${id}`).
 const ENTITY_TYPE_NAMES: Record<string, string> = {
-  booking:        'Бронь',
+  booking:        'Запись',
   client:         'Клиент',
   vehicle:        'Авто',
   task:           'Задача',
@@ -238,7 +238,7 @@ export function getActionTone(action: string): 'green' | 'blue' | 'red' | 'gray'
  * Локализует значение entity_name для активити-лога.
  *
  * Бэк пишет туда разное:
- *   • документы: "booking#8"  → "Бронь #8"
+ *   • документы: "booking#8"  → "Запись #8"
  *   • транзакции: "income"/"expense" → "Доход"/"Расход"
  *   • прочее (имя клиента, авто, задачи) — оставляем как есть, оно уже на
  *     русском или содержит человекочитаемые данные.

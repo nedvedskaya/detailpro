@@ -8,6 +8,7 @@ import { BTN_METAL_DARK, BTN_METAL, CARD_METAL, COLORS, TRANSACTION_TYPES } from
 import { exportToExcel, TRANSACTIONS_COLUMNS, createTransactionRowMapper } from '@/utils/excelExport';
 import { formatMoney, formatDate, formatDateShort, getDateStr, toDateStr, findCategoryById, findTagsByIds, matchId } from '@/utils/helpers';
 import { getInitialTransactionState } from '@/utils/initialStates';
+import { validateTransaction, hasErrors } from '@/utils/validation';
 import { Header } from '@/app/components/ui/Header';
 import { Button } from '@/app/components/ui/Button';
 import { Modal } from '@/app/components/ui/Modal';
@@ -212,8 +213,12 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     const balance = income - expense;
     
     const handleSaveTransaction = () => {
+        const txErrors = validateTransaction({ amount: newTransaction.amount });
+        if (hasErrors(txErrors)) {
+          alert(Object.values(txErrors)[0]);
+          return;
+        }
         if (!newTransaction.title || newTransaction.title.trim() === '') return;
-        if (newTransaction.amount === undefined || newTransaction.amount === '') return;
         
         const transactionData = {
             ...newTransaction,

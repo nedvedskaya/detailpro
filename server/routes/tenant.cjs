@@ -441,7 +441,10 @@ router.delete('/vehicles/:id', canWrite, async (req, res, next) => {
 router.get('/services', async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
-    `SELECT * FROM {{schema}}.services ORDER BY name`
+    `SELECT s.*, c.name AS category_name, c.color AS category_color
+       FROM {{schema}}.services s
+       LEFT JOIN {{schema}}.categories c ON c.id = s.category_id AND c.type = 'service'
+      ORDER BY c.name NULLS LAST, s.name`
   );
   res.json(r.rows);
 });
@@ -481,6 +484,39 @@ router.delete('/services/:id', canWrite, async (req, res, next) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════
+
+// SERVICE CATEGORIES
+router.get('/service-categories', async (req, res, next) => {
+  const r = await queryInSchema(req.session.schemaName,
+    `SELECT * FROM {{schema}}.categories WHERE type = 'service' ORDER BY name`);
+  res.json(r.rows);
+});
+router.post('/service-categories', canWrite, async (req, res, next) => {
+  const { name, color } = req.body || {};
+  if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
+  const r = await queryInSchema(req.session.schemaName,
+    `INSERT INTO {{schema}}.categories (name, type, color) VALUES ($1, 'service', $2) RETURNING *`,
+    [name.trim(), color || null]);
+  res.status(201).json(r.rows[0]);
+});
+router.put('/service-categories/:id', canWrite, async (req, res, next) => {
+  const id = badId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
+  const { name, color } = req.body || {};
+  const r = await queryInSchema(req.session.schemaName,
+    `UPDATE {{schema}}.categories SET name=$1, color=$2 WHERE id=$3 AND type='service' RETURNING *`,
+    [name, color || null, id]);
+  if (!r.rows[0]) return res.status(404).json({ error: 'category_not_found' });
+  res.json(r.rows[0]);
+});
+router.delete('/service-categories/:id', canWrite, async (req, res, next) => {
+  const id = badId(req.params.id);
+  if (!id) return res.status(400).json({ error: 'invalid_id' });
+  await queryInSchema(req.session.schemaName,
+    `DELETE FROM {{schema}}.categories WHERE id=$1 AND type='service'`, [id]);
+  res.json({ ok: true });
+});
+
 // BOOKINGS  (master_id JOIN на saas_meta.users)
 // ══════════════════════════════════════════════════════════════════════
 

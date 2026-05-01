@@ -245,10 +245,12 @@ async function createStudio({ schemaName, displayName, ownerEmail, ownerPassword
     // 5. Seed: дефолтные категории расходов/доходов.
     await client.query(
       `INSERT INTO ${ident}.categories (name, type, color) VALUES
-         ('Услуги', 'income', '#22c55e'),
-         ('Аренда', 'expense', '#ef4444'),
-         ('Зарплата', 'expense', '#f59e0b'),
-         ('Расходники', 'expense', '#3b82f6')`
+         ('Услуги',    'income',  '#22c55e'),
+         ('Предоплата','income',  '#f97316'),
+         ('Аренда',    'expense', '#ef4444'),
+         ('Зарплата',  'expense', '#f59e0b'),
+         ('Расходники','expense', '#3b82f6'),
+         ('Прочее',    'expense', '#a3a3a3')`
     );
 
     // 6. Seed: демо-данные (2 клиента + полный цикл) — чтобы новый юзер

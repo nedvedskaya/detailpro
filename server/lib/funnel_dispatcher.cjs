@@ -32,6 +32,7 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 // Тайминги в днях после истечения access_until → event_kind.
 const SCHEDULE = {
   s1: [
+    { days: 0,  kind: 's1.day0' },
     { days: 1,  kind: 's1.day1' },
     { days: 5,  kind: 's1.day5_pain' },
     { days: 14, kind: 's1.day14_freedom' },
@@ -39,6 +40,7 @@ const SCHEDULE = {
     { days: 29, kind: 's1.day29_final' },
   ],
   s2: [
+    { days: 0,  kind: 's2.day0' },
     { days: 1,  kind: 's2.day1_care' },
     { days: 5,  kind: 's2.day5_habit' },
     { days: 14, kind: 's2.day14_referral' },
@@ -50,11 +52,13 @@ const SCHEDULE = {
 const RENDERERS = {
   's1.trial_last_day':            (ctx) => S1_PRE['trial_last_day'](ctx),
   's2.sub_last_day_no_recurrent': (ctx) => S2_PRE['sub_last_day_no_recurrent'](ctx),
+  's1.day0':            (ctx) => S1['day0'](ctx),
   's1.day1':            (ctx) => S1['day1'](ctx),
   's1.day5_pain':       (ctx) => S1['day5_pain'](ctx),
   's1.day14_freedom':   (ctx) => S1['day14_freedom'](ctx),
   's1.day24_fomo':      (ctx) => S1['day24_fomo'](ctx),
   's1.day29_final':     (ctx) => S1['day29_final'](ctx),
+  's2.day0':            (ctx) => S2['day0'](ctx),
   's2.day1_care':       (ctx) => S2['day1_care'](ctx),
   's2.day5_habit':      (ctx) => S2['day5_habit'](ctx),
   's2.day14_referral':  (ctx) => S2['day14_referral'](ctx),
@@ -260,11 +264,12 @@ async function runFunnel(opts = {}) {
     try {
       // Окно отправки — 11:00 локалки. dryRun и forceWindow игнорируют окно
       // (forceWindow используется для симуляций/QA).
-      if (!dryRun && !opts.forceWindow && !isInSendingWindow(now, studio.tz)) {
+      const kind = pickEventKind(studio);
+      const isDay0 = kind && (kind.endsWith('.day0'));
+      if (!dryRun && !opts.forceWindow && !isDay0 && !isInSendingWindow(now, studio.tz)) {
         stats.skipped++;
         continue;
       }
-      const kind = pickEventKind(studio);
       if (!kind) {
         stats.skipped++;
         continue;

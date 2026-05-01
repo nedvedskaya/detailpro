@@ -157,7 +157,7 @@ async function verifySession(token) {
   // (entity user_name), второе — в гейт «manager без финансов» в tenant.cjs.
   const { rows } = await pool.query(
     `SELECT s.user_id, s.studio_id, s.schema_name, s.expires_at, s.last_used_at,
-            u.role, u.is_active, u.name, u.can_view_finance
+            u.role, u.is_active, u.name, u.can_view_finance, u.permissions
        FROM saas_meta.sessions s
        JOIN saas_meta.users u ON u.id = s.user_id
       WHERE s.token = $1`,
@@ -202,6 +202,7 @@ async function verifySession(token) {
     // Если миграция 003 ещё не накатилась — поле undefined: тогда трактуем
     // как «по умолчанию видит» (true), чтобы не блокнуть существующих юзеров.
     canViewFinance: row.can_view_finance !== false,
+    permissions: row.permissions || null,
   };
 }
 

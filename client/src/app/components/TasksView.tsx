@@ -4,6 +4,7 @@ import type { Task, Client } from '@/utils/types';
 import { getDateStr, formatDate, formatMoney } from '@/utils/helpers';
 import { LAYOUT_CLASSES } from '@/utils/styleConstants';
 import { getInitialTaskState } from '@/utils/initialStates';
+import { validateTask, hasErrors } from '@/utils/validation';
 import { Button } from '@/app/components/ui/Button';
 import { Header } from '@/app/components/ui/Header';
 import { TaskItem } from '@/app/components/ui/TaskItem';
@@ -95,6 +96,11 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
     };
     
     const handleSaveTask = () => {
+        const taskErrors = validateTask({ title: newTask.title });
+        if (hasErrors(taskErrors)) {
+          alert(Object.values(taskErrors)[0]);
+          return;
+        }
         if(newTask.title) {
             const client = clients.find(c => c.name === newTask.clientName);
             const taskData = {
@@ -162,7 +168,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
                         }`}
                     >
-                        брони{Object.values(bookingsByDay).flat().length > 0 ? ` ${Object.values(bookingsByDay).flat().length}` : ''}
+                        записи{Object.values(bookingsByDay).flat().length > 0 ? ` ${Object.values(bookingsByDay).flat().length}` : ''}
                     </button>
                 </div>
             </div>
@@ -247,7 +253,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                         {Object.keys(bookingsByDay).length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-64 text-center">
                                 <CalendarDays size={48} className="text-zinc-300 mb-4" />
-                                <p className="text-zinc-400 font-semibold">нет броней</p>
+                                <p className="text-zinc-400 font-semibold">нет записей</p>
                             </div>
                         ) : (
                             Object.entries(bookingsByDay).map(([date, bookings]: [string, any[]]) => (

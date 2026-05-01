@@ -123,21 +123,25 @@ async function seedDemo(client, schemaName, ownerId) {
   // ── client_records (история работ) ───────────────────────────────
   // Запись 1: выполнена 3 дня назад, оплачена полностью.
   // Запись 2: сегодня, в работе, оплачен аванс.
+  const svcPolirId = serviceIds[0]; // Полировка кузова
+  const svcHimId   = serviceIds[1]; // Химчистка салона
+  const servicesIvan = JSON.stringify([{ service_id: svcPolirId, name: 'Полировка кузова', price: 8000 }]);
+  const servicesAnna = JSON.stringify([{ service_id: svcHimId,   name: 'Химчистка салона', price: 5500 }]);
   const records = await queryInSchema(
     schemaName,
     `INSERT INTO {{schema}}.client_records
         (client_id, vehicle_id, master_id, service_name, description, amount, advance, advance_date,
-         date, end_date, time, payment_status, is_paid, is_completed, is_demo) VALUES
+         date, end_date, time, payment_status, is_paid, is_completed, is_demo, services) VALUES
        ($1, $2, $3, 'Полировка кузова', 'Полная полировка, защитный состав',
         8000, 0, NULL,
         CURRENT_DATE - INTERVAL '3 days', CURRENT_DATE - INTERVAL '3 days', '14:00',
-        'paid',    TRUE,  TRUE,  TRUE),
+        'paid',    TRUE,  TRUE,  TRUE, $6::jsonb),
        ($4, $5, $3, 'Химчистка салона', 'Химчистка ткани сидений + пластик',
         5500, 2000, CURRENT_DATE,
         CURRENT_DATE, NULL, '11:00',
-        'advance', FALSE, FALSE, TRUE)
+        'advance', FALSE, FALSE, TRUE, $7::jsonb)
      RETURNING id, client_id`,
-    [clientIvanId, vehicleIvanId, ownerId, clientAnnaId, vehicleAnnaId],
+    [clientIvanId, vehicleIvanId, ownerId, clientAnnaId, vehicleAnnaId, servicesIvan, servicesAnna],
     client
   );
   const recordIvanId = records.rows.find((r) => r.client_id === clientIvanId).id;

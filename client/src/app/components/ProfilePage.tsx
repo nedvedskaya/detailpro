@@ -85,6 +85,7 @@ function validateEmail(v: string): string | null {
 
 interface ProfilePageProps {
   onBack: () => void;
+  onServicesChange?: () => void;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -607,13 +608,10 @@ const DemoDataField = () => {
       }
       setDone(kind);
       setBusy(null);
-      // Раньше тут был window.location.reload() — терялся scroll и фокус
-      // юзера. Теперь не перезагружаем: каждый View (Клиенты / Задачи /
-      // Календарь / Финансы) делает fetch при открытии своей вкладки,
-      // так что свежие данные подтянутся автоматически при переходе.
-      // Зелёный плашка «демо добавлено / удалено» висит дольше (4 сек),
-      // чтобы юзер успел заметить и понять что переключаться можно.
-      setTimeout(() => setDone(null), 4000);
+      // После seed/clear перезагружаем страницу — все вкладки (Клиенты,
+      // Задачи, Календарь, Финансы) должны отразить изменения сразу.
+      // Задержка 1.5с: пользователь успевает увидеть зелёное сообщение.
+      setTimeout(() => window.location.reload(), 1500);
     } catch (e: any) {
       setError(translateApiError(e, kind === 'seed'
         ? 'Не удалось заполнить демо-данные'
@@ -1193,7 +1191,7 @@ const ReferralSection = ({ referralCode, bonusBalanceKop }: ReferralSectionProps
 // ──────────────────────────────────────────────────────────────────────
 // Главный компонент
 // ──────────────────────────────────────────────────────────────────────
-export const ProfilePage = ({ onBack }: ProfilePageProps) => {
+export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
   const [data, setData] = useState<ProfileResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1819,9 +1817,8 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
               </>
             ) : (
               <>
-                <p className="text-sm text-zinc-600 mb-4 leading-relaxed">
-                  Подключите бота, чтобы получать ссылку для сброса пароля,
-                  уведомления об оплатах и о новых записях клиентов.
+                <p className="text-xs text-zinc-500 mb-3">
+                  Подключите бота — для сброса пароля и уведомлений о записях.
                 </p>
 
                 {/* Чекбокс согласия на трансграничную передачу — обязательное
@@ -1834,7 +1831,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                     думал, что кнопка «Подключить Telegram» не работает.
                     Кастомная плашка с явным фоном и SVG-галочкой одинаково
                     выглядит на всех платформах. */}
-                <label className="flex items-start gap-3 cursor-pointer select-none mb-4">
+                <label className="flex items-start gap-3 cursor-pointer select-none mb-3">
                   <input
                     type="checkbox"
                     checked={tgCrossBorderConsent}
@@ -1854,18 +1851,15 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
                       <polyline points="5 12 10 17 19 7" />
                     </svg>
                   </span>
-                  <span className="text-xs text-zinc-600 leading-relaxed">
-                    При привязке бота ваши данные (идентификатор Telegram,
-                    имя пользователя, текст сообщений) передаются Telegram
-                    Messenger Inc. на серверы за пределами РФ. Я даю согласие
-                    на трансграничную передачу персональных данных. Подробнее —{' '}
+                  <span className="text-[11px] text-zinc-500 leading-snug">
+                    Данные (Telegram ID, username, сообщения) передаются Telegram Inc. за рубеж. Согласен на трансграничную передачу ПДн.{' '}
                     <a
                       href="/legal/personal-data-consent"
                       target="_blank"
                       rel="noreferrer"
-                      className="text-zinc-900 underline"
+                      className="text-zinc-700 underline"
                     >
-                      Согласие на обработку ПДн, раздел&nbsp;6
+                      Подробнее
                     </a>.
                   </span>
                 </label>
@@ -2049,7 +2043,7 @@ export const ProfilePage = ({ onBack }: ProfilePageProps) => {
           title="Прайс-лист услуг"
           subtitle="Используются при создании заказ-наряда"
         >
-          <ServicesManager canEdit={canManageServices(role)} />
+          <ServicesManager canEdit={canManageServices(role)} onServicesChange={onServicesChange} />
         </CollapsibleSection>
 
         {/* ── 4+5. Подписка (объединена с тарифами) ────────────────

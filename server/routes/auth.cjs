@@ -554,7 +554,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     const { rows } = await pool.query(
       `SELECT u.id, u.email, u.role, u.name,
               u.first_name, u.last_name, u.phone, u.avatar_path, u.created_at,
-              u.is_active, u.can_view_finance, u.last_login_at,
+              u.is_active, u.can_view_finance, u.permissions, u.last_login_at,
               s.id AS studio_id, s.schema_name, s.display_name, s.plan, s.is_active AS studio_active,
               s.access_until, s.created_at AS studio_created_at
          FROM saas_meta.users u
@@ -590,6 +590,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         createdAt: row.created_at,
         isActive: row.is_active,
         canViewFinance,
+        permissions: row.permissions || null,
         lastLoginAt: row.last_login_at,
       },
       studio: {
