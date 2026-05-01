@@ -1,24 +1,82 @@
 export type { Role } from './types';
 import type { Role } from './types';
 
+// ──────────────────────────────────────────────────────────────────────
+// Гранулярные права по разделам (новая система, май 2026)
+//
+//   SectionLevel: 'edit' — полный доступ, 'view' — только просмотр, 'none' — скрыт
+//   SectionPermissions — JSON-объект из users.permissions в БД
+//
+//   При permissions=null используется фолбэк на роль (обратная совместимость).
+//   Пресеты: MANAGER_PRESET / MASTER_PRESET — значения по умолчанию при создании.
+// ──────────────────────────────────────────────────────────────────────
+export type SectionLevel = 'edit' | 'view' | 'none';
+export type SectionKey = 'clients' | 'tasks' | 'calendar' | 'finance';
+export type SectionPermissions = Record<SectionKey, SectionLevel>;
+
+export const MANAGER_PRESET: SectionPermissions = {
+  clients: 'edit', tasks: 'edit', calendar: 'edit', finance: 'edit',
+};
+export const MASTER_PRESET: SectionPermissions = {
+  clients: 'view', tasks: 'edit', calendar: 'view', finance: 'none',
+};
+
+const _LEVEL_RANK: Record<SectionLevel, number> = { none: 0, view: 1, edit: 2 };
+
+export function resolveLevel(
+  role: Role,
+  permissions: SectionPermissions | null | undefined,
+  section: SectionKey,
+  canViewFinanceFlag?: boolean | null,
+): SectionLevel {
+  if (role === 'owner') return 'edit';
+  if (permissions && typeof permissions[section] === 'string') return permissions[section];
+  // Фолбэк на роль
+  if (role === 'manager') {
+    if (section === 'finance') return canViewFinanceFlag !== false ? 'edit' : 'none';
+    return 'edit';
+  }
+  if (role === 'master') {
+    if (section === 'finance') return 'none';
+    if (section === 'tasks') return 'edit';
+    return 'view';
+  }
+  return 'none';
+}
+
+export function canViewSection(
+  role: Role,
+  permissions: SectionPermissions | null | undefined,
+  section: SectionKey,
+  canViewFinanceFlag?: boolean | null,
+): boolean {
+  return resolveLevel(role, permissions, section, canViewFinanceFlag) !== 'none';
+}
+
+export function canEditSection(
+  role: Role,
+  permissions: SectionPermissions | null | undefined,
+  section: SectionKey,
+  canViewFinanceFlag?: boolean | null,
+): boolean {
+  return resolveLevel(role, permissions, section, canViewFinanceFlag) === 'edit';
+}
+
+export function meetsLevel(actual: SectionLevel, required: SectionLevel): boolean {
+  return (_LEVEL_RANK[actual] || 0) >= (_LEVEL_RANK[required] || 0);
+}
+
 /**
  * Матрица прав в SaaS-CRM.
  *
  *   owner   — полный доступ ко всему, включая админ-панель и удаление БД.
- *   manager — может всё в 4-х CRM-блоках (клиенты, задачи, календарь, финансы),
- *             но БЕЗ админки. Видимость финансов адаптивная: owner может снять
- *             в админ-панели тоггл can_view_finance — тогда вкладки «Финансы»
- *             у конкретного менеджера не будет (см. canViewFinance ниже).
- *   master  — read-only по 3 блокам (клиенты, задачи, календарь). Финансы
- *             НЕ видит никогда — это хардкод (мастер по бизнес-смыслу не должен
- *             видеть деньги студии).
+ *   manager — гранулярные права через SectionPermissions (пресет: всё edit).
+ *   master  — гранулярные права через SectionPermissions (пресет: clients/calendar view,
+ *             tasks edit, finance none).
  *
  * Связка с бэкендом:
- *   - Серверные write-руты в server/routes/tenant.cjs дополнительно защищены
- *     requireRole('owner','manager') — даже если фронт пропустит master'a
- *     к кнопке «Сохранить», бэк отдаст 403.
- *   - Финансы: server/routes/tenant.cjs#canSeeFinance закрывает /transactions*
- *     для master всегда и для manager'a без флага can_view_finance.
+ *   - server/routes/tenant.cjs использует sectionGuard(section, minLevel) из middleware.cjs.
+ *   - Для пользователей без JSON permissions — фолбэк на роль + can_view_finance.
  */
 export type Permission =
   | 'view_clients'
@@ -96,23 +154,25 @@ export const isOwner = (role: Role): boolean => {
 };
 
 /**
- * Может ли роль вообще вносить изменения (create / edit / delete) в CRM-сущности.
- * Используется как единый булевый флаг во view-компонентах: если canEdit=false,
- * скрываем кнопки «Добавить»/«Редактировать»/«Удалить», открываем модалки в
- * read-only-режиме. master → false, owner/manager → true.
+ * Может ли пользователь вносить изменения в CRM-сущности клиентского раздела.
+ * Принимает permissions для гранулярного контроля.
  */
-export const canEditEntities = (role: Role): boolean => {
-  return role !== 'master';
+export const canEditEntities = (
+  role: Role,
+  permissions?: SectionPermissions | null,
+  section: SectionKey = 'clients',
+): boolean => {
+  return resolveLevel(role, permissions, section) === 'edit';
 };
 
 /**
- * Может ли роль управлять задачами (create / edit / toggle / delete).
- * Отличие от canEditEntities: мастер тоже МОЖЕТ. Задачи — его рабочий блок,
- * по бизнес-смыслу мастер должен сам себе ставить таски, отмечать выполненные
- * и т. д. Owner/manager, разумеется, тоже могут.
+ * Может ли пользователь управлять задачами (create / edit / toggle / delete).
  */
-export const canEditTasks = (role: Role): boolean => {
-  return role === 'owner' || role === 'manager' || role === 'master';
+export const canEditTasks = (
+  role: Role,
+  permissions?: SectionPermissions | null,
+): boolean => {
+  return resolveLevel(role, permissions, 'tasks') === 'edit';
 };
 
 /**
@@ -147,81 +207,79 @@ export const canManageSubscription = (role: Role): boolean => role === 'owner';
 export const canManageReferrals = (role: Role): boolean => role === 'owner';
 
 /** Каталог услуг (ServicesManager) — owner и manager, master read-only. */
-export const canManageServices = (role: Role): boolean =>
-  role === 'owner' || role === 'manager';
+export const canManageServices = (
+  role: Role,
+  permissions?: SectionPermissions | null,
+): boolean => resolveLevel(role, permissions, 'calendar') === 'edit';
 
 /**
  * Видит ли пользователь финансы.
- *
- * Логика согласована с серверным /api/auth/me и /api/profile (см. шейпер
- * в server/routes/profile.cjs#computeCanViewFinance):
- *   - master    → false ВСЕГДА (хардкод бизнес-правила).
- *   - owner     → true ВСЕГДА.
- *   - manager   → true, если флаг can_view_finance не равен false. Default true,
- *                 чтобы не сломать существующих менеджеров до отдельной
- *                 настройки в админ-панели.
- *
- * @param role           — роль текущего пользователя
- * @param flag           — значение users.can_view_finance из ответа /me (boolean | undefined)
+ * Для обратной совместимости принимает старый flag; при наличии permissions использует их.
  */
-export const canViewFinance = (role: Role, flag?: boolean | null): boolean => {
-  if (role === 'master') return false;
+export const canViewFinance = (
+  role: Role,
+  flagOrPermissions?: boolean | null | SectionPermissions,
+  permissions?: SectionPermissions | null,
+): boolean => {
   if (role === 'owner') return true;
-  return flag !== false;
+  const perms = (permissions !== undefined ? permissions : (typeof flagOrPermissions === 'object' && flagOrPermissions !== null ? flagOrPermissions as SectionPermissions : null));
+  const flag = typeof flagOrPermissions === 'boolean' ? flagOrPermissions : undefined;
+  return resolveLevel(role, perms, 'finance', flag) !== 'none';
 };
 
 /**
  * Список вкладок основного TabBar.
- * Финансы фильтруются ОТДЕЛЬНО через canViewFinance, потому что это решение
- * зависит не только от роли, но и от per-user флага can_view_finance.
- * Здесь оставляем только тот фильтр, что зависит от роли.
  */
-export const getAvailableTabs = (role: Role, financeFlag?: boolean | null): string[] => {
+export const getAvailableTabs = (
+  role: Role,
+  financeFlag?: boolean | null,
+  permissions?: SectionPermissions | null,
+): string[] => {
   const tabs: string[] = [];
-
-  if (hasPermission(role, 'view_clients')) tabs.push('clients');
-  if (hasPermission(role, 'view_tasks')) tabs.push('tasks');
-  if (hasPermission(role, 'view_calendar')) tabs.push('calendar');
-  if (hasPermission(role, 'view_finance') && canViewFinance(role, financeFlag)) tabs.push('finance');
-  if (hasPermission(role, 'view_admin')) tabs.push('admin');
-
+  const SECTIONS: SectionKey[] = ['clients', 'tasks', 'calendar', 'finance'];
+  for (const section of SECTIONS) {
+    const level = resolveLevel(role, permissions, section, section === 'finance' ? financeFlag : undefined);
+    if (level !== 'none') tabs.push(section);
+  }
+  if (role === 'owner') tabs.push('admin');
   return tabs;
 };
 
-export const canAccessTab = (role: Role, tab: string, financeFlag?: boolean | null): boolean => {
-  const tabPermissions: Record<string, Permission> = {
-    clients: 'view_clients',
-    tasks: 'view_tasks',
-    calendar: 'view_calendar',
-    finance: 'view_finance',
-    admin: 'view_admin',
-  };
-
-  const requiredPermission = tabPermissions[tab];
-  if (!requiredPermission) return false;
-  if (!hasPermission(role, requiredPermission)) return false;
-  if (tab === 'finance') return canViewFinance(role, financeFlag);
-  return true;
+export const canAccessTab = (
+  role: Role,
+  tab: string,
+  financeFlag?: boolean | null,
+  permissions?: SectionPermissions | null,
+): boolean => {
+  if (tab === 'admin') return role === 'owner';
+  const section = tab as SectionKey;
+  const validSections: SectionKey[] = ['clients', 'tasks', 'calendar', 'finance'];
+  if (!validSections.includes(section)) return false;
+  const level = resolveLevel(role, permissions, section, section === 'finance' ? financeFlag : undefined);
+  return level !== 'none';
 };
 
 export { getRoleName } from './constants';
 
+const SECTION_LABELS: Record<SectionKey, string> = {
+  clients: 'Клиенты', tasks: 'Задачи', calendar: 'Календарь', finance: 'Финансы',
+};
+
 /**
- * Возвращает читаемый список разделов, доступных пользователю в этом
- * рабочем пространстве. Используется в AdminPanel для строки «Видит разделы:
- * Клиенты, Задачи, …» — owner сразу понимает, что фактически открыто
- * сотруднику, не догадываясь по чек-боксам.
- *
- *   - owner    : Клиенты, Задачи, Календарь, Финансы, Админ-панель
- *   - manager  : Клиенты, Задачи, Календарь [+ Финансы если canViewFinance]
- *   - master   : Клиенты (просмотр), Задачи (просмотр), Календарь (просмотр)
+ * Читаемый список разделов для карточки сотрудника в AdminPanel.
  */
-export const getVisibleSectionLabels = (role: Role, financeFlag?: boolean | null): string[] => {
-  if (role === 'master') {
-    return ['Клиенты (просмотр)', 'Задачи (просмотр)', 'Календарь (просмотр)'];
+export const getVisibleSectionLabels = (
+  role: Role,
+  financeFlag?: boolean | null,
+  permissions?: SectionPermissions | null,
+): string[] => {
+  if (role === 'owner') return ['Клиенты', 'Задачи', 'Календарь', 'Финансы', 'Админ-панель'];
+  const list: string[] = [];
+  const SECTIONS: SectionKey[] = ['clients', 'tasks', 'calendar', 'finance'];
+  for (const section of SECTIONS) {
+    const level = resolveLevel(role, permissions, section, section === 'finance' ? financeFlag : undefined);
+    if (level === 'edit') list.push(SECTION_LABELS[section]);
+    else if (level === 'view') list.push(`${SECTION_LABELS[section]} (просмотр)`);
   }
-  const list = ['Клиенты', 'Задачи', 'Календарь'];
-  if (canViewFinance(role, financeFlag)) list.push('Финансы');
-  if (role === 'owner') list.push('Админ-панель');
   return list;
 };

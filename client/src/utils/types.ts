@@ -221,6 +221,9 @@ export interface StudioUser {
   // На дропдауне «мастер» эти поля не используются, но тип общий — отметим
   // как опциональные.
   can_view_finance?: boolean;
+  // Гранулярные права по разделам (JSON из users.permissions).
+  // null = использовать дефолты по роли.
+  permissions?: { clients: string; tasks: string; calendar: string; finance: string } | null;
   last_login_at?: string | null;
   avatar_path?: string | null;
   phone?: string | null;

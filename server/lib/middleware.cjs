@@ -142,6 +142,43 @@ function requireRole(...allowedRoles) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// sectionGuard(section, minLevel)
+//   Проверяет доступ к разделу CRM через JSON-поле permissions в сессии.
+//   section: 'clients' | 'tasks' | 'calendar' | 'finance'
+//   minLevel: 'view' | 'edit'
+//
+//   Если permissions=null — фолбэк на роль + can_view_finance (обратная
+//   совместимость со старыми пользователями без JSON permissions).
+// ──────────────────────────────────────────────────────────────────────
+const _LEVEL_RANK = { none: 0, view: 1, edit: 2 };
+
+function _resolveSection(session, section) {
+  if (session.role === 'owner') return 'edit';
+  const perms = session.permissions;
+  if (perms && typeof perms[section] === 'string') return perms[section];
+  // Фолбэк: роль + can_view_finance
+  if (session.role === 'manager') {
+    if (section === 'finance') return session.canViewFinance !== false ? 'edit' : 'none';
+    return 'edit';
+  }
+  if (session.role === 'master') {
+    if (section === 'finance') return 'none';
+    if (section === 'tasks') return 'edit';
+    return 'view'; // clients, calendar
+  }
+  return 'none';
+}
+
+function sectionGuard(section, minLevel) {
+  return function (req, res, next) {
+    if (!req.session) return res.status(401).json({ error: 'unauthenticated' });
+    const actual = _resolveSection(req.session, section);
+    if ((_LEVEL_RANK[actual] || 0) >= (_LEVEL_RANK[minLevel] || 0)) return next();
+    return res.status(403).json({ error: 'forbidden' });
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // requireNotMaster
 //   Запрещает любые мутации профиля / аватара для роли 'master' —
 //   мастер видит только свои бронирования и не может менять данные
@@ -164,6 +201,7 @@ module.exports = {
   requireActiveStudio,
   requireRole,
   requireNotMaster,
+  sectionGuard,
   readSessionCookie, // экспортируем для тестов
   SESSION_COOKIE_NAME,
 };

@@ -314,26 +314,22 @@ export const api = {
   getAdminUsers(params?: { search?: string; role?: string; is_active?: string }) {
     return get<StudioUser[]>(`/admin/users${qs(params)}`);
   },
-  // На создании сотрудника owner может (опционально) сразу выставить
-  // can_view_finance — для master это поле игнорируется бэком (всегда false).
   createAdminUser(user: {
     email: string;
     password: string;
     name: string;
     role: string;
-    can_view_finance?: boolean;
+    permissions?: { clients: string; tasks: string; calendar: string; finance: string } | null;
   }) {
     return send<StudioUser>('POST', '/admin/users', user);
   },
-  // Расширенный patch: помимо имени/роли/активности теперь поддерживается
-  // can_view_finance (для роли manager). Бэк защищает: для master флаг
-  // принудительно false, последний owner не может быть демоутнут.
   updateAdminUser(id: string, patch: {
     email?: string;
     name?: string;
     role?: string;
     is_active?: boolean;
     can_view_finance?: boolean;
+    permissions?: { clients: string; tasks: string; calendar: string; finance: string } | null;
   }) {
     return send<StudioUser>('PUT', `/admin/users/${id}`, patch);
   },

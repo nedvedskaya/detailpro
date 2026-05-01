@@ -26,7 +26,7 @@
 
 const express = require('express');
 const { queryInSchema, query, withTx } = require('../lib/db.cjs');
-const { requireRole } = require('../lib/middleware.cjs');
+const { requireRole, sectionGuard } = require('../lib/middleware.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
 const { parseId, assertString, assertOptionalString, assertArrayOfStrings, parsePagination, handleFieldError } = require('../lib/validation.cjs');
 const { assertUserInStudio } = require('../lib/tenant_security.cjs');
@@ -41,14 +41,14 @@ const router = express.Router();
 // Импортируется как алиас выше — сигнатура исторически зовётся logAction
 // и менять все 30+ вызовов в этом файле смысла нет.
 
-// Кто имеет право писать в БД. Master — read-only по всем CRM-сущностям.
-const canWrite = requireRole('owner', 'manager');
-
-// Задачи — единственный блок, где master тоже пишет (создаёт/правит/удаляет
-// свои таски, отмечает выполненные). По бизнес-смыслу мастер ведёт задачи
-// сам — owner/manager не должны постоянно подкидывать ему «не забудь
-// помыть колёса» вручную.
-const canWriteTasks = requireRole('owner', 'manager', 'master');
+// Секционные гарды — заменяют старый canWrite/canWriteTasks.
+// Уровни: 'edit' (полный доступ), 'view' (только чтение), 'none' (скрыто).
+// Для пользователей без JSON permissions используется фолбэк на роль.
+const canWriteClients  = sectionGuard('clients',  'edit');
+const canWriteCalendar = sectionGuard('calendar', 'edit');
+const canWriteFinance  = sectionGuard('finance',  'edit');
+const canViewFinanceGrd = sectionGuard('finance', 'view');
+const canWriteTasks    = sectionGuard('tasks',    'edit');
 
 // Алиас на parseId() из lib/validation.cjs — оставлен под старым именем,
 // чтобы не править все вызовы в этом файле (~50+). Семантика та же:
@@ -94,7 +94,7 @@ const CLIENT_CITY_MAX = 100;
 const CLIENT_SOURCE_MAX = 100;
 const CLIENT_NOTES_MAX = 5000;
 
-router.post('/clients', canWrite, async (req, res, next) => {
+router.post('/clients', canWriteClients, async (req, res, next) => {
   const { name, phone, email, notes, source, city, birth_date, avatar } = req.body || {};
   let nameC, phoneC, emailC, notesC, sourceC, cityC;
   try {
@@ -130,7 +130,7 @@ router.post('/clients', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/clients/:id', canWrite, async (req, res, next) => {
+router.put('/clients/:id', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { name, phone, email, notes, source, city, birth_date, avatar } = req.body || {};
@@ -170,7 +170,7 @@ router.put('/clients/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.put('/clients/:id/avatar', requireRole('owner', 'manager'), async (req, res, next) => {
+router.put('/clients/:id/avatar', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { avatar } = req.body || {};
@@ -183,7 +183,7 @@ router.put('/clients/:id/avatar', requireRole('owner', 'manager'), async (req, r
   res.json(r.rows[0]);
 });
 
-router.delete('/clients/:id', requireRole('owner', 'manager'), async (req, res, next) => {
+router.delete('/clients/:id', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.clients WHERE id=$1`, [id]);
@@ -210,7 +210,7 @@ router.delete('/clients/:id', requireRole('owner', 'manager'), async (req, res, 
  * Доступ: только owner/manager. Master не импортирует — у него и так
  * read-only по клиентам.
  */
-router.post('/clients/bulk', requireRole('owner', 'manager'), async (req, res, next) => {
+router.post('/clients/bulk', canWriteClients, async (req, res, next) => {
   try {
     const { rows, strategy } = req.body || {};
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -395,7 +395,7 @@ router.get('/vehicles', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/vehicles', canWrite, async (req, res, next) => {
+router.post('/vehicles', canWriteClients, async (req, res, next) => {
   const { client_id, brand, model, year, vin, license_plate, color, mileage, notes } = req.body || {};
   const cid = badId(client_id);
   if (!cid) return res.status(400).json({ error: 'client_id_required' });
@@ -410,7 +410,7 @@ router.post('/vehicles', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/vehicles/:id', canWrite, async (req, res, next) => {
+router.put('/vehicles/:id', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { brand, model, year, vin, license_plate, color, mileage, notes } = req.body || {};
@@ -426,7 +426,7 @@ router.put('/vehicles/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/vehicles/:id', canWrite, async (req, res, next) => {
+router.delete('/vehicles/:id', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.vehicles WHERE id=$1`, [id]);
@@ -449,7 +449,7 @@ router.get('/services', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/services', canWrite, async (req, res, next) => {
+router.post('/services', canWriteCalendar, async (req, res, next) => {
   const { name, price, duration, description, category_id, is_active } = req.body || {};
   if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
   const r = await queryInSchema(
@@ -461,7 +461,7 @@ router.post('/services', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/services/:id', canWrite, async (req, res, next) => {
+router.put('/services/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { name, price, duration, description, category_id, is_active } = req.body || {};
@@ -476,7 +476,7 @@ router.put('/services/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/services/:id', canWrite, async (req, res, next) => {
+router.delete('/services/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.services WHERE id=$1`, [id]);
@@ -491,7 +491,7 @@ router.get('/service-categories', async (req, res, next) => {
     `SELECT * FROM {{schema}}.categories WHERE type = 'service' ORDER BY name`);
   res.json(r.rows);
 });
-router.post('/service-categories', canWrite, async (req, res, next) => {
+router.post('/service-categories', canWriteCalendar, async (req, res, next) => {
   const { name, color } = req.body || {};
   if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
   const r = await queryInSchema(req.session.schemaName,
@@ -499,7 +499,7 @@ router.post('/service-categories', canWrite, async (req, res, next) => {
     [name.trim(), color || null]);
   res.status(201).json(r.rows[0]);
 });
-router.put('/service-categories/:id', canWrite, async (req, res, next) => {
+router.put('/service-categories/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { name, color } = req.body || {};
@@ -509,7 +509,7 @@ router.put('/service-categories/:id', canWrite, async (req, res, next) => {
   if (!r.rows[0]) return res.status(404).json({ error: 'category_not_found' });
   res.json(r.rows[0]);
 });
-router.delete('/service-categories/:id', canWrite, async (req, res, next) => {
+router.delete('/service-categories/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName,
@@ -538,7 +538,7 @@ router.get('/bookings', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/bookings', canWrite, async (req, res, next) => {
+router.post('/bookings', canWriteCalendar, async (req, res, next) => {
   const { client_id, vehicle_id, service_id, master_id, date, time, end_time, status, payment_status, amount, notes } = req.body || {};
   if (!date || !time) return res.status(400).json({ error: 'date_time_required' });
 
@@ -569,7 +569,7 @@ router.post('/bookings', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/bookings/:id', canWrite, async (req, res, next) => {
+router.put('/bookings/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { client_id, vehicle_id, service_id, master_id, date, time, end_time, status, payment_status, amount, notes } = req.body || {};
@@ -596,7 +596,7 @@ router.put('/bookings/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/bookings/:id', canWrite, async (req, res, next) => {
+router.delete('/bookings/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.bookings WHERE id=$1`, [id]);
@@ -607,52 +607,28 @@ router.delete('/bookings/:id', canWrite, async (req, res, next) => {
 // ══════════════════════════════════════════════════════════════════════
 // TRANSACTIONS
 //
-// Доступ к разделу «Финансы» и связанным транзакциям:
-//   • Owner — всегда полный доступ.
-//   • Manager с can_view_finance=true — полный доступ.
-//   • Manager с can_view_finance=false — может работать ТОЛЬКО с транзакциями,
-//       привязанными к client_record_id (это автогенерация от заказа: аванс,
-//       оплата, корректировка). Без этого менеджер без галочки финансов
-//       не сможет принять предоплату — а это ломает рабочий процесс.
-//   • Master — нет доступа (по ТЗ; canWrite его всё равно блокирует ниже).
-//
-// Решение: middleware ставит req.txScope = 'all' | 'linked' и каждый
-// хендлер делает scope-aware. 'linked' — фильтрация и проверки на
-// client_record_id.
+// Доступ управляется через permissions.finance:
+//   'edit' → полный доступ (GET + POST + PUT + DELETE)
+//   'view' → только чтение (GET)
+//   'none' → нет доступа
 // ══════════════════════════════════════════════════════════════════════
 
-function txAccessControl(req, res, next) {
-  const role = req.session?.role;
-  if (role === 'owner') { req.txScope = 'all'; return next(); }
-  if (role === 'manager' && req.session.canViewFinance !== false) {
-    req.txScope = 'all'; return next();
-  }
-  if (role === 'manager') { req.txScope = 'linked'; return next(); }
-  return res.status(403).json({ error: 'finance_forbidden' });
-}
-
-router.get('/transactions', txAccessControl, async (req, res, next) => {
-  const where = req.txScope === 'linked' ? 'WHERE client_record_id IS NOT NULL' : '';
+router.get('/transactions', canViewFinanceGrd, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT id, type, amount, category_id, category, description, date, time,
             booking_id, client_record_id, client_id, client_name,
             created_by, tags, created_at
        FROM {{schema}}.transactions
-       ${where}
       ORDER BY date DESC, created_at DESC`
   );
   res.json(r.rows);
 });
 
-router.post('/transactions', canWrite, txAccessControl, async (req, res, next) => {
+router.post('/transactions', canWriteFinance, async (req, res, next) => {
   const { type, amount, category, category_id, description, date, time, booking_id, client_record_id, client_id, tags } = req.body || {};
   if (!type || (type !== 'income' && type !== 'expense')) return res.status(400).json({ error: 'type_invalid' });
   if (typeof amount !== 'number' && typeof amount !== 'string') return res.status(400).json({ error: 'amount_required' });
-  // Для 'linked'-скоупа: транзакция должна быть привязана к заказу.
-  if (req.txScope === 'linked' && !badId(client_record_id)) {
-    return res.status(403).json({ error: 'finance_forbidden' });
-  }
   let normalizedTags;
   try { normalizedTags = normalizeTags(tags); }
   catch (err) { if (handleFieldError(err, res)) return; throw err; }
@@ -709,10 +685,9 @@ async function ensureLinkedScope(req, res, txId) {
   return true;
 }
 
-router.put('/transactions/:id', canWrite, txAccessControl, async (req, res, next) => {
+router.put('/transactions/:id', canWriteFinance, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
-  if (!(await ensureLinkedScope(req, res, id))) return;
   const { type, amount, category, category_id, description, date, time, tags } = req.body || {};
   let normalizedTags;
   try { normalizedTags = normalizeTags(tags); }
@@ -730,10 +705,9 @@ router.put('/transactions/:id', canWrite, txAccessControl, async (req, res, next
   res.json(r.rows[0]);
 });
 
-router.delete('/transactions/:id', canWrite, txAccessControl, async (req, res, next) => {
+router.delete('/transactions/:id', canWriteFinance, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
-  if (!(await ensureLinkedScope(req, res, id))) return;
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.transactions WHERE id=$1`, [id]);
   logAction(req, 'delete', 'transaction', id);
   res.json({ ok: true });
@@ -836,7 +810,7 @@ router.get('/client-records', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/client-records', canWrite, async (req, res, next) => {
+router.post('/client-records', canWriteCalendar, async (req, res, next) => {
   const {
     client_id, vehicle_id, booking_id, service_name, description, amount,
     date, time, master_id, is_paid, is_completed,
@@ -898,7 +872,7 @@ router.post('/client-records', canWrite, async (req, res, next) => {
 });
 
 // PUT с whitelist полей — как в исходном index.cjs:2125
-router.put('/client-records/:id', canWrite, async (req, res, next) => {
+router.put('/client-records/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const fields = req.body || {};
@@ -973,7 +947,7 @@ router.put('/client-records/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/client-records/:id', canWrite, async (req, res, next) => {
+router.delete('/client-records/:id', canWriteCalendar, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.client_records WHERE id=$1`, [id]);
@@ -993,7 +967,7 @@ router.get('/categories', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/categories', canWrite, async (req, res, next) => {
+router.post('/categories', canWriteFinance, async (req, res, next) => {
   const { name, type, color, icon } = req.body || {};
   if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
   const t = type === 'income' || type === 'expense' ? type : 'expense';
@@ -1005,7 +979,7 @@ router.post('/categories', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/categories/:id', canWrite, async (req, res, next) => {
+router.put('/categories/:id', canWriteFinance, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { name, type, color, icon } = req.body || {};
@@ -1019,7 +993,7 @@ router.put('/categories/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/categories/:id', canWrite, async (req, res, next) => {
+router.delete('/categories/:id', canWriteFinance, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.categories WHERE id=$1`, [id]);
@@ -1043,7 +1017,7 @@ router.get('/tags', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/tags', canWrite, async (req, res, next) => {
+router.post('/tags', canWriteFinance, async (req, res, next) => {
   const { name, color, type } = req.body || {};
   if (!nonEmptyString(name)) return res.status(400).json({ error: 'name_required' });
   const r = await queryInSchema(
@@ -1054,7 +1028,7 @@ router.post('/tags', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.put('/tags/:id', canWrite, async (req, res, next) => {
+router.put('/tags/:id', canWriteFinance, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   const { name, color, type } = req.body || {};
@@ -1068,7 +1042,7 @@ router.put('/tags/:id', canWrite, async (req, res, next) => {
   res.json(r.rows[0]);
 });
 
-router.delete('/tags/:id', canWrite, async (req, res, next) => {
+router.delete('/tags/:id', canWriteFinance, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.tags WHERE id=$1`, [id]);
@@ -1100,7 +1074,7 @@ router.get('/entity-tags', async (req, res, next) => {
   res.json(r.rows);
 });
 
-router.post('/entity-tags', canWrite, async (req, res, next) => {
+router.post('/entity-tags', canWriteClients, async (req, res, next) => {
   const { tag_id, entity_type, entity_id } = req.body || {};
   const tid = badId(tag_id), eid = badId(entity_id);
   if (!tid || !nonEmptyString(entity_type) || !eid) {
@@ -1118,7 +1092,7 @@ router.post('/entity-tags', canWrite, async (req, res, next) => {
   res.status(201).json(r.rows[0]);
 });
 
-router.delete('/entity-tags/:id', canWrite, async (req, res, next) => {
+router.delete('/entity-tags/:id', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
   await queryInSchema(req.session.schemaName, `DELETE FROM {{schema}}.entity_tags WHERE id=$1`, [id]);
@@ -1144,7 +1118,7 @@ router.get('/data/:key', async (req, res, next) => {
 // и устроить DoS на дисковое место + замедлить чтения.
 const MAX_DATA_VALUE_BYTES = 64 * 1024;
 
-router.post('/data/:key', canWrite, async (req, res, next) => {
+router.post('/data/:key', canWriteClients, async (req, res, next) => {
   const { value } = req.body || {};
   // Ключ — тоже user input. Ограничиваем длиной 100 + регексп
   // [a-zA-Z0-9_.-] чтобы избежать сюрпризов с UNIQUE и сортировкой.

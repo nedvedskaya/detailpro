@@ -32,12 +32,15 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Activity, UserPlus, Shield, ShieldOff, Clock,
   ArrowLeft, Trash2, Edit3, KeyRound, Copy, Check, RefreshCw, X, ChevronDown,
-  Eye, EyeOff, Lock, BarChart3,
+  Lock, BarChart3,
 } from 'lucide-react';
 import { AnalyticsDashboard } from '@/app/components/admin/AnalyticsDashboard';
 import { api } from '@/utils/api';
 import { getRoleName, getActionLabel, getActionTone, formatEntityName, formatLogDetails } from '@/utils/constants';
-import { getVisibleSectionLabels } from '@/utils/permissions';
+import {
+  getVisibleSectionLabels, MANAGER_PRESET, MASTER_PRESET,
+  type SectionPermissions, type SectionLevel, type SectionKey,
+} from '@/utils/permissions';
 import { formatDateTime, formatDateRu } from '@/utils/helpers';
 import { Modal } from '@/app/components/ui/Modal';
 import { showToast } from '@/app/components/ui/Toast';
@@ -66,6 +69,73 @@ function generateTempPassword(): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+const SECTION_NAMES: Record<SectionKey, string> = {
+  clients: 'Клиенты', tasks: 'Задачи', calendar: 'Календарь', finance: 'Финансы',
+};
+const LEVEL_LABELS: Record<SectionLevel, string> = {
+  none: 'Скрыт', view: 'Просмотр', edit: 'Полный',
+};
+const ALL_SECTIONS: SectionKey[] = ['clients', 'tasks', 'calendar', 'finance'];
+
+function SectionToggle({ label, value, onChange }: {
+  label: string; value: SectionLevel; onChange: (v: SectionLevel) => void;
+}) {
+  const levels: SectionLevel[] = ['none', 'view', 'edit'];
+  return (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="text-sm font-bold text-zinc-700 w-24 shrink-0">{label}</span>
+      <div className="flex gap-1">
+        {levels.map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => onChange(v)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              value === v ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-500 active:bg-zinc-200'
+            }`}
+          >
+            {LEVEL_LABELS[v]}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PermissionsEditor({ value, onChange }: {
+  value: SectionPermissions;
+  onChange: (p: SectionPermissions) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex gap-2 mb-2">
+        <button
+          type="button"
+          onClick={() => onChange({ ...MANAGER_PRESET })}
+          className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-600 active:bg-zinc-200 transition-all"
+        >
+          Пресет: Менеджер
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ ...MASTER_PRESET })}
+          className="flex-1 py-1.5 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-600 active:bg-zinc-200 transition-all"
+        >
+          Пресет: Мастер
+        </button>
+      </div>
+      {ALL_SECTIONS.map((s) => (
+        <SectionToggle
+          key={s}
+          label={SECTION_NAMES[s]}
+          value={value[s]}
+          onChange={(v) => onChange({ ...value, [s]: v })}
+        />
+      ))}
+    </div>
+  );
+}
+
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
@@ -92,10 +162,6 @@ const TONE_DOT: Record<'green' | 'blue' | 'red' | 'gray', string> = {
 export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
   const currentUser = getUser();
   const [activeTab, setActiveTab] = useState<AdminTab>('users');
-  // Per-user busy-индикатор для inline-toggle «Видит финансы».
-  // Защищаемся от двойного клика и показываем «…» пока запрос летит.
-  const [financeBusyId, setFinanceBusyId] = useState<string | null>(null);
-
   // ── Сотрудники ──
   const [users, setUsers] = useState<StudioUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -120,16 +186,16 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
   // ── Add-модалка ──
   const [showAddModal, setShowAddModal] = useState(false);
   const [addForm, setAddForm] = useState<{
-    email: string; password: string; name: string; role: Role; can_view_finance: boolean;
-  }>({ email: '', password: generateTempPassword(), name: '', role: 'manager', can_view_finance: true });
+    email: string; password: string; name: string; role: Role; permissions: SectionPermissions;
+  }>({ email: '', password: generateTempPassword(), name: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [copiedAddPwd, setCopiedAddPwd] = useState(false);
 
   // ── Edit-модалка ──
   const [editTarget, setEditTarget] = useState<StudioUser | null>(null);
   const [editForm, setEditForm] = useState<{
-    name: string; role: Role; can_view_finance: boolean;
-  }>({ name: '', role: 'manager', can_view_finance: true });
+    name: string; role: Role; permissions: SectionPermissions;
+  }>({ name: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   // ── Reset-password модалка (показ временного пароля один раз) ──
@@ -256,7 +322,7 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       showToast(`Лимит тарифа «${planLabel}» — ${limits.maxUsers}. Повысьте тариф в Профиле.`, 'warning');
       return;
     }
-    setAddForm({ email: '', password: generateTempPassword(), name: '', role: 'manager', can_view_finance: true });
+    setAddForm({ email: '', password: generateTempPassword(), name: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
     setCopiedAddPwd(false);
     setShowAddModal(true);
   };
@@ -273,13 +339,12 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
     }
     try {
       setAddSubmitting(true);
-      // Для master can_view_finance бэк всё равно проигнорирует/перезатрёт false.
       const payload = {
         email: addForm.email.trim(),
         password: addForm.password,
         name: addForm.name.trim(),
         role: addForm.role,
-        can_view_finance: addForm.role === 'manager' ? addForm.can_view_finance : false,
+        permissions: addForm.permissions,
       };
       await api.createAdminUser(payload);
       showToast(`Сотрудник ${payload.name} добавлен`, 'success');
@@ -296,10 +361,12 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
 
   const handleEditOpen = (u: StudioUser) => {
     setEditTarget(u);
+    const defaultPerms = u.role === 'master' ? MASTER_PRESET : MANAGER_PRESET;
+    const perms = u.permissions as SectionPermissions | null | undefined;
     setEditForm({
       name: u.name,
       role: u.role === 'owner' ? 'owner' : u.role,
-      can_view_finance: u.can_view_finance !== false,
+      permissions: perms ? { ...defaultPerms, ...perms } : { ...defaultPerms },
     });
   };
 
@@ -315,10 +382,7 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       if (editTarget.role !== 'owner' && editForm.role !== editTarget.role) {
         patch.role = editForm.role;
       }
-      // can_view_finance имеет смысл только для manager; для master бэк всё равно false.
-      if (editForm.role === 'manager' && editForm.can_view_finance !== (editTarget.can_view_finance !== false)) {
-        patch.can_view_finance = editForm.can_view_finance;
-      }
+      patch.permissions = editForm.permissions;
       if (Object.keys(patch).length === 0) {
         setEditTarget(null);
         return;
@@ -444,25 +508,6 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
     { id: 'activity', label: 'Активность', icon: Activity },
     { id: 'analytics', label: 'Аналитика', icon: BarChart3 },
   ];
-
-  // Inline-toggle «Видит финансы» прямо на карточке (только для manager).
-  // Optimistic update + откат при ошибке.
-  const handleQuickFinanceToggle = async (u: StudioUser) => {
-    if (u.role !== 'manager' || financeBusyId) return;
-    const next = !(u.can_view_finance !== false);
-    setFinanceBusyId(u.id);
-    setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, can_view_finance: next } : x));
-    try {
-      await api.updateAdminUser(u.id, { can_view_finance: next });
-      if (activeTab === 'activity') loadLogs(true);
-    } catch (err) {
-      // откат при ошибке
-      setUsers((prev) => prev.map((x) => x.id === u.id ? { ...x, can_view_finance: !next } : x));
-      handleApiError(err, 'Не удалось изменить доступ к финансам', 'toggleFinanceAccess');
-    } finally {
-      setFinanceBusyId(null);
-    }
-  };
 
   return (
     // position: fixed inset: 0 — приколачиваем шелл к viewport, чтобы
@@ -607,7 +652,7 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
                       <div className="col-span-2">
                         <span className="text-zinc-400 font-medium">Видит разделы</span>
                         <p className="font-bold text-zinc-800 mt-0.5 leading-snug">
-                          {getVisibleSectionLabels(u.role, u.can_view_finance).join(', ')}
+                          {getVisibleSectionLabels(u.role, u.can_view_finance, u.permissions as SectionPermissions | null).join(', ')}
                         </p>
                       </div>
                       )}
@@ -619,42 +664,6 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
                       </div>
                     </div>
 
-                    {/* Финансовый доступ. Для manager — inline-toggle (быстрое
-                        включение/выключение прямо из списка). Для master —
-                        просто текст «скрыты» (хардкод). Для owner — текст
-                        «полный доступ». Дублирующая опция в edit-модалке для
-                        manager сохраняется. */}
-                    {/* Финансовый доступ — нейтральная зинк-плашка, маленькая
-                        зелёная/серая точка-индикатор слева. Тогл переключает доступ. */}
-                    {u.role === 'manager' && !self ? (
-                      <button
-                        type="button"
-                        onClick={() => handleQuickFinanceToggle(u)}
-                        disabled={financeBusyId === u.id}
-                        className="w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border bg-zinc-50 border-zinc-200 text-zinc-700 transition-all active:scale-[0.99] disabled:opacity-60"
-                      >
-                        <span className="flex items-center gap-2 text-xs font-bold">
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${u.can_view_finance !== false ? 'bg-emerald-500' : 'bg-zinc-300'}`} />
-                          {u.can_view_finance !== false
-                            ? <><Eye size={14} className="text-zinc-500" /> Видит «Финансы»</>
-                            : <><EyeOff size={14} className="text-zinc-500" /> «Финансы» скрыты</>}
-                        </span>
-                        <span className={`relative inline-flex items-center w-10 h-6 rounded-full transition-colors ${
-                          u.can_view_finance !== false ? 'bg-zinc-800' : 'bg-zinc-300'
-                        }`}>
-                          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow-sm transition-transform ${
-                            u.can_view_finance !== false ? 'translate-x-4' : 'translate-x-0'
-                          }`} />
-                        </span>
-                      </button>
-                    ) : u.role === 'master' ? (
-                      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl bg-zinc-50 border border-zinc-200">
-                        <span className="text-xs font-bold text-zinc-600 flex items-center gap-2">
-                          <EyeOff size={14} className="text-zinc-500" /> «Финансы» скрыты
-                        </span>
-                        <span className="text-xs font-medium text-zinc-400">мастер не видит финансы</span>
-                      </div>
-                    ) : null}
 
                     {self && isOwner && (
                       <div className="flex flex-wrap gap-2 pt-2 border-t border-zinc-100">
@@ -910,31 +919,25 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
             <label className="block text-sm font-bold text-zinc-700 mb-1.5">Роль</label>
             <select
               value={addForm.role}
-              onChange={(e) => setAddForm({ ...addForm, role: e.target.value as Role })}
+              onChange={(e) => {
+                const r = e.target.value as Role;
+                setAddForm({ ...addForm, role: r, permissions: r === 'master' ? { ...MASTER_PRESET } : { ...MANAGER_PRESET } });
+              }}
               className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all bg-white"
             >
               <option value="manager">Менеджер</option>
               <option value="master">Мастер</option>
             </select>
           </div>
-          {addForm.role === 'manager' ? (
-            <label className="flex items-center justify-between gap-3 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl cursor-pointer">
-              <div>
-                <p className="text-sm font-bold text-zinc-800">Видит финансы</p>
-                <p className="text-[11px] text-zinc-500 font-medium">Доступ к разделу «Финансы»</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={addForm.can_view_finance}
-                onChange={(e) => setAddForm({ ...addForm, can_view_finance: e.target.checked })}
-                className="w-5 h-5 accent-orange-500"
+          <div>
+            <label className="block text-sm font-bold text-zinc-700 mb-2">Доступ к разделам</label>
+            <div className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+              <PermissionsEditor
+                value={addForm.permissions}
+                onChange={(p) => setAddForm({ ...addForm, permissions: p })}
               />
-            </label>
-          ) : (
-            <p className="text-[11px] text-zinc-500 font-medium px-1">
-              Мастер не видит раздел «Финансы».
-            </p>
-          )}
+            </div>
+          </div>
           <div className="flex gap-3 pt-2">
             <button
               type="button"
@@ -1007,24 +1010,15 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
               )}
             </div>
             {editTarget.role !== 'owner' && (
-              editForm.role === 'manager' ? (
-                <label className="flex items-center justify-between gap-3 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl cursor-pointer">
-                  <div>
-                    <p className="text-sm font-bold text-zinc-800">Видит финансы</p>
-                    <p className="text-[11px] text-zinc-500 font-medium">Доступ к разделу «Финансы»</p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={editForm.can_view_finance}
-                    onChange={(e) => setEditForm({ ...editForm, can_view_finance: e.target.checked })}
-                    className="w-5 h-5 accent-orange-500"
+              <div>
+                <label className="block text-sm font-bold text-zinc-700 mb-2">Доступ к разделам</label>
+                <div className="px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+                  <PermissionsEditor
+                    value={editForm.permissions}
+                    onChange={(p) => setEditForm({ ...editForm, permissions: p })}
                   />
-                </label>
-              ) : (
-                <p className="text-[11px] text-zinc-500 font-medium px-1">
-                  Мастер не видит раздел «Финансы».
-                </p>
-              )
+                </div>
+              </div>
             )}
             <button
               type="button"
