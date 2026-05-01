@@ -23,6 +23,7 @@
  */
 
 const path = require('node:path');
+const { parseTimeHHMM } = require('../lib/time_parser.cjs');
 const fs = require('node:fs/promises');
 const express = require('express');
 const multer = require('multer');
@@ -113,19 +114,6 @@ function formatDailySummaryTime(value) {
   return m ? `${m[1]}:${m[2]}` : null;
 }
 
-/**
- * 'HH:MM' / 'H:MM' / 'HH:MM:SS' → 'HH:MM:SS' для записи в PG TIME.
- * Возвращает null, если строка невалидна — вызывающий бросит 400.
- */
-function parseDailySummaryTime(raw) {
-  if (typeof raw !== 'string') return null;
-  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return null;
-  const hh = Number(m[1]);
-  const mm = Number(m[2]);
-  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
-  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
-}
 
 function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
   const meta = planMeta(studioRow.plan);
@@ -424,7 +412,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
         fields.daily_summary_time = null;
         fields.daily_summary_time_set = true;
       } else {
-        const parsed = parseDailySummaryTime(raw);
+        const parsed = parseTimeHHMM(raw);
         if (!parsed) {
           const e = new Error('daily_summary_time_invalid'); e.status = 400; throw e;
         }

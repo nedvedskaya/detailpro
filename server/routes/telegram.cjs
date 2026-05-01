@@ -30,6 +30,7 @@
  */
 
 const express = require('express');
+const { parseTimeHHMM } = require('../lib/time_parser.cjs');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
 const { consumeOneTimeToken, OneTimeTokenError } = require('../lib/one_time_token.cjs');
@@ -267,18 +268,6 @@ const DAILY_TIME_INLINE = {
   ],
 };
 
-// Парсит «8:30» / «08:30» / «8.30» в строку 'HH:MM:SS' для PG TIME.
-// Возвращает null если ввод невалидный (вне 00:00–23:59).
-function parseHHMM(input) {
-  const m = String(input || '').trim().match(/^(\d{1,2})[:.\s](\d{2})$/);
-  if (!m) return null;
-  const h = Number(m[1]);
-  const min = Number(m[2]);
-  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
-  if (h < 0 || h > 23) return null;
-  if (min < 0 || min > 59) return null;
-  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`;
-}
 
 // ──────────────────────────────────────────────────────────────────────
 // Тексты приветствия.
@@ -933,7 +922,7 @@ async function dispatchCallback(cb) {
     }
 
     // Фиксированный вариант '07:00' / '08:00' / '09:00' / '10:00'.
-    const parsed = parseHHMM(choice);
+    const parsed = parseTimeHHMM(choice);
     if (!parsed) {
       // Подделка callback_data — игнорим.
       return;
@@ -1858,7 +1847,7 @@ async function handleDailyTimeInput(message, text) {
     return;
   }
 
-  const parsed = parseHHMM(text);
+  const parsed = parseTimeHHMM(text);
   if (!parsed) {
     // Не уходим из state — даём попробовать ещё раз.
     await tg.sendMessage({
