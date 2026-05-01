@@ -33,7 +33,7 @@ const sharp = require('sharp');
 const crypto = require('node:crypto');
 
 const { pool } = require('../lib/db.cjs');
-const { requireAuth, requireNotMaster } = require('../lib/middleware.cjs');
+const { requireAuth, requireNotMaster, gateOwner } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan, planHasDailySummary } = require('../lib/plans.cjs');
 const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
@@ -374,10 +374,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const userRow = u.rows[0];
-    if (!userRow) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
-    if (userRow.role !== 'owner') {
-      return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_EDIT_STUDIO });
-    }
+    if (!gateOwner(userRow, res, ERR.ONLY_OWNER_CAN_EDIT_STUDIO)) return;
 
     const body = req.body || {};
     const fields = {};
@@ -605,10 +602,7 @@ router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
     [userId]
   );
   const row = u.rows[0];
-  if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
-  if (row.role !== 'owner') {
-    return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_CANCEL });
-  }
+  if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_CANCEL)) return;
   if (row.plan !== 'solo' && row.plan !== 'studio') {
     // на trial/cancelled отменять нечего
     return res.status(400).json({ error: ERR.NO_ACTIVE_SUBSCRIPTION });
@@ -668,10 +662,7 @@ router.post('/subscription/resume', requireAuth, async (req, res, next) => {
   const userId = req.session.userId;
 
   const row = await getCurrentUser(userId);
-  if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
-  if (row.role !== 'owner') {
-    return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_RESUME });
-  }
+  if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_RESUME)) return;
 
   await pool.query(
     `UPDATE saas_meta.studios SET cancel_pending = false WHERE id = $1`,
@@ -700,10 +691,7 @@ router.post('/account/request-deletion', requireAuth, async (req, res, next) => 
       [req.session.userId]
     );
     const row = u.rows[0];
-    if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
-    if (row.role !== 'owner') {
-      return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_DELETE_ACCOUNT });
-    }
+    if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_DELETE_ACCOUNT)) return;
 
     // Toggle: если уже запрошено — отменяем; если нет — выставляем now().
     const cancel = req.body?.cancel === true;
@@ -746,10 +734,7 @@ router.post('/demo/seed', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const row = u.rows[0];
-    if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
-    if (row.role !== 'owner') {
-      return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_SEED_DEMO });
-    }
+    if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_SEED_DEMO)) return;
     const stats = await withTx((client) => seedDemo(client, row.schema_name, row.user_id));
     res.json({ ok: true, ...stats });
   } catch (err) {
@@ -772,10 +757,7 @@ router.post('/demo/clear', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const row = u.rows[0];
-    if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
-    if (row.role !== 'owner') {
-      return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_CLEAR_DEMO });
-    }
+    if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_CLEAR_DEMO)) return;
     const result = await withTx((client) => clearDemo(client, row.schema_name));
     res.json({ ok: true, ...result });
   } catch (err) {

@@ -196,8 +196,40 @@ function requireNotMaster(req, res, next) {
   next();
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// gateOwner(row, res, errorCode)
+//   Хелпер для хендлеров, которые сами делают SELECT с ролью + другими
+//   полями (план, студия, prodamus_*) и не могут заменить проверку
+//   на простой requireRole-middleware.
+//
+//   Возвращает true, если row существует и row.role === 'owner';
+//   иначе пишет 404/403 в res и возвращает false. Вызывающий проверяет
+//   результат и делает return.
+//
+//   Заменяет 6 inline-копий шаблона:
+//     if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+//     if (row.role !== 'owner') {
+//       return res.status(403).json({ error: ERR.ONLY_OWNER_CAN_X });
+//     }
+// ──────────────────────────────────────────────────────────────────────
+const { ERR } = require('./errorCodes.cjs');
+
+function gateOwner(row, res, errorCode) {
+  if (!row) {
+    res.status(404).json({ error: ERR.USER_NOT_FOUND });
+    return false;
+  }
+  if (row.role !== 'owner') {
+    res.status(403).json({ error: errorCode });
+    return false;
+  }
+  return true;
+}
+
+
 module.exports = {
   requireAuth,
+  gateOwner,
   requireActiveStudio,
   requireRole,
   requireNotMaster,
