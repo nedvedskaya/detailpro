@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  ChevronLeft, Edit3, Trash2, Phone, MessageSquare, Send,
+  ChevronLeft, ChevronRight, Edit3, Trash2, Phone, MessageSquare, Send,
   CalendarDays, RotateCcw, History,
   ChevronDown, AlertOctagon, Coins, CheckCircle2,
   ClipboardCheck, FileText
@@ -159,8 +159,10 @@ export const ClientDetails = ({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="px-5 pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
-        <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold"><ChevronLeft size={24} /> {editingRecordId ? 'Назад к карточке' : 'Назад'}</button>
-        {!editingRecordId && canEdit && <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>}
+        {!editingRecordId && canEdit
+          ? <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>
+          : <div />}
+        <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold">{editingRecordId ? 'Назад к карточке' : 'Назад'} <ChevronRight size={24} /></button>
       </div>
       <div className="flex-1 overflow-y-auto p-6 space-y-8 overscroll-contain" style={{paddingBottom: '40px', WebkitOverflowScrolling: 'touch'} as any}>
         {!editingRecordId && (
