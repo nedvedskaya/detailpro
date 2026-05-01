@@ -1604,13 +1604,14 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
         }}
       >
         {/* Верхняя кнопка «Назад» */}
-        <button
-          onClick={onBack}
-          className="flex items-center gap-2 text-zinc-500 hover:text-zinc-900 transition-colors mb-6"
-        >
-          <ArrowLeftIcon />
-          <span>Назад</span>
-        </button>
+        <div className="flex justify-end mb-6">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-2 text-zinc-500 hover:text-zinc-900 transition-colors"
+          >
+            <span>Назад</span>
+          </button>
+        </div>
 
         {/* ── 1. Шапка: аватар + ФИО + роль ───────────────────────── */}
         {/*

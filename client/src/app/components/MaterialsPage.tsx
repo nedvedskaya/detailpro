@@ -39,13 +39,13 @@ export const MaterialsPage = ({ onBack }: MaterialsPageProps) => {
     >
       {/* Шапка с кнопкой «Назад» — повторяет паттерн ProfilePage / AdminPanel
           для единого UX. */}
-      <div className="bg-white border-b border-zinc-200 px-4 py-3 sticky top-0 z-10">
+      <div className="bg-white border-b border-zinc-200 px-4 py-3 sticky top-0 z-10 flex justify-end">
         <button
           onClick={onBack}
           className="flex items-center gap-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 transition-colors"
         >
-          <ChevronLeft size={18} />
           Назад
+          <ChevronLeft size={18} className="rotate-180" />
         </button>
       </div>
 

@@ -183,9 +183,9 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
     // На мобилке остаётся полноэкранный лист, slide-in снизу — без изменений.
     <div className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 desktop-card-modal md:bg-white" style={{height: '100dvh', minHeight: '-webkit-fill-available'}}>
         <div className="px-6 pt-safe pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 md:!pt-5" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
-            <Button variant="ghost" size="md" onClick={handleClose} className="text-base">Назад</Button>
-            <span className="text-xl font-black">{String(title)}</span>
             <div className="w-[72px]"></div>
+            <span className="text-xl font-black">{String(title)}</span>
+            <Button variant="ghost" size="md" onClick={handleClose} className="text-base">Назад</Button>
         </div>
         
         <div className="flex-1 overflow-y-auto px-6 pt-6 space-y-8 overscroll-contain -webkit-overflow-scrolling-touch md-scroll-end" style={{paddingBottom: 'calc(120px + env(safe-area-inset-bottom, 20px)'}}>

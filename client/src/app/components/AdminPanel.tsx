@@ -542,26 +542,26 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
     >
       <div className="sticky top-0 z-30 bg-white shadow-sm shrink-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200">
-          <div className="flex items-center gap-3">
-            <button onClick={onBack} className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center active:scale-95 transition-all">
-              <ArrowLeft size={18} className="text-zinc-600" />
+          <h1 className="text-xl font-black">Админ-панель</h1>
+          <div className="flex items-center gap-2">
+            {activeTab === 'users' && (
+              <button
+                onClick={handleAddClick}
+                disabled={!!limits && !limits.canAddUsers}
+                title={limits && !limits.canAddUsers ? `Лимит тарифа «${planLabel}»: ${limits.maxUsers}` : 'Добавить сотрудника'}
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                  limits && !limits.canAddUsers
+                    ? 'bg-zinc-300 cursor-not-allowed'
+                    : 'bg-orange-500 active:bg-orange-600 active:scale-95'
+                }`}
+              >
+                <UserPlus size={18} className="text-white" />
+              </button>
+            )}
+            <button onClick={onBack} className="w-8 h-8 rounded-full bg-zinc-100 flex items-center justify-center active:scale-95 transition-all" title="Закрыть">
+              <X size={18} className="text-zinc-600" />
             </button>
-            <h1 className="text-xl font-black">Админ-панель</h1>
           </div>
-          {activeTab === 'users' && (
-            <button
-              onClick={handleAddClick}
-              disabled={!!limits && !limits.canAddUsers}
-              title={limits && !limits.canAddUsers ? `Лимит тарифа «${planLabel}»: ${limits.maxUsers}` : 'Добавить сотрудника'}
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
-                limits && !limits.canAddUsers
-                  ? 'bg-zinc-300 cursor-not-allowed'
-                  : 'bg-orange-500 active:bg-orange-600 active:scale-95'
-              }`}
-            >
-              <UserPlus size={18} className="text-white" />
-            </button>
-          )}
         </div>
 
         <div className="flex border-b border-zinc-200">
