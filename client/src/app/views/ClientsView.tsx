@@ -246,8 +246,11 @@ export const ClientsView = ({
             <thead>
               <tr className="border-b-2 border-zinc-200 text-left">
                 <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest pl-2">Клиент</th>
-                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Автомобиль</th>
                 <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Телефон</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Email</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Город</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Автомобиль</th>
+                <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Гос. номер</th>
                 <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Статус</th>
                 <th className="pb-3"></th>
               </tr>
@@ -271,8 +274,11 @@ export const ClientsView = ({
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 text-sm text-zinc-600">{String(client.carBrand || '')} {String(client.carModel || '')}</td>
                     <td className="py-3 text-sm text-zinc-600">{String(client.phone || '')}</td>
+                    <td className="py-3 text-sm text-zinc-500">{String(client.email || '')}</td>
+                    <td className="py-3 text-sm text-zinc-500">{String(client.city || '')}</td>
+                    <td className="py-3 text-sm text-zinc-600">{String(client.carBrand || '')} {String(client.carModel || '')}</td>
+                    <td className="py-3 text-sm text-zinc-500">{String(client.licensePlate || '')}</td>
                     <td className="py-3">
                       {hasActiveBooking && (
                         <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700">

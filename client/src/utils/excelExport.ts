@@ -56,10 +56,15 @@ export const exportToExcel = async <T>({
 export const CLIENTS_COLUMNS: ExcelColumn[] = [
   { header: 'ФИО', key: 'name', width: 25 },
   { header: 'Телефон', key: 'phone', width: 18 },
+  { header: 'Email', key: 'email', width: 22 },
   { header: 'Город', key: 'city', width: 15 },
+  { header: 'Источник', key: 'source', width: 18 },
+  { header: 'Дата рождения', key: 'birthDate', width: 15 },
   { header: 'Марка авто', key: 'carBrand', width: 15 },
   { header: 'Модель авто', key: 'carModel', width: 15 },
-  { header: 'Комментарии', key: 'notes', width: 30 },
+  { header: 'Гос. номер', key: 'licensePlate', width: 14 },
+  { header: 'ВИН', key: 'vin', width: 20 },
+  { header: 'Комментарии', key: 'comment', width: 30 },
   { header: 'Дата добавления', key: 'createdDate', width: 15 }
 ];
 
@@ -73,14 +78,19 @@ export const TRANSACTIONS_COLUMNS: ExcelColumn[] = [
   { header: 'Теги', key: 'tags', width: 20 }
 ];
 
-export const clientRowMapper = (client: { name?: string; phone?: string; city?: string; carBrand?: string; carModel?: string; notes?: string; createdDate?: string }): Record<string, string | number> => ({
+export const clientRowMapper = (client: { name?: string; phone?: string; email?: string; city?: string; source?: string; birthDate?: string; carBrand?: string; carModel?: string; licensePlate?: string; vin?: string; comment?: string; created_at?: string; createdDate?: string }): Record<string, string | number> => ({
   name: client.name || '',
   phone: client.phone || '',
+  email: client.email || '',
   city: client.city || '',
+  source: client.source || '',
+  birthDate: client.birthDate || '',
   carBrand: client.carBrand || '',
   carModel: client.carModel || '',
-  notes: client.notes || '',
-  createdDate: client.createdDate || ''
+  licensePlate: client.licensePlate || '',
+  vin: client.vin || '',
+  comment: client.comment || '',
+  createdDate: client.createdDate || (client.created_at ? client.created_at.slice(0, 10) : '')
 });
 
 interface Category {
