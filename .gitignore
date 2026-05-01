@@ -3,6 +3,7 @@ node_modules/
 .env.local
 .env.deploy
 *.log
+*.bak
 .DS_Store
 ca.crt
 /var/
