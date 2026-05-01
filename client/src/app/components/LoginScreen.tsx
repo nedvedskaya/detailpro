@@ -541,7 +541,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
       {/* Модалка «Забыли пароль?» — рендерится поверх login-карточки. */}
       {resetState !== 'idle' && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="w-full max-w-sm bg-white rounded-2xl shadow-lg p-6">
             {resetState === 'form' || resetState === 'submitting' ? (
               <>

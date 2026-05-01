@@ -150,7 +150,7 @@ export const ClientDetails = ({
     // центрированной колонки приложения.
     // Внешний div — бэкдроп: ловит клики мимо карточки и закрывает её.
     <div
-      className="fixed inset-0 z-[120] md:bg-black/40"
+      className="fixed inset-0 z-[120] md:bg-black/40 md:backdrop-blur-sm"
       onClick={handleBackdropClick}
     >
     <div
