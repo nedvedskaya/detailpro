@@ -23,6 +23,7 @@
  */
 
 const express = require('express');
+const { ERR } = require('../lib/errorCodes.cjs');
 const { FIFTEEN_MINUTES_MS, ONE_HOUR_MS } = require('../lib/constants.cjs');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
@@ -282,7 +283,7 @@ router.post('/signup', async (req, res, next) => {
       // /unlink-нет старый аккаунт через бота и попробует ещё раз.
       if (code === 'TG_ALREADY_LINKED') {
         return res.status(409).json({
-          error: 'tg_already_linked',
+          error: ERR.TG_ALREADY_LINKED,
           message: 'Этот Telegram уже привязан к другому аккаунту СРМ. Отправь /unlink в бота и нажми «Создать аккаунт» снова.',
         });
       }
@@ -381,7 +382,7 @@ router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string') {
-      return res.status(400).json({ error: 'email_password_required' });
+      return res.status(400).json({ error: ERR.EMAIL_PASSWORD_REQUIRED });
     }
     const emailKey = email.toLowerCase();
     const ipKey = clientIp(req);
@@ -397,7 +398,7 @@ router.post('/login', async (req, res, next) => {
         email: emailKey,
         route: 'POST /api/auth/login',
       });
-      return res.status(429).json({ error: 'too_many_attempts' });
+      return res.status(429).json({ error: ERR.TOO_MANY_ATTEMPTS });
     }
 
     const { rows } = await pool.query(
@@ -425,7 +426,7 @@ router.post('/login', async (req, res, next) => {
         reason: 'unknown_email',
         route: 'POST /api/auth/login',
       });
-      return res.status(401).json({ error: 'invalid_credentials' });
+      return res.status(401).json({ error: ERR.INVALID_CREDENTIALS });
     }
 
     const ok = await verifyPassword(password, user.password_hash);
@@ -441,14 +442,14 @@ router.post('/login', async (req, res, next) => {
         reason: 'wrong_password',
         route: 'POST /api/auth/login',
       });
-      return res.status(401).json({ error: 'invalid_credentials' });
+      return res.status(401).json({ error: ERR.INVALID_CREDENTIALS });
     }
 
     if (!user.is_active) {
-      return res.status(403).json({ error: 'user_disabled' });
+      return res.status(403).json({ error: ERR.USER_DISABLED });
     }
     if (!user.studio_active) {
-      return res.status(403).json({ error: 'studio_disabled' });
+      return res.status(403).json({ error: ERR.STUDIO_DISABLED });
     }
     // Если access_until истёк — всё равно даём логин (чтобы юзер мог доплатить),
     // но дадим знать клиенту. requireActiveStudio сам блокнёт CRM-роуты.
@@ -564,7 +565,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const row = rows[0];
-    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
     // Computed name: предпочтение first+last, иначе legacy users.name.
     const composed = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
@@ -632,7 +633,7 @@ router.post('/password', requireAuth, async (req, res, next) => {
       'SELECT password_hash FROM saas_meta.users WHERE id = $1',
       [req.session.userId]
     );
-    if (!rows[0]) return res.status(404).json({ error: 'user_not_found' });
+    if (!rows[0]) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
     const ok = await verifyPassword(oldPassword, rows[0].password_hash);
     if (!ok) return res.status(401).json({ error: 'invalid_old_password' });
@@ -821,7 +822,7 @@ router.post('/password-reset/confirm', async (req, res, next) => {
       return u.rows[0] || null;
     });
 
-    if (!user) return res.status(404).json({ error: 'user_not_found' });
+    if (!user) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
     // Post-commit: снести все сессии (на случай если злоумышленник сидит
     // в активной сессии) и сразу выдать свежую этому браузеру.

@@ -28,6 +28,7 @@
  */
 
 const crypto = require('node:crypto');
+const { ERR } = require('../lib/errorCodes.cjs');
 const express = require('express');
 const { pool } = require('../lib/db.cjs');
 const {
@@ -150,7 +151,7 @@ router.get('/users', async (req, res, next) => {
 router.post('/users', async (req, res, next) => {
   const { email, password, name, firstName, lastName, phone, role, can_view_finance, permissions } = req.body || {};
   if (!isValidEmail(email)) {
-    return res.status(400).json({ error: 'email_invalid' });
+    return res.status(400).json({ error: ERR.EMAIL_INVALID });
   }
   // Раннее отклонение: слабый пароль или слишком короткий → 400 со специфическим
   // кодом, чтобы фронт мог показать «придумайте надёжнее» вместо generic ошибки.
@@ -222,7 +223,7 @@ router.post('/users', async (req, res, next) => {
       ]
     );
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'email_already_used' });
+    if (err.code === '23505') return res.status(409).json({ error: ERR.EMAIL_ALREADY_USED });
     throw err;
   }
   // Пишем details на русском, чтобы UI не пришлось расшифровывать машинные коды.
@@ -240,7 +241,7 @@ router.post('/users', async (req, res, next) => {
 router.put('/users/:id', async (req, res, next) => {
   const { id } = req.params;
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: 'user_not_found' });
+  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
   const { name, role, is_active, can_view_finance, permissions } = req.body || {};
 
@@ -257,15 +258,15 @@ router.put('/users/:id', async (req, res, next) => {
 
   // self-protection: нельзя себя downgrade или дезактивировать
   if (id === req.session.userId) {
-    if (role && role !== 'owner') return res.status(400).json({ error: 'cannot_demote_self' });
-    if (is_active === false) return res.status(400).json({ error: 'cannot_disable_self' });
+    if (role && role !== 'owner') return res.status(400).json({ error: ERR.CANNOT_DEMOTE_SELF });
+    if (is_active === false) return res.status(400).json({ error: ERR.CANNOT_DISABLE_SELF });
   }
 
   // нельзя снять последнего Собственника студии
   if (target.role === 'owner' && target.is_active) {
     if ((role && role !== 'owner') || is_active === false) {
       const remaining = await countActiveOwners(req.session.studioId, id);
-      if (remaining < 1) return res.status(400).json({ error: 'last_owner_protected' });
+      if (remaining < 1) return res.status(400).json({ error: ERR.LAST_OWNER_PROTECTED });
     }
   }
 
@@ -273,7 +274,7 @@ router.put('/users/:id', async (req, res, next) => {
   // инвариант). Понижение owner→manager/master разрешено выше при наличии
   // другого активного owner — но саму роль 'owner' НЕ принимаем как input.
   if (role && role === 'owner' && target.role !== 'owner') {
-    return res.status(400).json({ error: 'cannot_promote_to_owner' });
+    return res.status(400).json({ error: ERR.CANNOT_PROMOTE_TO_OWNER });
   }
 
   const newRole = role && VALID_ROLES.includes(role) ? role : target.role;
@@ -346,7 +347,7 @@ router.put('/users/:id', async (req, res, next) => {
 router.post('/users/:id/reset-password', async (req, res, next) => {
   const { id } = req.params;
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: 'user_not_found' });
+  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
   // Для self-reset есть отдельный flow (POST /auth/password со старым паролем).
   // Через админку owner может сбросить пароль СОБСТВЕННОМУ аккаунту, если
@@ -379,16 +380,16 @@ router.put('/users/:id/block', async (req, res, next) => {
     : false;
 
   if (id === req.session.userId && desiredActive === false) {
-    return res.status(400).json({ error: 'cannot_disable_self' });
+    return res.status(400).json({ error: ERR.CANNOT_DISABLE_SELF });
   }
 
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: 'user_not_found' });
+  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
   // Защита последнего owner: нельзя выключить, если он один.
   if (desiredActive === false && target.role === 'owner' && target.is_active) {
     const remaining = await countActiveOwners(req.session.studioId, id);
-    if (remaining < 1) return res.status(400).json({ error: 'last_owner_protected' });
+    if (remaining < 1) return res.status(400).json({ error: ERR.LAST_OWNER_PROTECTED });
   }
 
   await pool.query(
@@ -407,14 +408,14 @@ router.put('/users/:id/block', async (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 router.delete('/users/:id', async (req, res, next) => {
   const { id } = req.params;
-  if (id === req.session.userId) return res.status(400).json({ error: 'cannot_delete_self' });
+  if (id === req.session.userId) return res.status(400).json({ error: ERR.CANNOT_DELETE_SELF });
 
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: 'user_not_found' });
+  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
 
   if (target.role === 'owner') {
     const remaining = await countActiveOwners(req.session.studioId, id);
-    if (remaining < 1) return res.status(400).json({ error: 'last_owner_protected' });
+    if (remaining < 1) return res.status(400).json({ error: ERR.LAST_OWNER_PROTECTED });
   }
 
   await pool.query(
