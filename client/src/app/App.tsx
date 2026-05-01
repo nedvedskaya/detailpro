@@ -179,8 +179,8 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
   };
 
   return (
-    // На десктопе .desktop-card-modal перебивает inset-0 и превращает в центр.карточку.
-    // На мобилке остаётся полноэкранный лист, slide-in снизу — без изменений.
+    <>
+    <div className="hidden md:block fixed inset-0 z-[199] bg-zinc-900/60 backdrop-blur-sm animate-in fade-in" onClick={handleClose} />
     <div className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 desktop-card-modal md:bg-white" style={{height: '100dvh', minHeight: '-webkit-fill-available'}}>
         <div className="px-6 pt-safe pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 md:!pt-5" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
             <div className="w-[72px]"></div>
@@ -309,6 +309,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
             </div>
         </div>
     </div>
+    </>
   );
 };
 
