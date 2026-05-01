@@ -22,6 +22,7 @@
  */
 
 import { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X, Pencil, Check, ChevronDown, ChevronRight } from 'lucide-react';
 
 export interface ServiceLine {
@@ -58,6 +59,7 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
   const [search, setSearch] = useState('');
   const [dropPos, setDropPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const rowRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const update = (next: ServiceLine[]) => {
     const forSum = next.filter(r => r.service_id !== null || r.name.trim() !== '');
@@ -225,11 +227,11 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
             Своя
           </button>
 
-          {pickerOpen && (
+          {pickerOpen && createPortal(
             <>
-              <div className="fixed inset-0 z-30" onClick={() => setPickerOpen(false)} />
+              <div className="fixed inset-0 z-[150]" onClick={() => setPickerOpen(false)} />
               <div
-                className="fixed bg-white border border-zinc-200 rounded-xl shadow-lg z-40 max-h-[60vh] flex flex-col"
+                className="fixed bg-white border border-zinc-200 rounded-xl shadow-lg z-[151] max-h-[60vh] flex flex-col"
                 style={dropPos ? { top: dropPos.top, left: dropPos.left, width: dropPos.width } : { top: 0, left: 0, right: 0 }}
               >
                 <div className="px-3 pt-2 pb-1.5 border-b border-zinc-100 shrink-0">
@@ -308,7 +310,8 @@ export const ServicesPicker = ({ value, onChange, priceList, readOnly }: Service
                   )}
                 </div>
               </div>
-            </>
+            </>,
+            document.body
           )}
         </div>
       )}
