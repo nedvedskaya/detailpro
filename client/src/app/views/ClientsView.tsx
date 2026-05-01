@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Download, Plus, ArrowUpDown, Cake, Check } from 'lucide-react';
 import { ClientListCard } from '@/app/components/clients';
-import { EmptyState } from '@/app/components/ui';
+import { EmptyState, ActionButtons } from '@/app/components/ui';
+import { ClientAvatar } from '@/app/components/ui/ClientAvatar';
 import { useSearch } from '@/app/hooks';
 import { exportToExcel, CLIENTS_COLUMNS, clientRowMapper } from '@/utils/excelExport';
 import { isBirthdayToday } from '@/utils/helpers';
@@ -18,12 +19,8 @@ interface ClientsViewProps {
   categories?: any[];
   tags?: any[];
   users?: any[];
-  // Прайс-лист услуг — для ServicesPicker внутри AppointmentInputs в форме
-  // создания клиента (там ClientForm рендерит «+ Бронь» с услугами).
   priceList?: any[];
   isOnline?: boolean;
-  // canEdit=false → master-режим: скрываем «+», «Редактировать», «Удалить».
-  // Тап по карточке всё равно открывает ClientDetails в режиме просмотра.
   canEdit?: boolean;
 }
 
@@ -204,9 +201,9 @@ export const ClientsView = ({
         )}
       </div>
       
-      <div className="flex-1 overflow-y-auto px-6 space-y-3 pt-3 pb-32 overscroll-contain">
+      <div className="flex-1 overflow-y-auto px-6 pt-3 pb-32 overscroll-contain">
         {birthdayClients.length > 0 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5">
+          <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5 mb-3">
             <Cake size={16} className="text-orange-500 shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-1.5 flex-wrap">
@@ -228,22 +225,75 @@ export const ClientsView = ({
             description={search ? 'Попробуйте изменить параметры поиска' : 'Нажмите + чтобы добавить первого клиента'}
           />
         ) : (
-          // На мобиле — вертикальный список (space-y-3 от родителя), на ≥1024px
-          // .desktop-grid-2 включает grid с 2-3 колонками. space-y-3 на этом
-          // же контейнере используется для вертикальных промежутков на мобиле.
-          <div className="space-y-3 desktop-grid-2">
-            {sortedItems.map(client => (
-              <ClientListCard
-                key={client.id}
-                client={client}
-                onOpen={() => onOpenClient(client)}
-                // master не имеет права редактировать/удалять — передаём undefined,
-                // ClientListCard в этом случае не рендерит swipe-actions/контекстное меню.
-                onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
-                onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
-              />
-            ))}
-          </div>
+          <>
+            {/* Мобиле — карточки */}
+            <div className="md:hidden space-y-3 desktop-grid-2">
+              {sortedItems.map(client => (
+                <ClientListCard
+                  key={client.id}
+                  client={client}
+                  onOpen={() => onOpenClient(client)}
+                  onEdit={canEdit ? () => onEditClient({ client, mode: 'base' }) : undefined}
+                  onDelete={canEdit ? () => onDeleteClient(client.id) : undefined}
+                />
+              ))}
+            </div>
+
+            {/* Десктоп — таблица */}
+            <table className="hidden md:table w-full border-collapse">
+              <thead>
+                <tr className="border-b-2 border-zinc-200 text-left">
+                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest pl-2">Клиент</th>
+                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Автомобиль</th>
+                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Телефон</th>
+                  <th className="pb-3 text-xs font-black text-zinc-400 uppercase tracking-widest">Статус</th>
+                  <th className="pb-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedItems.map(client => {
+                  const hasActiveBooking = (client.records || []).some((r: any) => !r.isCompleted);
+                  const hasBirthday = isBirthdayToday(client.birthDate);
+                  return (
+                    <tr
+                      key={client.id}
+                      onClick={() => onOpenClient(client)}
+                      className="border-b border-zinc-100 hover:bg-orange-50 cursor-pointer group transition-colors"
+                    >
+                      <td className="py-3 pl-2">
+                        <div className="flex items-center gap-3">
+                          <ClientAvatar name={client.name} avatar={client.avatar} size="sm" />
+                          <div>
+                            <div className="font-bold text-zinc-900 leading-tight">{String(client.name || '')}</div>
+                            {hasBirthday && <span className="text-xs text-orange-500 font-bold">ДР сегодня</span>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 text-sm text-zinc-600">{String(client.carBrand || '')} {String(client.carModel || '')}</td>
+                      <td className="py-3 text-sm text-zinc-600">{String(client.phone || '')}</td>
+                      <td className="py-3">
+                        {hasActiveBooking && (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-700">
+                            Активная запись
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 pr-2">
+                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {canEdit && (
+                            <ActionButtons
+                              onEdit={() => onEditClient({ client, mode: 'base' })}
+                              onDelete={() => onDeleteClient(client.id)}
+                            />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
     </div>
