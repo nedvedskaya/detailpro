@@ -6,6 +6,7 @@
   "scripts": {
     "init": "node server/init.cjs",
     "migrate:tenants": "node server/migrate_tenants.cjs",
+    "migrate:ugt": "node server/migrate_ugt.cjs",
     "start": "node server/server.cjs",
     "dev": "node --watch server/server.cjs",
     "backup": "bash scripts/backup.sh"

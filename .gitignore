@@ -2,6 +2,7 @@ node_modules/
 .env
 .env.local
 .env.deploy
+.env.migration
 *.log
 *.bak
 .DS_Store
