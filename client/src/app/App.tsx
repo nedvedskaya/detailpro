@@ -188,7 +188,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
             <div className="w-[72px]"></div>
         </div>
         
-        <div className="flex-1 overflow-y-auto px-6 pt-6 space-y-8 overscroll-contain -webkit-overflow-scrolling-touch" style={{paddingBottom: 'calc(120px + env(safe-area-inset-bottom, 20px)'}}>
+        <div className="flex-1 overflow-y-auto px-6 pt-6 space-y-8 overscroll-contain -webkit-overflow-scrolling-touch md-scroll-end" style={{paddingBottom: 'calc(120px + env(safe-area-inset-bottom, 20px)'}}>
             <div className="space-y-4">
                 <div className="flex justify-between items-center"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Данные клиента</h3>{!readOnlyIdentity && <span className="text-xs font-bold text-zinc-400 bg-zinc-100 px-2 py-1 rounded-md">{formatDate(formData.createdAt)}</span>}</div>
                 <div className="flex justify-center">

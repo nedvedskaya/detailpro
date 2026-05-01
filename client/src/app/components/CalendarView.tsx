@@ -143,7 +143,7 @@ export const CalendarView = ({
                 </div>
                 <div className="text-sm font-bold text-zinc-400 pr-2">{year}</div>
             </div>
-             <div className="flex-1 overflow-y-auto bg-white p-2 overscroll-contain" style={{paddingBottom: 'calc(100px + env(safe-area-inset-bottom, 20px))', WebkitOverflowScrolling: 'touch'}}>
+             <div className="flex-1 overflow-y-auto bg-white p-2 overscroll-contain md-scroll-end" style={{paddingBottom: 'calc(100px + env(safe-area-inset-bottom, 20px))', WebkitOverflowScrolling: 'touch'}}>
                 <div className="grid grid-cols-7 border-b border-zinc-100 pb-2 mb-2 text-center text-xs font-black text-zinc-400 uppercase">{week.map(d => <div key={d}>{d}</div>)}</div>
                 <CalendarGrid
                     year={year}

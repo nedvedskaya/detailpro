@@ -384,3 +384,11 @@ body[data-modal-open] .desktop-tabbar {
     font-size: inherit !important;
   }
 }
+
+/* На десктопе таббар плавающий (bottom:16px) — скролл-контейнерам не нужен
+   большой отступ снизу под него. pb-* Tailwind-классы и inline-стили с
+   paddingBottom для мобильного таббара переопределяем через .md-scroll-end. */
+@media (min-width: 768px) {
+  .pb-32, .pb-28, .pb-24 { padding-bottom: 2rem !important; }
+  .md-scroll-end { padding-bottom: 2rem !important; }
+}

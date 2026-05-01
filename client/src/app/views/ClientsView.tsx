@@ -201,7 +201,7 @@ export const ClientsView = ({
         )}
       </div>
       
-      <div className="flex-1 overflow-y-auto px-6 pt-3 pb-32 overscroll-contain">
+      <div className="flex-1 overflow-y-auto px-6 pt-3 pb-32 md-scroll-end overscroll-contain">
         {birthdayClients.length > 0 && (
           <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2.5 flex items-center gap-2.5 mb-3">
             <Cake size={16} className="text-orange-500 shrink-0" />

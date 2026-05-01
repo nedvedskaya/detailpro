@@ -247,7 +247,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                 </div>
             )}
             
-            <div className="flex-1 overflow-y-auto px-6 mt-2 space-y-2.5 pt-3 overscroll-contain" style={{paddingBottom: 'calc(100px + env(safe-area-inset-bottom, 20px))', WebkitOverflowScrolling: 'touch'}}>
+            <div className="flex-1 overflow-y-auto px-6 mt-2 space-y-2.5 pt-3 overscroll-contain md-scroll-end" style={{paddingBottom: 'calc(100px + env(safe-area-inset-bottom, 20px))', WebkitOverflowScrolling: 'touch'}}>
                 {taskFilter === 'bookings' ? (
                     <div className="space-y-4">
                         {Object.keys(bookingsByDay).length === 0 ? (

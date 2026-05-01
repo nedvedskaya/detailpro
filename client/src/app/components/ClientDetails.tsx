@@ -164,7 +164,7 @@ export const ClientDetails = ({
           : <div />}
         <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold">{editingRecordId ? 'Назад к карточке' : 'Назад'} <ChevronRight size={24} /></button>
       </div>
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 overscroll-contain" style={{paddingBottom: '40px', WebkitOverflowScrolling: 'touch'} as any}>
+      <div className="flex-1 overflow-y-auto p-6 md:px-10 space-y-8 overscroll-contain md-scroll-end" style={{paddingBottom: '40px', WebkitOverflowScrolling: 'touch'} as any}>
         {!editingRecordId && (
         <>
         <div className="text-center">
