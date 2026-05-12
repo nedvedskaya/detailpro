@@ -37,6 +37,11 @@ export interface UserData {
   // тогда трактуем как true (см. canViewFinance() в utils/permissions.ts).
   canViewFinance?: boolean;
 
+  // Telegram-привязка: приходит из /api/auth/me и используется для welcome-модалки.
+  tgLinked?: boolean;
+  tgUsername?: string | null;
+  tgLinkedAt?: string | null;
+
   // ISO; null если ни разу не логинился (новый сотрудник).
   lastLoginAt?: string | null;
 }

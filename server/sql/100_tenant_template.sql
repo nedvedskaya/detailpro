@@ -310,7 +310,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.work_orders (
     delivery_date     DATE,
     delivery_time     TIME,
     payment_method    VARCHAR(20)
-                      CHECK (payment_method IN ('cash', 'card', 'transfer') OR payment_method IS NULL),
+                      CHECK (payment_method IN ('cash', 'card', 'transfer', 'invoice') OR payment_method IS NULL),
     discount          DECIMAL(10,2) NOT NULL DEFAULT 0,
     total             DECIMAL(10,2) NOT NULL DEFAULT 0,
     -- items: [{name, quantity, price}]; денормализуем в JSON, потому что услуги

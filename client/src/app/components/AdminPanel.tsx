@@ -851,9 +851,9 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className={`text-[11px] font-black uppercase tracking-wide ${
-                              tone === 'danger' ? 'text-red-500' :
-                              tone === 'warning' ? 'text-amber-600' :
-                              tone === 'success' ? 'text-green-600' :
+                              tone === 'red' ? 'text-red-500' :
+                              tone === 'blue' ? 'text-blue-600' :
+                              tone === 'green' ? 'text-green-600' :
                               'text-zinc-500'
                             }`}>{label}</span>
                             <span className="text-xs font-bold text-zinc-800">{log.user_name || 'Система'}</span>

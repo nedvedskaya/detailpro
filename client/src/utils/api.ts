@@ -656,7 +656,7 @@ export interface DocumentContext {
   record: { id: number; service_name: string };
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'transfer';
+export type PaymentMethod = 'cash' | 'card' | 'transfer' | 'invoice';
 
 export interface WorkOrderItem {
   name: string;
