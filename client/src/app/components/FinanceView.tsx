@@ -286,11 +286,18 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
     };
     
     const filteredCategories = categories.filter(c => c.type === newTransaction.type);
-    // Фильтр тегов по типу операции: показываем теги, помеченные как
-    // 'all' (общие, видны и в доходах, и в расходах) либо совпадающие с
-    // типом текущей операции. Старые теги без поля type считаем общими.
+    // Автотеги услуг создаются из карточек клиентов/записей серым цветом
+    // (#a3a3a3). Они нужны для автоматических транзакций и аналитики, но
+    // в ручной форме финансовой операции только засоряют экран.
+    const isAutoServiceTag = (tag: any) =>
+      (tag.type === 'income' || !tag.type) && String(tag.color || '').toLowerCase() === '#a3a3a3';
+
+    // Фильтр тегов по типу операции: показываем ручные финансовые теги.
+    // 'all' оставляем для старых пользовательских тегов, но системные
+    // автотеги услуг скрываем из формы.
     const filteredTags = tags.filter(t => {
       const tagType = t.type || 'all';
+      if (isAutoServiceTag(t)) return false;
       return tagType === 'all' || tagType === newTransaction.type;
     });
     
