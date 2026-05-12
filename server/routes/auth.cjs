@@ -408,7 +408,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.password_hash, u.role, u.is_active, u.studio_id,
+      `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.is_active, u.studio_id,
               s.schema_name, s.is_active AS studio_active, s.access_until
          FROM saas_meta.users u
          JOIN saas_meta.studios s ON s.id = u.studio_id
@@ -480,15 +480,13 @@ router.post('/login', async (req, res, next) => {
       [user.id]
     ).catch((err) => console.error('[auth] last_login_at:', err.message));
 
-    // Аудит-лог входа (для admin-панели «Активность»). Имя берём из БД, чтобы
-    // в логе осталось денормализованное имя на момент действия.
-    const userNameRow = await pool.query(
-      `SELECT name FROM saas_meta.users WHERE id = $1`, [user.id]
-    );
+    // Аудит-лог входа (для admin-панели «Активность») не должен блокировать
+    // выдачу сессии: при проблеме tenant-схемы пользователь всё равно должен
+    // попасть в профиль/оплату, а ошибка уйдёт в stderr через audit-helper.
     logAction({
       schemaName: user.schema_name,
       userId:     user.id,
-      userName:   userNameRow.rows[0]?.name || null,
+      userName:   user.name || null,
       action:     'login',
       entityType: 'session',
       ip:         clientIp(req),
