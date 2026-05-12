@@ -336,7 +336,7 @@ router.post('/signup', async (req, res, next) => {
     res.status(201).json({
       ok: true,
       studio: { id: result.studioId, schemaName: result.schemaName, displayName: displayName || schemaName },
-      user: { id: result.userId, email: email.toLowerCase(), role: 'owner' },
+      user: { id: result.userId, email: email.toLowerCase(), role: 'owner', permissions: null },
       tgLinked: !!result.tgLinked,
     });
   } catch (err) {
@@ -408,7 +408,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.is_active, u.studio_id,
+      `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.is_active, u.studio_id, u.permissions,
               s.schema_name, s.is_active AS studio_active, s.access_until
          FROM saas_meta.users u
          JOIN saas_meta.studios s ON s.id = u.studio_id
@@ -503,7 +503,7 @@ router.post('/login', async (req, res, next) => {
 
     res.json({
       ok: true,
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, role: user.role, permissions: user.permissions || null },
       studio: { id: user.studio_id, schemaName: user.schema_name, accessUntil: user.access_until },
     });
   } catch (err) {

@@ -429,6 +429,9 @@ const App = () => {
           setUser(result.user);
           setStudio(result.studio);
           setBootstrapState('authed');
+          if (result.user.permissions?.welcome_shown !== true && shouldShowWelcome()) {
+            setShowWelcome(true);
+          }
         } else {
           setBootstrapState('guest');
         }
@@ -631,8 +634,17 @@ const App = () => {
     setUser(normalized);
     setStudio(payload.studio);
     setBootstrapState('authed');
-    const serverShown = payload.user?.permissions?.welcome_shown === true;
+    const serverShown = normalized.permissions?.welcome_shown === true;
     if (!serverShown && shouldShowWelcome()) setShowWelcome(true);
+  };
+
+  const handleWelcomeSeen = () => {
+    setShowWelcome(false);
+    setUser((prev) => prev ? ({
+      ...prev,
+      permissions: { ...(prev.permissions || {}), welcome_shown: true },
+    }) : prev);
+    api.markWelcomeShown().catch(() => {});
   };
 
   const handleLogout = async () => {
@@ -1561,8 +1573,8 @@ const App = () => {
       <WelcomeModal
         isOpen={showWelcome}
         tgLinked={user?.tgLinked}
-        onClose={() => { api.markWelcomeShown().catch(() => {}); setShowWelcome(false); }}
-        onConnectTelegram={() => { api.markWelcomeShown().catch(() => {}); setShowWelcome(false); setScrollProfileToTg(true); setShowProfile(true); }}
+        onClose={handleWelcomeSeen}
+        onConnectTelegram={() => { handleWelcomeSeen(); setScrollProfileToTg(true); setShowProfile(true); }}
       />
     </div>
   );

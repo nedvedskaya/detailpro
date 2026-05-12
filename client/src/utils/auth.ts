@@ -38,6 +38,14 @@ interface MeResponse {
     createdAt?: string | null;
     // Поля админ-блока (после миграции 003).
     canViewFinance?: boolean;
+    permissions?: {
+      clients?: string;
+      tasks?: string;
+      calendar?: string;
+      finance?: string;
+      welcome_shown?: boolean;
+      [key: string]: unknown;
+    } | null;
     lastLoginAt?: string | null;
   };
   studio: Studio;
@@ -65,6 +73,7 @@ function normalizeUser(raw: MeResponse['user']): UserData {
     // накатилась — поле undefined, и canViewFinance() в permissions.ts
     // фолбекнет на true.
     canViewFinance: raw.canViewFinance,
+    permissions: raw.permissions ?? null,
     lastLoginAt: raw.lastLoginAt ?? null,
   };
 }

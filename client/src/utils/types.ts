@@ -42,6 +42,17 @@ export interface UserData {
   tgUsername?: string | null;
   tgLinkedAt?: string | null;
 
+  // JSONB users.permissions. Помимо прав разделов здесь хранится UI-флаг
+  // welcome_shown, чтобы приветственная плашка показывалась один раз на пользователя.
+  permissions?: {
+    clients?: string;
+    tasks?: string;
+    calendar?: string;
+    finance?: string;
+    welcome_shown?: boolean;
+    [key: string]: unknown;
+  } | null;
+
   // ISO; null если ни разу не логинился (новый сотрудник).
   lastLoginAt?: string | null;
 }
