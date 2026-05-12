@@ -418,6 +418,23 @@ const App = () => {
   }, []);
   const isOnline = useOnlineStatus();
 
+  const persistWelcomeSeen = () => {
+    setUser((prev) => prev ? ({
+      ...prev,
+      permissions: { ...(prev.permissions || {}), welcome_shown: true },
+    }) : prev);
+    api.markWelcomeShown().catch(() => {});
+  };
+
+  const openWelcomeIfNeeded = (permissions?: UserData['permissions']) => {
+    if (permissions?.welcome_shown === true) return;
+    if (shouldShowWelcome()) {
+      setShowWelcome(true);
+      return;
+    }
+    persistWelcomeSeen();
+  };
+
   // Bootstrap: один раз при маунте узнаём, есть ли валидная сессия.
   // Нужно отдельным useEffect (не useState-инициализатор), т.к. это async.
   useEffect(() => {
@@ -429,9 +446,7 @@ const App = () => {
           setUser(result.user);
           setStudio(result.studio);
           setBootstrapState('authed');
-          if (result.user.permissions?.welcome_shown !== true && shouldShowWelcome()) {
-            setShowWelcome(true);
-          }
+          openWelcomeIfNeeded(result.user.permissions);
         } else {
           setBootstrapState('guest');
         }
@@ -634,17 +649,12 @@ const App = () => {
     setUser(normalized);
     setStudio(payload.studio);
     setBootstrapState('authed');
-    const serverShown = normalized.permissions?.welcome_shown === true;
-    if (!serverShown && shouldShowWelcome()) setShowWelcome(true);
+    openWelcomeIfNeeded(normalized.permissions);
   };
 
   const handleWelcomeSeen = () => {
     setShowWelcome(false);
-    setUser((prev) => prev ? ({
-      ...prev,
-      permissions: { ...(prev.permissions || {}), welcome_shown: true },
-    }) : prev);
-    api.markWelcomeShown().catch(() => {});
+    persistWelcomeSeen();
   };
 
   const handleLogout = async () => {
