@@ -45,7 +45,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Overlay } from './ui/Overlay';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, ChevronLeft } from 'lucide-react';
 import { api } from '@/utils/api';
 import { translateApiError } from '@/utils/errorMessages';
 import { getRoleName } from '@/utils/constants';
@@ -87,6 +87,7 @@ function validateEmail(v: string): string | null {
 interface ProfilePageProps {
   onBack: () => void;
   onServicesChange?: () => void;
+  scrollToTg?: boolean;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -118,8 +119,8 @@ interface TariffGroup {
   popular?: boolean;         // визуально выделяем как «самый популярный»
 }
 
-// Solo·год = 49 900 ₽: экономия 4900*12 − 49900 = 8900 (≈15%)
-// Studio·год = 89 900 ₽: экономия 8900*12 − 89900 = 16900 (≈16%)
+// Solo·год = 39 900 ₽: экономия 3900*12 − 39900 = 6900 (≈15%)
+// Studio·год = 59 900 ₽: экономия 5900*12 − 59900 = 10900 (≈15%)
 const TARIFF_GROUPS: TariffGroup[] = [
   {
     id: 'solo',
@@ -135,15 +136,15 @@ const TARIFF_GROUPS: TariffGroup[] = [
     monthly: {
       id: 'solo_month',
       period: 'month',
-      priceRub: 4900,
+      priceRub: 3900,
       payformUrl: 'https://payform.ru/dablmR1/',
     },
     yearly: {
       id: 'solo_year',
       period: 'year',
-      priceRub: 49900,
-      perMonthRub: 4158,
-      saveRub: 8900,
+      priceRub: 39900,
+      perMonthRub: 3325,
+      saveRub: 6900,
       savePct: 15,
       payformUrl: 'https://payform.ru/goblmSQ/',
     },
@@ -163,16 +164,16 @@ const TARIFF_GROUPS: TariffGroup[] = [
     monthly: {
       id: 'studio_month',
       period: 'month',
-      priceRub: 8900,
+      priceRub: 5900,
       payformUrl: 'https://payform.ru/jqblmUt/',
     },
     yearly: {
       id: 'studio_year',
       period: 'year',
-      priceRub: 89900,
-      perMonthRub: 7492,
-      saveRub: 16900,
-      savePct: 16,
+      priceRub: 59900,
+      perMonthRub: 4992,
+      saveRub: 10900,
+      savePct: 15,
       payformUrl: 'https://payform.ru/moblmW2/',
     },
     popular: true,
@@ -263,11 +264,11 @@ function describeAccessUntil(accessUntil: string | null | undefined): { text: st
   if (!target) return { text: 'дата не указана', tone: 'warn' };
   const now = new Date();
   const ms = target.getTime() - now.getTime();
-  // ceil, а не floor: пользователь только что зарегистрировался на 3 дня,
-  // access_until = now() + 3 дня минус миллисекунды на запрос. floor дал бы
-  // 2 в момент регистрации (3*86400000 - 50ms / 86400000 ≈ 2.9999...) — это
+  // ceil, а не floor: пользователь только что зарегистрировался на 7 дней,
+  // access_until = now() + 7 дней минус миллисекунды на запрос. floor дал бы
+  // 6 в момент регистрации (7*86400000 - 50ms / 86400000 ≈ 6.9999...) — это
   // выглядит как баг «зарегистрировался и сразу осталось на день меньше».
-  // ceil показывает «3 дня» сразу после signup и «2 дня» только когда
+  // ceil показывает «7 дней» сразу после signup и «6 дней» только когда
   // прошли полные сутки — соответствует ожиданию пользователя.
   const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
   if (days < 0) {
@@ -715,6 +716,7 @@ function calcBonusUsage(priceRub: number, balanceKop: number): { useKop: number;
 async function startPaymentFlow(
   option: TariffOption,
   _email: string,
+  extraUsers = 0,
 ): Promise<void> {
   // С 28.04.2026 бэк сам собирает payform-URL (см. POST /api/profile/
   // payment/intent → response.payformUrl). Раньше фронт держал base
@@ -723,7 +725,7 @@ async function startPaymentFlow(
   // формировать к платежной странице, а не к paylink») параметров стало
   // больше (products[0][...], order_id, discount_value), и держать их
   // синхронизированными между фронтом и бэком — лишнее дублирование.
-  const intent = await api.createPaymentIntent(option.id);
+  const intent = await api.createPaymentIntent(option.id, extraUsers);
   if (!intent.payformUrl) {
     // Старый бэк ещё не задеплоен или поле пропало — fallback в ошибку.
     throw new Error('payform_url_missing');
@@ -759,13 +761,19 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
   // второй пропадёт впустую).
   const [busy, setBusy] = useState<TariffId | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [extraUsers, setExtraUsers] = useState(0);
+
+  // Цена доп. пользователя для Студии: 1 000 ₽/мес
+  const EXTRA_USER_PRICE = 1000;
+  const extraMonthlyRub = group.id === 'studio' ? extraUsers * EXTRA_USER_PRICE : 0;
+  const extraYearlyRub  = group.id === 'studio' ? extraUsers * EXTRA_USER_PRICE * 12 : 0;
 
   const handlePay = async (option: TariffOption) => {
     if (busy) return;
     setBusy(option.id);
     setError(null);
     try {
-      await startPaymentFlow(option, email);
+      await startPaymentFlow(option, email, extraUsers);
     } catch (err) {
       setError(translateApiError(err, 'Не удалось начать оплату'));
     } finally {
@@ -779,15 +787,16 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
   // Pro-rata зачёт от Соло применяется ДО бонусов: вычитаем его сначала,
   // и только из остатка считаем сколько бонусов влезет (с учётом MIN 50 ₽).
   // Эта последовательность совпадает с серверной (payments.cjs).
-  const monthlyAfterProrate = Math.max(0, group.monthly.priceRub - proratedMonthlyRub);
-  const yearlyAfterProrate  = Math.max(0, group.yearly.priceRub  - proratedYearlyRub);
+  const monthlyBaseRub = group.monthly.priceRub + extraMonthlyRub;
+  const yearlyBaseRub  = group.yearly.priceRub  + extraYearlyRub;
+  const monthlyAfterProrate = Math.max(0, monthlyBaseRub - proratedMonthlyRub);
+  const yearlyAfterProrate  = Math.max(0, yearlyBaseRub  - proratedYearlyRub);
   const monthlyUse = calcBonusUsage(monthlyAfterProrate, bonusBalanceKop);
   const yearlyUse  = calcBonusUsage(yearlyAfterProrate,  bonusBalanceKop);
-  // Итоговая «к доплате» = (цена − pro-rate − бонусы), но не ниже MIN_PAYABLE_RUB.
   const monthlyFinalRub = Math.max(MIN_PAYABLE_RUB, monthlyUse.finalRub);
   const yearlyFinalRub  = Math.max(MIN_PAYABLE_RUB, yearlyUse.finalRub);
-  const monthlyHasDiscount = proratedMonthlyRub > 0 || monthlyUse.useKop > 0;
-  const yearlyHasDiscount  = proratedYearlyRub  > 0 || yearlyUse.useKop  > 0;
+  const monthlyHasDiscount = proratedMonthlyRub > 0 || monthlyUse.useKop > 0 || extraMonthlyRub > 0;
+  const yearlyHasDiscount  = proratedYearlyRub  > 0 || yearlyUse.useKop  > 0 || extraYearlyRub  > 0;
 
   // Студия: оранжевая рамка + лёгкий tint, бейдж «ПОПУЛЯРНО».
   // Соло: нейтральная рамка.
@@ -819,6 +828,38 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
           </li>
         ))}
       </ul>
+
+
+      {group.id === 'studio' && (
+        <div className="mt-4 rounded-xl bg-orange-50 border border-orange-100 p-3">
+          <div className="text-xs text-zinc-600 mb-2 text-center">Количество пользователей</div>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => setExtraUsers(Math.max(0, extraUsers - 1))}
+              disabled={extraUsers === 0}
+              className="w-8 h-8 rounded-lg border border-orange-300 bg-white text-orange-600 text-lg font-bold flex items-center justify-center hover:bg-orange-50 active:bg-orange-100 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Убрать пользователя"
+            >−</button>
+            <div className="text-center min-w-[4rem]">
+              <span className="text-base font-bold text-zinc-800">
+                {extraUsers > 0 ? '3 + ' + extraUsers : '3'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setExtraUsers(Math.min(20, extraUsers + 1))}
+              className="w-8 h-8 rounded-lg border border-orange-300 bg-white text-orange-600 text-lg font-bold flex items-center justify-center hover:bg-orange-50 active:bg-orange-100 transition-colors"
+              aria-label="Добавить пользователя"
+            >+</button>
+          </div>
+          <div className="mt-1.5 text-[11px] text-zinc-500 text-center">
+            {extraUsers === 0
+              ? '3 уже включены в тариф'
+              : `3 включены + ${extraUsers} доп. × 1 000 ₽/мес = +${extraUsers * 1000} ₽/мес`}
+          </div>
+        </div>
+      )}
 
       <div className="mt-5 flex-1" />
 
@@ -860,7 +901,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
         {monthlyHasDiscount ? (
           <span className="mt-0.5 text-lg font-bold">
             <span className="line-through text-zinc-400 text-sm font-normal mr-2">
-              {formatRub(group.monthly.priceRub)}
+              {formatRub(monthlyBaseRub)}
             </span>
             {formatRub(monthlyFinalRub)}
           </span>
@@ -893,7 +934,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
         {yearlyHasDiscount ? (
           <span className="mt-0.5 text-lg font-bold">
             <span className="line-through opacity-70 text-sm font-normal mr-2">
-              {formatRub(group.yearly.priceRub)}
+              {formatRub(yearlyBaseRub)}
             </span>
             {formatRub(yearlyFinalRub)}
           </span>
@@ -1192,8 +1233,15 @@ const ReferralSection = ({ referralCode, bonusBalanceKop }: ReferralSectionProps
 // ──────────────────────────────────────────────────────────────────────
 // Главный компонент
 // ──────────────────────────────────────────────────────────────────────
-export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
+export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePageProps) => {
   const [data, setData] = useState<ProfileResponse | null>(null);
+  useEffect(() => {
+    if (!scrollToTg) return;
+    setTimeout(() => {
+      const el = document.getElementById('section-telegram');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, [scrollToTg]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -1535,7 +1583,7 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
       const remainingDaysExact = remainingMs / (24 * 3600 * 1000);
       const isYearlySolo = remainingDaysExact > 60;
       const totalDays = isYearlySolo ? 365 : 30;
-      const currentSoloPriceRub = isYearlySolo ? 49900 : 4900;
+      const currentSoloPriceRub = isYearlySolo ? 39900 : 3900;
       const remainingDays = Math.min(Math.ceil(remainingDaysExact), totalDays);
       const credit = Math.floor((currentSoloPriceRub * remainingDays) / totalDays);
       // Зачёт показываем только при совпадении периода (как и на бэке).
@@ -1549,15 +1597,15 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
   // съел Postgres-формат «2026-04-30 03:00:00.123456+00» (микросекунды +
   // короткий TZ-сдвиг). Без нормализации Safari возвращал Invalid Date,
   // trialDaysLeft становился 0 и красный баннер «Пробный период завершён»
-  // показывался даже при живом доступе ещё на 3 дня.
+  // показывался даже при живом доступе ещё на 7 дней.
   const isTrial = studio.plan === 'trial';
   const trialDaysLeft = isTrial ? (() => {
     const target = parseDbDate(studio.accessUntil);
     if (!target) return 0;
     const ms = target.getTime() - Date.now();
     // ceil — см. describeAccessUntil. Сразу после signup access_until ровно
-    // через 3 дня (минус миллисекунды), floor показал бы 2 → пользователь
-    // видит «зарегистрировался и сразу 1 день потерял». ceil даёт честные 3.
+    // через 7 дней (минус миллисекунды), floor показал бы 6 → пользователь
+    // видит «зарегистрировался и сразу 1 день потерял». ceil даёт честные 7.
     return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
   })() : 0;
 
@@ -1604,12 +1652,12 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
         }}
       >
         {/* Верхняя кнопка «Назад» */}
-        <div className="flex justify-end mb-6">
+        <div className="flex justify-start mb-6">
           <button
             onClick={onBack}
             className="flex items-center gap-2 text-zinc-500 hover:text-zinc-900 transition-colors"
           >
-            <span>Назад</span>
+            <ChevronLeft size={20} /><span>Назад</span>
           </button>
         </div>
 
@@ -1738,6 +1786,7 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
               • быстрого доступа к рефке/балансу (Phase 3)
               • уведомлений о новых записях клиентов на тарифе «Студия» (Phase 4)
             Видна всем ролям — каждому пользователю полезно, хотя бы для reset. */}
+        <div id="section-telegram">
         <CollapsibleSection
           title="Telegram"
           subtitle={
@@ -1929,6 +1978,7 @@ export const ProfilePage = ({ onBack, onServicesChange }: ProfilePageProps) => {
           )}
         </CollapsibleSection>
 
+        </div>
         {/* ── 3a. Реквизиты для документов (owner only) ────────────
             Подставляются в шапку акта приёмки и заказ-наряда.
             Заполняется один раз; пустые поля в PDF выводятся как «—». */}

@@ -19,6 +19,7 @@ import { ApiError } from './api';
 const ERROR_TRANSLATIONS: Record<string, string> = {
   // Авторизация / signup
   email_invalid:           'Введите корректный email',
+  email_domain_invalid:    'Такой email не существует — проверьте адрес',
   email_already_used:      'Этот email уже зарегистрирован — попробуйте войти',
   password_too_short:      'Пароль должен быть не менее 8 символов',
   password_too_common:     'Этот пароль слишком распространённый — придумайте надёжнее',

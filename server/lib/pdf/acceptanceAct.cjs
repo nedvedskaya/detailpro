@@ -37,16 +37,38 @@ function streamAcceptanceActPdf(stream, ctx) {
   let y = L.drawHeader(doc, {
     studio,
     docTitle: 'Акт приёмки-передачи автомобиля',
-    docSubtitle: `№ ${act.id} от ${L.fmtDateTime(act.created_at)}`,
+    docSubtitle: `№ ${act.id} от ${L.fmtDate(booking?.date || act.created_at)}`,
     legalRef: booking ? `Является приложением к Заказ-наряду № ${booking.id}` : null,
   });
 
   // ── ЗАКАЗЧИК ───────────────────────────────────────────────────────
   y = L.drawSectionTitle(doc, y, 'Заказчик');
-  y = L.drawFieldGrid(doc, y, [
-    { label: 'ФИО',     value: client.name  || '—' },
-    { label: 'Телефон', value: client.phone || '—' },
-  ], 2);
+  const clientType = client.client_type || 'individual';
+  let clientFields;
+  if (clientType === 'ip') {
+    clientFields = [
+      { label: 'ФИО ИП',           value: client.name          || '—' },
+      { label: 'Телефон',          value: client.phone         || '—' },
+      { label: 'ИНН',              value: client.inn           || '—' },
+      { label: 'ОГРНИП',           value: client.ogrnip        || '—' },
+      { label: 'Адрес регистрации', value: client.legal_address || '—' },
+    ];
+  } else if (clientType === 'ooo') {
+    clientFields = [
+      { label: 'Организация',       value: client.company_name  || '—' },
+      { label: 'Телефон',           value: client.phone         || '—' },
+      { label: 'ИНН',               value: client.inn           || '—' },
+      { label: 'КПП',               value: client.kpp           || '—' },
+      { label: 'ОГРН',              value: client.ogrn          || '—' },
+      { label: 'Юридический адрес', value: client.legal_address || '—' },
+    ];
+  } else {
+    clientFields = [
+      { label: 'ФИО',     value: client.name  || '—' },
+      { label: 'Телефон', value: client.phone || '—' },
+    ];
+  }
+  y = L.drawFieldGrid(doc, y, clientFields, Math.min(clientFields.length, 3));
   y += 8;
 
   // ── АВТОМОБИЛЬ ─────────────────────────────────────────────────────
@@ -205,7 +227,7 @@ function streamAcceptanceActPdf(stream, ctx) {
 
   // ── НИЖНЯЯ СНОСКА ──────────────────────────────────────────────────
   doc.font(FONT.regular).fontSize(9).fillColor(L.COLORS.secondary)
-     .text(`Дата и время приёмки: ${L.fmtDateTime(act.created_at)}`,
+     .text(`Дата и время приёмки: ${L.fmtDate(booking?.date || act.created_at)}${booking?.time ? ' ' + L.fmtTime(booking.time) : ''}`,
            L.CONTENT_LEFT, y + 4, { width: L.CONTENT_WIDTH, align: 'center' });
 
   doc.end();

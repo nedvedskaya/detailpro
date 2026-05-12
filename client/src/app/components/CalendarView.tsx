@@ -65,8 +65,8 @@ export const CalendarView = ({
         <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
              <Header title="Календарь" actionIcon={canEdit ? Plus : undefined} onAction={canEdit ? () => setIsAdding(true) : undefined} />
              {isAdding && canEdit && (
-                 <div className={LAYOUT_CLASSES.modal}>
-                    <div className={LAYOUT_CLASSES.modalContent}>
+                 <div className={LAYOUT_CLASSES.modal} onClick={(e) => { if (e.target === e.currentTarget && !newEntry.clientName && !newEntry.service) setIsAdding(false); }}>
+                    <div className={LAYOUT_CLASSES.modalContent} onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-between items-center">
                             <h3 className="text-xl font-black">Новая запись</h3>
                             <button onClick={() => setIsAdding(false)} className="bg-zinc-100 p-3 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center"><X size={22}/></button>
@@ -192,14 +192,19 @@ export const CalendarView = ({
                                     const category = findCategoryById(categories || [], ev.category);
                                     const record = client?.records?.find((r: any) => r.id === ev.recordId);
                                     const isCompleted = record?.isCompleted;
+                                    const isUrgent = record?.isUrgent;
                                     let bgGradient = 'from-zinc-50 to-white';
                                     let borderColor = 'border-zinc-200';
                                     let timeBg = 'bg-zinc-500';
-                                    
+
                                     if (isCompleted) {
                                         bgGradient = 'from-gray-50 to-white';
                                         borderColor = 'border-gray-200';
                                         timeBg = 'bg-gray-500';
+                                    } else if (isUrgent) {
+                                        bgGradient = 'from-red-50 to-white';
+                                        borderColor = 'border-red-200';
+                                        timeBg = 'bg-red-600';
                                     } else {
                                         bgGradient = 'from-orange-50 to-white';
                                         borderColor = 'border-orange-200';

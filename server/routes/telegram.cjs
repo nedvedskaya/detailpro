@@ -30,8 +30,6 @@
  */
 
 const express = require('express');
-const { FIFTEEN_MINUTES_MS, ONE_DAY_MS } = require('../lib/constants.cjs');
-const { parseTimeHHMM } = require('../lib/time_parser.cjs');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
 const { consumeOneTimeToken, OneTimeTokenError } = require('../lib/one_time_token.cjs');
@@ -60,7 +58,7 @@ function isAdmin(tgUserId) {
 
 // TTL стейта «жду сообщение в поддержку» — иначе случайный текст недели спустя
 // попадёт в support_requests как обращение.
-const STATE_TTL_MS = FIFTEEN_MINUTES_MS;
+const STATE_TTL_MS = 15 * 60 * 1000;
 
 // ──────────────────────────────────────────────────────────────────────
 // Постоянное меню для привязанного пользователя.
@@ -79,7 +77,7 @@ const STATE_TTL_MS = FIFTEEN_MINUTES_MS;
 const OWNER_MENU_KEYBOARD = {
   keyboard: [
     [{ text: 'Реферальная ссылка' }, { text: 'Тарифы' }],
-    [{ text: 'Помощь' },              { text: 'Открыть СРМ' }],
+    [{ text: 'Задать вопрос' },       { text: 'Открыть СРМ' }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -87,7 +85,7 @@ const OWNER_MENU_KEYBOARD = {
 
 const STAFF_MENU_KEYBOARD = {
   keyboard: [
-    [{ text: 'Помощь' }, { text: 'Открыть СРМ' }],
+    [{ text: 'Задать вопрос' }, { text: 'Открыть СРМ' }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -118,7 +116,8 @@ const MENU_KEYBOARD = OWNER_MENU_KEYBOARD;
 const BUTTON_TO_COMMAND = {
   'Реферальная ссылка': 'referral',
   'Тарифы':             'tariffs',
-  'Помощь':             'help',
+  'Задать вопрос':      'help',
+  'Помощь':             'help', // обратная совместимость со старыми клавиатурами
   'Открыть СРМ':        'open_crm',
 };
 
@@ -134,7 +133,7 @@ const UNLINKED_INLINE = {
   inline_keyboard: [
     [{ text: 'Создать аккаунт',         callback_data: 'signup:start' }],
     [{ text: 'У меня уже есть аккаунт', callback_data: 'link:help'   }],
-    [{ text: 'Помощь',                  callback_data: 'help:start'  }],
+    [{ text: 'Задать вопрос',           callback_data: 'help:start'  }],
   ],
 };
 
@@ -205,10 +204,10 @@ function buildTariffsInline(tgUserId) {
   if (Object.values(links).some((l) => !l)) return null;
   return {
     inline_keyboard: [
-      [{ text: 'Соло · 1\u00a0мес — 4\u00a0900\u00a0₽',         url: links.solo_month }],
-      [{ text: 'Соло · 12\u00a0мес — 49\u00a0900\u00a0₽ (−15%)', url: links.solo_year }],
-      [{ text: 'Студия · 1\u00a0мес — 8\u00a0900\u00a0₽',        url: links.studio_month }],
-      [{ text: 'Студия · 12\u00a0мес — 89\u00a0900\u00a0₽ (−16%)', url: links.studio_year }],
+      [{ text: 'Соло · 1\u00a0мес — 3\u00a0900\u00a0₽',          url: links.solo_month }],
+      [{ text: 'Соло · 12\u00a0мес — 39\u00a0000\u00a0₽ (−16%)',  url: links.solo_year }],
+      [{ text: 'Студия · 1\u00a0мес — 5\u00a0900\u00a0₽',         url: links.studio_month }],
+      [{ text: 'Студия · 12\u00a0мес — 59\u00a0000\u00a0₽ (−16%)', url: links.studio_year }],
     ],
   };
 }
@@ -269,6 +268,18 @@ const DAILY_TIME_INLINE = {
   ],
 };
 
+// Парсит «8:30» / «08:30» / «8.30» в строку 'HH:MM:SS' для PG TIME.
+// Возвращает null если ввод невалидный (вне 00:00–23:59).
+function parseHHMM(input) {
+  const m = String(input || '').trim().match(/^(\d{1,2})[:.\s](\d{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  if (h < 0 || h > 23) return null;
+  if (min < 0 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`;
+}
 
 // ──────────────────────────────────────────────────────────────────────
 // Тексты приветствия.
@@ -282,7 +293,7 @@ function welcomeText() {
   return (
     `Привет, я <b>Детейл</b>, твой бот от Детейл Про СРМ. ` +
     `Беру на себя рутину, чтобы у тебя было время на бизнес 🔥\n\n` +
-    `Забирай 3 дня бесплатного тест-драйва. Без привязки карты, ` +
+    `Забирай 7 дней бесплатного тест-драйва. Без привязки карты, ` +
     `тебе доступны все фишки тарифов «Соло» и «Студия».\n\n` +
     `<b>Что умеет СРМ:</b>\n` +
     `🔸 Клиенты, записи и календарь — всё в одном месте\n` +
@@ -293,30 +304,6 @@ function welcomeText() {
     `А я каждый день буду присылать напоминания о записях, задачах, ` +
     `чтобы ты ничего не забыл! Погнали 👇🏻`
   );
-}
-
-// ──────────────────────────────────────────────────────────────────────
-// denyIfNotOwner — сокращает 5 повторяющихся блоков:
-//   if (linked.role !== 'owner') {
-//     await tg.sendMessage({ chatId, userId, kind, text, replyMarkup });
-//     return;
-//   }
-// Возвращает true если отказали (вызывающий делает return),
-// false если linked — owner (продолжаем хендлер).
-//
-// Случаи silent-отказа (handleDailyTimeInput) НЕ покрыты — там нужно
-// clearState + return без сообщения, helper не шлёт ничего.
-// ──────────────────────────────────────────────────────────────────────
-async function denyIfNotOwner(linked, { chatId, kind, text, replyMarkup }) {
-  if (linked && linked.role === 'owner') return false;
-  await tg.sendMessage({
-    chatId,
-    userId: linked && linked.id,
-    kind,
-    text,
-    ...(replyMarkup ? { replyMarkup } : {}),
-  });
-  return true;
 }
 
 const jsonParser = express.json({ limit: '256kb' });
@@ -358,11 +345,17 @@ async function getActiveState(tgUserId) {
     [tgUserId]
   );
   if (!r.rows[0]) return null;
-  if (Date.now() - new Date(r.rows[0].set_at).getTime() > STATE_TTL_MS) {
+  const state = r.rows[0].state;
+  // AI-диалог живёт 2 часа (пользователь может думать или делать скриншоты).
+  // Остальные режимы — стандартные 15 минут.
+  const effectiveTtl = state.startsWith('in_ai_chat:')
+    ? 2 * 60 * 60 * 1000
+    : STATE_TTL_MS;
+  if (Date.now() - new Date(r.rows[0].set_at).getTime() > effectiveTtl) {
     await clearState(tgUserId);
     return null;
   }
-  return r.rows[0].state;
+  return state;
 }
 
 async function clearState(tgUserId) {
@@ -419,7 +412,7 @@ async function handleStart(message, args) {
       chatId, userId: linked.id, kind: 'start_already_linked',
       replyMarkup: menuFor(linked),
       text: applyGender(
-        `Привет, ${tg.escapeHtml(linked.name || linked.email)} 👋\n` +
+        `Привет, ${tg.escapeHtml(linked.first_name || (linked.name || '').split(' ')[0] || linked.email)} 👋\n` +
         `Мы уже на коннекте, твой аккаунт СРМ надежно привязан. ` +
         `Я на месте и готов{а} работать)\n\n` +
         `Выбирай нужное действие в меню внизу`,
@@ -816,6 +809,19 @@ async function dispatchCallback(cb) {
     return;
   }
 
+  // ── ai:solved:<id> | ai:escalate:<id> ────────────────────────────────
+  // Кнопки AI-диалога работают и для непривязанных (sales-режим), поэтому
+  // идут ДО проверки linked.
+  if (data.startsWith('ai:')) {
+    const parts = data.split(':');
+    const action = parts[1];      // 'solved' | 'escalate'
+    const convId = parseInt(parts[2], 10);
+    if (!Number.isFinite(convId)) return;
+    if (action === 'solved')   return handleAiResolved(cb, convId);
+    if (action === 'escalate') return handleAiEscalate(cb, convId);
+    return;
+  }
+
   // Все остальные наши callback'и требуют привязанного пользователя.
   const linked = await findLinkedUser(tgUser.id);
   if (!linked) {
@@ -862,11 +868,13 @@ async function dispatchCallback(cb) {
       // Подделка callback_data — игнорим.
       return;
     }
-    if (await denyIfNotOwner(linked, {
-      chatId,
-      kind: 'tz_not_owner',
-      text: 'Часовой пояс студии меняет только владелец.',
-    })) return;
+    if (linked.role !== 'owner') {
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'tz_not_owner',
+        text: 'Часовой пояс студии меняет только владелец.',
+      });
+      return;
+    }
     await pool.query(
       `UPDATE saas_meta.studios
           SET timezone = $1, timezone_set = TRUE
@@ -893,11 +901,13 @@ async function dispatchCallback(cb) {
 
   // ── dailytime:HH:MM | dailytime:custom | dailytime:off ─────────────
   if (data.startsWith('dailytime:')) {
-    if (await denyIfNotOwner(linked, {
-      chatId,
-      kind: 'dailytime_not_owner',
-      text: 'Время утренней сводки настраивает только владелец.',
-    })) return;
+    if (linked.role !== 'owner') {
+      await tg.sendMessage({
+        chatId, userId: linked.id, kind: 'dailytime_not_owner',
+        text: 'Время утренней сводки настраивает только владелец.',
+      });
+      return;
+    }
     // Гейтинг по тарифу — на случай гонки: тариф мог понизиться, пока
     // у юзера в чате висел inline-кейборд из прошлой сессии. Молча
     // снимаем кейборд (editMessageReplyMarkup), отвечаем причиной.
@@ -943,7 +953,7 @@ async function dispatchCallback(cb) {
     }
 
     // Фиксированный вариант '07:00' / '08:00' / '09:00' / '10:00'.
-    const parsed = parseTimeHHMM(choice);
+    const parsed = parseHHMM(choice);
     if (!parsed) {
       // Подделка callback_data — игнорим.
       return;
@@ -1074,7 +1084,7 @@ async function handleOpenCrm(message) {
       replyMarkup: REGISTER_INLINE,
       text:
         `СРМ ждёт тебя по красной дорожке 👇\n` +
-        `Если аккаунта ещё нет, забирай 3 дня бесплатно, без карты, ` +
+        `Если аккаунта ещё нет, забирай 7 дней бесплатно, без карты, ` +
         `без подвохов. Я тут на месте, как привяжешься, начну работать.`,
     });
     return;
@@ -1107,19 +1117,21 @@ async function handleReferral(message) {
       replyMarkup: REGISTER_INLINE,
       text:
         'Реферальная программа доступна только владельцам студий в СРМ.\n\n' +
-        'Зарегистрируйся (3 дня бесплатно), после регистрации твоя ссылка ' +
+        'Зарегистрируйся (7 дней бесплатно), после регистрации твоя ссылка ' +
         'появится в Профиле → Реферальная программа.',
     });
     return;
   }
-  if (await denyIfNotOwner(linked, {
-    chatId: message.chat.id,
-    kind: 'referral_not_owner',
-    replyMarkup: STAFF_MENU_KEYBOARD,
-    text:
-      'Реферальная программа доступна только владельцу студии. ' +
-      'Если есть вопросы, нажми «❓ Помощь».',
-  })) return;
+  if (linked.role !== 'owner') {
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'referral_not_owner',
+      replyMarkup: STAFF_MENU_KEYBOARD,
+      text:
+        'Реферальная программа доступна только владельцу студии. ' +
+        'Если есть вопросы, нажми «❓ Задать вопрос».',
+    });
+    return;
+  }
 
   const summary = await pool.query(
     `SELECT
@@ -1182,9 +1194,9 @@ function describeAccessUntil(accessUntil) {
   const target = new Date(accessUntil);
   if (Number.isNaN(target.getTime())) return { text: 'дата не указана', expired: false };
   // floor: «осталось N дней» = ПОЛНЫХ суток до access_until. ceil показывал
-  // одно и то же значение первые ~24 часа после регистрации (2.3 дня → «3»),
-  // юзер обоснованно жаловался: «вчера было 3, сегодня 3 — должен идти отсчёт».
-  const days = Math.floor((target.getTime() - Date.now()) / ONE_DAY_MS);
+  // одно и то же значение первые ~24 часа после регистрации (6.3 дня → «7»),
+  // юзер обоснованно жаловался: «вчера было 7, сегодня 7 — должен идти отсчёт».
+  const days = Math.floor((target.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
   if (days < 0)  return { text: `доступ истёк ${Math.abs(days)} дн. назад`, expired: true };
   if (days === 0) return { text: 'истекает сегодня', expired: false };
   return { text: `осталось ${days} ${pluralizeDays(days)}`, expired: false };
@@ -1209,27 +1221,29 @@ async function handleTariffs(message) {
       replyMarkup: REGISTER_INLINE,
       text:
         `<b>Тарифы Детейл Про СРМ</b>\n\n` +
-        `🟢 <b>Соло</b> — 4 900 ₽/мес или 49 900 ₽/год (−15%)\n` +
+        `🟢 <b>Соло</b> — 3 900 ₽/мес или 39 000 ₽/год (−16%)\n` +
         `Один пользователь, всё нужное для работы в одиночку: клиенты, ` +
         `записи, документы по приёмке, заказ-наряды, финансы, аналитика.\n\n` +
-        `🟠 <b>Студия</b> — 8 900 ₽/мес или 89 900 ₽/год (−16%)\n` +
-        `До 3 пользователей (собственник + менеджер + мастер), роли, ` +
+        `🟠 <b>Студия</b> — 5 900 ₽/мес или 59 000 ₽/год (−16%)\n` +
+        `До 3 пользователей (+ доп. пользователь за 1 000 ₽/мес), роли, ` +
         `всё из «Соло» + приоритетная поддержка.\n\n` +
-        `Сначала 3 дня бесплатно, без карты, без подвоха. ` +
+        `Сначала 7 дней бесплатно, без карты, без подвоха. ` +
         `Регистрируйся и приходи попробовать 👇`,
     });
     return;
   }
 
   // Только owner — менять тариф может только он. Остальным — сообщение покороче.
-  if (await denyIfNotOwner(linked, {
-    chatId: message.chat.id,
-    kind: 'tariffs_not_owner',
-    replyMarkup: STAFF_MENU_KEYBOARD,
-    text:
-      `Тариф у студии один на всех, рулит им владелец. ` +
-      `Если хочешь что-то изменить, скажи ему, пусть зайдёт в СРМ → Профиль.`,
-  })) return;
+  if (linked.role !== 'owner') {
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'tariffs_not_owner',
+      replyMarkup: STAFF_MENU_KEYBOARD,
+      text:
+        `Тариф у студии один на всех, рулит им владелец. ` +
+        `Если хочешь что-то изменить, скажи ему, пусть зайдёт в СРМ → Профиль.`,
+    });
+    return;
+  }
 
   // Достаём бонус-баланс — упомянем в сообщении, что он применится при оплате.
   const summary = await pool.query(
@@ -1263,16 +1277,17 @@ async function handleTariffs(message) {
       `<b>Твой тариф: ${tg.escapeHtml(planLabel)}</b>\n` +
       `${accessLine}\n\n` +
       `<b>Что есть в линейке:</b>\n\n` +
-      `🟢 <b>Соло</b> — 4 900 ₽/мес или 49 900 ₽/год (−15%, 4 158 ₽/мес)\n` +
+      `🟢 <b>Соло</b> — 3 900 ₽/мес или 39 000 ₽/год (−16%, 3 250 ₽/мес)\n` +
       `Для тех, кто крутит студию сам:\n` +
       `• 1 пользователь (только собственник)\n` +
       `• Клиенты, задачи, календарь\n` +
       `• Документы по приёмке авто\n` +
       `• Заказ-наряды\n` +
       `• Финансовый учёт и аналитика\n\n` +
-      `🟠 <b>Студия</b> — 8 900 ₽/мес или 89 900 ₽/год (−16%, 7 492 ₽/мес)\n` +
+      `🟠 <b>Студия</b> — 5 900 ₽/мес или 59 000 ₽/год (−16%, 4 917 ₽/мес)\n` +
       `Для команды:\n` +
       `• До 3 пользователей (собственник + менеджер + мастер)\n` +
+      `• +1 пользователь за +1 000 ₽/мес (можно добавить сколько угодно)\n` +
       `• Роли «Менеджер» и «Мастер» с разными правами\n` +
       `• Всё из тарифа «Соло»\n` +
       `• Бот в Telegram: напоминания о записях и задачах каждый день\n` +
@@ -1286,8 +1301,9 @@ async function handleTariffs(message) {
 
 // ──────────────────────────────────────────────────────────────────────
 // /help — переводит пользователя в режим «жду сообщение в поддержку».
-// План A: следующее текстовое сообщение копируется админу в SUPPORT_CHAT_ID,
-// админ делает Reply → ответ возвращается клиенту.
+// Если задан OPENAI_API_KEY — AI обрабатывает сообщение сам и эскалирует
+// к живому человеку только при необходимости.
+// Для непривязанных пользователей AI работает в режиме продаж (sales).
 // ──────────────────────────────────────────────────────────────────────
 async function handleHelp(message) {
   const chatId = message.chat.id;
@@ -1301,23 +1317,23 @@ async function handleHelp(message) {
       chatId, userId: linked.id, kind: 'help_linked',
       replyMarkup: menuFor(linked),
       text:
-        `<b>Помощь по СРМ</b>\n\n` +
-        `Что-то отвалилось, пришла идея или просто хочется похвалить? ` +
-        `Напиши следующим сообщением прямо сюда, я перешлю в поддержку, ` +
-        `а ответ прилетит обратно в этот же чат.\n\n` +
-        `Скриншот тоже не помешает, приложи, если есть.`,
+        `<b>Задать вопрос 🤖</b>\n\n` +
+        `Опиши проблему или задай вопрос следующим сообщением.\n` +
+        `Постараюсь ответить сразу — если нужно, подключу живого человека.\n\n` +
+        `Скриншот тоже приложи, если есть 📎`,
     });
     return;
   }
 
   await tg.sendMessage({
     chatId, kind: 'help_unlinked',
+    replyMarkup: REGISTER_INLINE,
     text:
-      `<b>Помощь по СРМ</b> 🤖\n\n` +
-      `Если ты сюда зашла, но СРМ ещё не подключён к Telegram, сначала нужна привязка:\n\n` +
-      `• Уже есть аккаунт? Зайди: СРМ → Профиль → Telegram → «Подключить». Пришлю одноразовую ссылку.\n` +
-      `• Аккаунта пока нет? Кнопки регистрации остались в первом сообщении выше ☝️\n\n` +
-      `Если вопрос горящий и ждать не вариант, напиши следующим сообщением, передам в поддержку.`,
+      `На связи Детейл 🤖\n` +
+      `Отвечу на вопросы о CRM или помогу разобраться с любым вопросом.\n\n` +
+      `<b>Напиши что тебя интересует прямо сюда.</b>\n\n` +
+      `Нет аккаунта? Забирай 7 дней бесплатно: ${APP_ORIGIN}\n` +
+      `Аккаунт есть? Заходи в СРМ → Профиль → Telegram → «Подключить».`,
   });
 }
 
@@ -1346,7 +1362,89 @@ async function handleSupportMessage(message, linked, opts = {}) {
   );
   const requestId = ins.rows[0].id;
 
-  // 2. Пересылаем админу с метаданными (если SUPPORT_TG_CHAT_ID задан).
+  // 2. AI-обработка (если ключ задан и не принудительно пропущен opts.skipAi).
+  //    Для feedback'а воронки skipAi=true — там нужен простой «спасибо».
+  let aiHandled = false;
+  let conversationId = null;
+  if (process.env.OPENAI_API_KEY && !opts.skipAi) {
+    try {
+      const aiSupport = require('../lib/ai_support.cjs');
+      const mode = linked ? 'support' : 'sales';
+
+      const studioContext = linked?.studio_id
+        ? await aiSupport.buildStudioContext(linked.studio_id)
+        : null;
+
+      // Создаём тред разговора.
+      const convRes = await pool.query(
+        `INSERT INTO saas_meta.ai_conversations
+           (tg_user_id, tg_chat_id, user_id, studio_id, mode, support_request_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [tgUser.id || null, chatId, linked?.id || null, linked?.studio_id || null, mode, requestId]
+      );
+      conversationId = convRes.rows[0].id;
+
+      const { reply, shouldEscalate, tokensUsed } = await aiSupport.generateReply({
+        conversationId, userText: text, mode, studioContext,
+      });
+
+      if (!shouldEscalate && reply) {
+        // AI ответил успешно: сохраняем историю и отправляем клиенту.
+        await aiSupport.appendMessage(conversationId, 'user', text);
+        await aiSupport.appendMessage(conversationId, 'assistant', reply, tokensUsed);
+        await pool.query(
+          `UPDATE saas_meta.ai_conversations SET answered_by = 'ai' WHERE id = $1`,
+          [conversationId]
+        );
+        // Переводим в режим AI-диалога: следующие сообщения попадут в handleAiChatMessage.
+        await setState(tgUser.id, `in_ai_chat:${conversationId}`);
+        await tg.sendMessage({
+          chatId, userId: linked?.id || null, kind: 'ai_reply',
+          replyMarkup: {
+            inline_keyboard: [[
+              { text: '✅ Помогло', callback_data: `ai:solved:${conversationId}` },
+              { text: '👤 Нужен человек', callback_data: `ai:escalate:${conversationId}` },
+            ]],
+          },
+          text: tg.escapeHtml(reply),
+        });
+        aiHandled = true;
+      } else {
+        // AI сигнализировал эскалацию — помечаем тред и падаем на ручной режим.
+        await pool.query(
+          `UPDATE saas_meta.ai_conversations
+              SET status = 'escalated', answered_by = 'human', closed_at = now()
+            WHERE id = $1`,
+          [conversationId]
+        );
+      }
+    } catch (aiErr) {
+      console.error('[telegram] AI support error:', aiErr.message);
+      if (conversationId) {
+        await pool.query(
+          `UPDATE saas_meta.ai_conversations
+              SET status = 'escalated', answered_by = 'human', closed_at = now()
+            WHERE id = $1`,
+          [conversationId]
+        ).catch(() => {});
+      }
+      // Fallback к ручной обработке.
+    }
+  }
+
+  // 3. Если AI не обработал — пересылаем живому человеку.
+  if (!aiHandled) {
+    await clearState(tgUser.id);
+    await escalateToHuman({ chatId, tgUser, linked, text, requestId, opts });
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// escalateToHuman — пересылает обращение в SUPPORT_CHAT_ID и уведомляет
+// клиента. Используется как fallback handleSupportMessage и при явном
+// нажатии кнопки «Нужен человек» в AI-диалоге.
+// ──────────────────────────────────────────────────────────────────────
+async function escalateToHuman({ chatId, tgUser, linked, text, requestId, opts = {} }) {
   if (SUPPORT_CHAT_ID) {
     const fromName = linked?.name || tgUser.first_name || 'Гость';
     const meta =
@@ -1380,17 +1478,201 @@ async function handleSupportMessage(message, linked, opts = {}) {
     console.warn('[telegram] SUPPORT_TG_CHAT_ID не задан — обращение #' + requestId + ' только в БД');
   }
 
-  // 3. Сбрасываем стейт и подтверждаем клиенту.
-  await clearState(tgUser.id);
-  // Кастомный ack — для feedback'а из воронки прогрева. Стандартный
-  // текст «передали в поддержку» там звучит неуместно, нужен «спасибо
-  // за обратную связь».
+  // Кастомный ack для feedback'а из воронки («спасибо за обратную связь»).
   const ackText = opts.ackText
-    || `Спасибо, передали в поддержку 🛟\nОтвет придёт в этот чат, обычно в течение нескольких часов.`;
+    || `Передал живому человеку, ответим в ближайшее время 🙋\nОтвет придёт в этот чат.`;
   await tg.sendMessage({
     chatId, userId: linked?.id || null, kind: opts.ackKind || 'support_received',
     replyMarkup: linked ? menuFor(linked) : undefined,
     text: ackText,
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// handleAiChatMessage — обрабатывает follow-up сообщения в AI-диалоге
+// (состояние in_ai_chat:<conversationId>).
+// ──────────────────────────────────────────────────────────────────────
+async function handleAiChatMessage(message, linked, stateRaw) {
+  const chatId = message.chat.id;
+  const tgUser = message.from || {};
+  const text = (message.text || '').trim();
+
+  const conversationId = parseInt((stateRaw || '').split(':')[1], 10);
+  if (!conversationId || !Number.isFinite(conversationId)) {
+    await clearState(tgUser.id);
+    return handleUnknown(message);
+  }
+
+  if (!text || text.length < 2) {
+    await tg.sendMessage({
+      chatId, kind: 'ai_short',
+      text: 'Напиши чуть подробнее, пожалуйста.',
+    });
+    return;
+  }
+
+  // Проверяем, что тред ещё активен (мог протухнуть или быть закрыт).
+  const convRes = await pool.query(
+    `SELECT id, mode, status FROM saas_meta.ai_conversations WHERE id = $1`,
+    [conversationId]
+  );
+  const conv = convRes.rows[0];
+  if (!conv || conv.status !== 'active') {
+    await clearState(tgUser.id);
+    return;
+  }
+
+  // Обновляем TTL стейта, чтобы разговор не протух посередине.
+  await setState(tgUser.id, stateRaw);
+
+  try {
+    const aiSupport = require('../lib/ai_support.cjs');
+    const studioContext = linked?.studio_id
+      ? await aiSupport.buildStudioContext(linked.studio_id)
+      : null;
+
+    const { reply, shouldEscalate, tokensUsed } = await aiSupport.generateReply({
+      conversationId, userText: text, mode: conv.mode, studioContext,
+    });
+
+    // Всегда сохраняем сообщение пользователя.
+    await aiSupport.appendMessage(conversationId, 'user', text);
+
+    if (shouldEscalate) {
+      await aiSupport.appendMessage(conversationId, 'assistant', '[ESCALATE]', tokensUsed);
+      await pool.query(
+        `UPDATE saas_meta.ai_conversations
+            SET status = 'escalated', answered_by = 'human', closed_at = now()
+          WHERE id = $1`,
+        [conversationId]
+      );
+      await clearState(tgUser.id);
+
+      // Создаём новое обращение с пометкой об эскалации из AI.
+      const ins = await pool.query(
+        `INSERT INTO saas_meta.support_requests
+           (user_id, tg_user_id, tg_chat_id, tg_username, message)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [linked?.id || null, tgUser.id, chatId, tgUser.username || null,
+         `[Эскалация из AI-диалога #${conversationId}]\n${text}`]
+      );
+      await escalateToHuman({ chatId, tgUser, linked, text, requestId: ins.rows[0].id });
+      return;
+    }
+
+    await aiSupport.appendMessage(conversationId, 'assistant', reply, tokensUsed);
+
+    await tg.sendMessage({
+      chatId, userId: linked?.id || null, kind: 'ai_reply_cont',
+      replyMarkup: {
+        inline_keyboard: [[
+          { text: '✅ Помогло', callback_data: `ai:solved:${conversationId}` },
+          { text: '👤 Нужен человек', callback_data: `ai:escalate:${conversationId}` },
+        ]],
+      },
+      text: tg.escapeHtml(reply),
+    });
+  } catch (err) {
+    console.error('[telegram] AI chat message error:', err.message);
+    await clearState(tgUser.id);
+    await tg.sendMessage({
+      chatId, userId: linked?.id || null, kind: 'ai_error',
+      replyMarkup: linked ? menuFor(linked) : undefined,
+      text:
+        'Что-то пошло не так с AI-помощником 😕\n' +
+        'Напиши снова или нажми «Задать вопрос» — передам в поддержку.',
+    });
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// handleAiResolved — пользователь нажал «✅ Помогло».
+// ──────────────────────────────────────────────────────────────────────
+async function handleAiResolved(cb, conversationId) {
+  const chatId = cb.message?.chat?.id;
+  const msgId  = cb.message?.message_id;
+  const tgUser = cb.from || {};
+  const linked = await findLinkedUser(tgUser.id);
+
+  await pool.query(
+    `UPDATE saas_meta.ai_conversations
+        SET status = 'resolved', closed_at = now()
+      WHERE id = $1`,
+    [conversationId]
+  );
+  await clearState(tgUser.id);
+  await tg.editMessageReplyMarkup(chatId, msgId, null).catch(() => {});
+  await tg.sendMessage({
+    chatId, userId: linked?.id || null, kind: 'ai_resolved',
+    replyMarkup: linked ? menuFor(linked) : undefined,
+    text: `Отлично, рад что помог 😊\nЕсли появятся вопросы — пиши.`,
+  });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// handleAiEscalate — пользователь нажал «👤 Нужен человек».
+// Пересылаем исходное обращение в SUPPORT_CHAT_ID.
+// ──────────────────────────────────────────────────────────────────────
+async function handleAiEscalate(cb, conversationId) {
+  const chatId = cb.message?.chat?.id;
+  const msgId  = cb.message?.message_id;
+  const tgUser = cb.from || {};
+
+  // Получаем тред и исходное обращение.
+  const r = await pool.query(
+    `SELECT c.support_request_id, c.mode,
+            sr.message AS orig_message
+       FROM saas_meta.ai_conversations c
+       LEFT JOIN saas_meta.support_requests sr ON sr.id = c.support_request_id
+      WHERE c.id = $1`,
+    [conversationId]
+  );
+  const conv = r.rows[0];
+
+  await pool.query(
+    `UPDATE saas_meta.ai_conversations
+        SET status = 'escalated', answered_by = 'human', closed_at = now()
+      WHERE id = $1`,
+    [conversationId]
+  );
+  await clearState(tgUser.id);
+  await tg.editMessageReplyMarkup(chatId, msgId, null).catch(() => {});
+
+  const linked = await findLinkedUser(tgUser.id);
+
+  // Пересылаем оригинальное обращение (если ещё не было переслано).
+  if (SUPPORT_CHAT_ID && conv?.orig_message && conv.support_request_id) {
+    const fromName = linked?.name || tgUser.first_name || 'Гость';
+    const meta =
+      `📩 <b>Обращение #${conv.support_request_id} (эскалация из AI)</b>\n` +
+      `<b>От:</b> ${tg.escapeHtml(fromName)}` +
+      (tgUser.username ? ` (@${tg.escapeHtml(tgUser.username)})` : '') + `\n` +
+      (linked
+        ? `<b>Студия:</b> ${tg.escapeHtml(linked.studio_name || '—')}` +
+          (linked.plan ? ` (${tg.escapeHtml(linked.plan)})` : '') + `\n` +
+          `<b>E-mail:</b> ${tg.escapeHtml(linked.email)}\n`
+        : `<b>Аккаунт СРМ:</b> не привязан\n`) +
+      `\n${tg.escapeHtml(conv.orig_message)}\n\n` +
+      `<i>Клиент попросил живого человека. Ответьте через Reply.</i>`;
+
+    const fwd = await tg.sendMessage({
+      chatId: SUPPORT_CHAT_ID, kind: 'ai_escalation',
+      text: meta,
+    });
+    if (fwd.ok && fwd.result?.message_id) {
+      await pool.query(
+        `UPDATE saas_meta.support_requests
+            SET forwarded_to_chat_id = $1, forwarded_message_id = $2
+          WHERE id = $3`,
+        [SUPPORT_CHAT_ID, fwd.result.message_id, conv.support_request_id]
+      );
+    }
+  }
+
+  await tg.sendMessage({
+    chatId, userId: linked?.id || null, kind: 'ai_escalated',
+    replyMarkup: linked ? menuFor(linked) : undefined,
+    text: `Понял! Передаю живому человеку 🙋\nОтвет придёт в этот чат, обычно в течение нескольких часов.`,
   });
 }
 
@@ -1753,6 +2035,11 @@ async function dispatchMessage(message) {
 
   // 4) Активные режимы (FSM).
   const state = await getActiveState(tgUser.id);
+  // AI-диалог: пользователь продолжает разговор после первого ответа AI.
+  if (state?.startsWith('in_ai_chat:')) {
+    const linked = await findLinkedUser(tgUser.id);
+    return handleAiChatMessage(message, linked, state);
+  }
   if (state === 'awaiting_support_message') {
     const linked = await findLinkedUser(tgUser.id);
     return handleSupportMessage(message, linked);
@@ -1760,8 +2047,10 @@ async function dispatchMessage(message) {
   if (state === 'awaiting_funnel_feedback') {
     // Тот же саппорт-pipeline, но с другим финальным ack-сообщением —
     // юзер ждёт «спасибо за обратную связь», а не «передали в поддержку».
+    // skipAi=true: для сбора фидбека воронки AI не нужен.
     const linked = await findLinkedUser(tgUser.id);
     return handleSupportMessage(message, linked, {
+      skipAi: true,
       ackKind: 'funnel.feedback_thanks',
       ackText: 'Спасибо за обратную связь! Передал информацию 😉',
     });
@@ -1818,13 +2107,15 @@ async function handleDailyTimeCommand(message) {
     });
     return;
   }
-  if (await denyIfNotOwner(linked, {
-    chatId: message.chat.id,
-    kind: 'dailytime_not_owner',
-    text:
-      'Время утренней сводки настраивает только владелец студии. ' +
-      'Сводка приходит всем сотрудникам в одно и то же время.',
-  })) return;
+  if (linked.role !== 'owner') {
+    await tg.sendMessage({
+      chatId: message.chat.id, userId: linked.id, kind: 'dailytime_not_owner',
+      text:
+        'Время утренней сводки настраивает только владелец студии. ' +
+        'Сводка приходит всем сотрудникам в одно и то же время.',
+    });
+    return;
+  }
   // Гейтинг по тарифу: фича только на «Студия». На trial/solo команда
   // /время отвечает понятным сообщением и не открывает inline-выбор.
   if (!planHasDailySummary(linked.plan)) {
@@ -1862,7 +2153,7 @@ async function handleDailyTimeInput(message, text) {
     return;
   }
 
-  const parsed = parseTimeHHMM(text);
+  const parsed = parseHHMM(text);
   if (!parsed) {
     // Не уходим из state — даём попробовать ещё раз.
     await tg.sendMessage({

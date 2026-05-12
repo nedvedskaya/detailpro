@@ -307,6 +307,7 @@ export const normalizeRecord = (record: any) => {
     paymentStatus: record.payment_status || 'none',
     isPaid: record.is_paid || false,
     isCompleted: record.is_completed || false,
+    isUrgent: record.is_urgent || false,
     master_id: record.master_id || null,
     master_name: record.master_name || null
   };
@@ -404,6 +405,7 @@ export const buildRecordPayload = (rec: any, clientId: number | string, override
   payment_status: rec.paymentStatus || rec.payment_status || 'none',
   is_paid: (rec.paymentStatus || rec.payment_status) === 'paid',
   is_completed: rec.isCompleted || rec.is_completed || false,
+  is_urgent: rec.isUrgent || rec.is_urgent || false,
   master_id: rec.master_id || null,
   // Multi-service: пробрасываем массив строк услуг как есть. Бэк его
   // resolveServices'ом преобразует в snapshot и пересчитает amount/

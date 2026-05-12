@@ -28,7 +28,6 @@
  */
 
 const crypto = require('node:crypto');
-const { ERR } = require('../lib/errorCodes.cjs');
 const express = require('express');
 const { pool } = require('../lib/db.cjs');
 const {
@@ -123,10 +122,10 @@ function sanitizePermissions(raw) {
 
 async function fetchStudioPlan(studioId) {
   const r = await pool.query(
-    `SELECT plan FROM saas_meta.studios WHERE id = $1`,
+    `SELECT plan, extra_users_count FROM saas_meta.studios WHERE id = $1`,
     [studioId]
   );
-  return r.rows[0]?.plan || 'cancelled';
+  return r.rows[0] || { plan: 'cancelled', extra_users_count: 0 };
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -151,7 +150,7 @@ router.get('/users', async (req, res, next) => {
 router.post('/users', async (req, res, next) => {
   const { email, password, name, firstName, lastName, phone, role, can_view_finance, permissions } = req.body || {};
   if (!isValidEmail(email)) {
-    return res.status(400).json({ error: ERR.EMAIL_INVALID });
+    return res.status(400).json({ error: 'email_invalid' });
   }
   // Раннее отклонение: слабый пароль или слишком короткий → 400 со специфическим
   // кодом, чтобы фронт мог показать «придумайте надёжнее» вместо generic ошибки.
@@ -186,10 +185,12 @@ router.post('/users', async (req, res, next) => {
   // невалидные значения, чтобы не положить мусор в JSONB.
   const finalPermissions = permissions ? sanitizePermissions(permissions) : null;
 
-  // Проверка лимита тарифа: solo=1, studio/trial=3, cancelled=0.
-  const plan = await fetchStudioPlan(req.session.studioId);
+  // Проверка лимита тарифа: solo=1, studio/trial=3+extra, cancelled=0.
+  const studioInfo = await fetchStudioPlan(req.session.studioId);
+  const plan = studioInfo.plan || 'cancelled';
+  const extraUsers = studioInfo.extra_users_count || 0;
   const currentUsers = await countActiveUsers(req.session.studioId);
-  const maxUsers = maxUsersForPlan(plan);
+  const maxUsers = maxUsersForPlan(plan) + extraUsers;
   if (currentUsers >= maxUsers) {
     const meta = planMeta(plan);
     return res.status(402).json({
@@ -198,7 +199,7 @@ router.post('/users', async (req, res, next) => {
       planLabel: meta.label,
       currentUsers,
       maxUsers,
-      message: `На тарифе «${meta.label}» доступно сотрудников: ${maxUsers}. Повысьте тариф, чтобы добавить ещё.`,
+      message: `На тарифе «${meta.label}» доступно пользователей: ${maxUsers}. Добавьте дополнительных в настройках тарифа.`,
     });
   }
 
@@ -223,7 +224,7 @@ router.post('/users', async (req, res, next) => {
       ]
     );
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: ERR.EMAIL_ALREADY_USED });
+    if (err.code === '23505') return res.status(409).json({ error: 'email_already_used' });
     throw err;
   }
   // Пишем details на русском, чтобы UI не пришлось расшифровывать машинные коды.
@@ -241,7 +242,7 @@ router.post('/users', async (req, res, next) => {
 router.put('/users/:id', async (req, res, next) => {
   const { id } = req.params;
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+  if (!target) return res.status(404).json({ error: 'user_not_found' });
 
   const { name, role, is_active, can_view_finance, permissions } = req.body || {};
 
@@ -258,15 +259,15 @@ router.put('/users/:id', async (req, res, next) => {
 
   // self-protection: нельзя себя downgrade или дезактивировать
   if (id === req.session.userId) {
-    if (role && role !== 'owner') return res.status(400).json({ error: ERR.CANNOT_DEMOTE_SELF });
-    if (is_active === false) return res.status(400).json({ error: ERR.CANNOT_DISABLE_SELF });
+    if (role && role !== 'owner') return res.status(400).json({ error: 'cannot_demote_self' });
+    if (is_active === false) return res.status(400).json({ error: 'cannot_disable_self' });
   }
 
   // нельзя снять последнего Собственника студии
   if (target.role === 'owner' && target.is_active) {
     if ((role && role !== 'owner') || is_active === false) {
       const remaining = await countActiveOwners(req.session.studioId, id);
-      if (remaining < 1) return res.status(400).json({ error: ERR.LAST_OWNER_PROTECTED });
+      if (remaining < 1) return res.status(400).json({ error: 'last_owner_protected' });
     }
   }
 
@@ -274,7 +275,7 @@ router.put('/users/:id', async (req, res, next) => {
   // инвариант). Понижение owner→manager/master разрешено выше при наличии
   // другого активного owner — но саму роль 'owner' НЕ принимаем как input.
   if (role && role === 'owner' && target.role !== 'owner') {
-    return res.status(400).json({ error: ERR.CANNOT_PROMOTE_TO_OWNER });
+    return res.status(400).json({ error: 'cannot_promote_to_owner' });
   }
 
   const newRole = role && VALID_ROLES.includes(role) ? role : target.role;
@@ -347,7 +348,7 @@ router.put('/users/:id', async (req, res, next) => {
 router.post('/users/:id/reset-password', async (req, res, next) => {
   const { id } = req.params;
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+  if (!target) return res.status(404).json({ error: 'user_not_found' });
 
   // Для self-reset есть отдельный flow (POST /auth/password со старым паролем).
   // Через админку owner может сбросить пароль СОБСТВЕННОМУ аккаунту, если
@@ -380,16 +381,16 @@ router.put('/users/:id/block', async (req, res, next) => {
     : false;
 
   if (id === req.session.userId && desiredActive === false) {
-    return res.status(400).json({ error: ERR.CANNOT_DISABLE_SELF });
+    return res.status(400).json({ error: 'cannot_disable_self' });
   }
 
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+  if (!target) return res.status(404).json({ error: 'user_not_found' });
 
   // Защита последнего owner: нельзя выключить, если он один.
   if (desiredActive === false && target.role === 'owner' && target.is_active) {
     const remaining = await countActiveOwners(req.session.studioId, id);
-    if (remaining < 1) return res.status(400).json({ error: ERR.LAST_OWNER_PROTECTED });
+    if (remaining < 1) return res.status(400).json({ error: 'last_owner_protected' });
   }
 
   await pool.query(
@@ -408,14 +409,14 @@ router.put('/users/:id/block', async (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 router.delete('/users/:id', async (req, res, next) => {
   const { id } = req.params;
-  if (id === req.session.userId) return res.status(400).json({ error: ERR.CANNOT_DELETE_SELF });
+  if (id === req.session.userId) return res.status(400).json({ error: 'cannot_delete_self' });
 
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
-  if (!target) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+  if (!target) return res.status(404).json({ error: 'user_not_found' });
 
   if (target.role === 'owner') {
     const remaining = await countActiveOwners(req.session.studioId, id);
-    if (remaining < 1) return res.status(400).json({ error: ERR.LAST_OWNER_PROTECTED });
+    if (remaining < 1) return res.status(400).json({ error: 'last_owner_protected' });
   }
 
   await pool.query(

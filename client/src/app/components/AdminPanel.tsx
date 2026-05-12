@@ -534,12 +534,14 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
           position: 'fixed', top: 0, left: 0, right: 0,
           height: 'env(safe-area-inset-top, 0px)',
           background: '#ffffff',
-          zIndex: 31,  // выше sticky-шапки (z-30) чтобы перекрыть и её
+          zIndex: 31,
         }}
       />
+
     <div
       className="flex flex-col bg-zinc-50 overflow-hidden"
-      style={{ position: 'fixed', top: 'env(safe-area-inset-top, 0px)', left: 0, right: 0, bottom: 0 }}
+      style={{ position: 'fixed', top: 'env(safe-area-inset-top, 0px)', left: 0, right: 0, bottom: 0, zIndex: 30 }}
+      onClick={(e) => e.stopPropagation()}
     >
       <div className="sticky top-0 z-30 bg-white shadow-sm shrink-0">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200">

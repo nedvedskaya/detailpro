@@ -813,7 +813,7 @@ router.get('/client-records', async (req, res, next) => {
 router.post('/client-records', canWriteCalendar, async (req, res, next) => {
   const {
     client_id, vehicle_id, booking_id, service_name, description, amount,
-    date, time, master_id, is_paid, is_completed,
+    date, time, master_id, is_paid, is_completed, is_urgent,
     advance, advance_date, end_date, category_id, payment_status, tags,
     services: rawServices,
   } = req.body || {};
@@ -850,15 +850,15 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
     req.session.schemaName,
     `INSERT INTO {{schema}}.client_records
        (client_id, vehicle_id, booking_id, service_name, description, amount,
-        date, time, master_id, is_paid, is_completed,
+        date, time, master_id, is_paid, is_completed, is_urgent,
         advance, advance_date, end_date, category_id, payment_status, tags, services)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb)
      RETURNING *`,
     [
       cid, badId(vehicle_id), badId(booking_id),
       finalServiceName, description || null, finalAmount,
       date, time || null, safeMasterId,
-      Boolean(is_paid), Boolean(is_completed),
+      Boolean(is_paid), Boolean(is_completed), Boolean(is_urgent),
       advance || 0, advance_date || null, end_date || null,
       badId(category_id),
       payment_status || 'none',
@@ -897,6 +897,7 @@ router.put('/client-records/:id', canWriteCalendar, async (req, res, next) => {
     time: 'time',
     is_paid: 'is_paid',
     is_completed: 'is_completed',
+    is_urgent: 'is_urgent',
     advance: 'advance',
     advance_date: 'advance_date',
     end_date: 'end_date',

@@ -356,8 +356,10 @@ export const FinanceView = ({ transactions, onAddTransaction, onEditTransaction,
       <div className="flex flex-col h-full bg-zinc-50 overflow-hidden relative">
         {isAdding && (
             <Overlay zIndex={260} onClick={() => {
-                setIsAdding(false); 
-                setEditingTransaction(null); 
+                const isDirty = editingTransaction || newTransaction.amount || newTransaction.title;
+                if (isDirty) return;
+                setIsAdding(false);
+                setEditingTransaction(null);
                 setNewTransaction(getInitialTransactionState());
                 setSelectedCategory('');
                 setSelectedTags([]);

@@ -34,7 +34,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
     const [isAdding, setIsAdding] = useState(false);
     const [showArchive, setShowArchive] = useState(false);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
-    const [taskFilter, setTaskFilter] = useState('today');
+    const [taskFilter, setTaskFilter] = useState('all');
     const [newTask, setNewTask] = useState({
         ...getInitialTaskState(),
         clientName: ''
@@ -54,7 +54,6 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
     
     const todayTasks = activeTasks.filter(t => t.date === today || t.isOverdue);
     const futureTasks = activeTasks.filter(t => t.date > today);
-    const displayTasks = taskFilter === 'today' ? todayTasks : activeTasks;
 
     const bookingsByDay = useMemo(() => {
         const allBookings: any[] = [];
@@ -140,21 +139,11 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
             
             <div className="sticky top-0 z-20 bg-white px-6 pt-2 pb-2 border-b border-zinc-200">
                 <div className="flex gap-1.5">
-                    <button 
-                        onClick={() => setTaskFilter('today')}
-                        className={`flex-1 py-2 px-2 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${
-                            taskFilter === 'today' 
-                                ? 'bg-orange-500 text-white shadow-lg' 
-                                : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
-                        }`}
-                    >
-                        сегодня{todayTasks.length > 0 ? ` ${todayTasks.length}` : ''}
-                    </button>
-                    <button 
+                    <button
                         onClick={() => setTaskFilter('all')}
                         className={`flex-1 py-2 px-2 rounded-xl font-bold text-xs whitespace-nowrap transition-all ${
-                            taskFilter === 'all' 
-                                ? 'bg-orange-500 text-white shadow-lg' 
+                            taskFilter === 'all'
+                                ? 'bg-orange-500 text-white shadow-lg'
                                 : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200'
                         }`}
                     >
@@ -174,8 +163,8 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
             </div>
             
             {isAdding && (
-                <div className={LAYOUT_CLASSES.modal}>
-                    <div className={LAYOUT_CLASSES.modalContent} style={{paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 20px))'}}>
+                <div className={LAYOUT_CLASSES.modal} onClick={(e) => { if (e.target === e.currentTarget && !newTask.title) handleCancel(); }}>
+                    <div className={LAYOUT_CLASSES.modalContent} style={{paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 20px))'}} onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-between items-center">
                             <h3 className="text-xl font-black">{editingTask ? 'Редактировать задачу' : 'Новая задача'}</h3>
                             <button onClick={handleCancel} className="bg-zinc-100 p-3 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center">
@@ -299,7 +288,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                             ))
                         )}
                     </div>
-                ) : taskFilter === 'all' ? (
+                ) : (
                     <>
                         {todayTasks.length > 0 && (
                             <div className="space-y-2.5">
@@ -313,7 +302,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 })}
                             </div>
                         )}
-                        
+
                         {futureTasks.length > 0 && (
                             <div className="space-y-2.5 mt-4">
                                 <div className="flex items-center gap-2 text-xs font-black text-zinc-400 uppercase tracking-widest pt-3 border-t border-zinc-200">
@@ -326,7 +315,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 })}
                             </div>
                         )}
-                        
+
                         {todayTasks.length === 0 && futureTasks.length === 0 && (
                             <div className="flex flex-col items-center justify-center h-64 text-center">
                                 <CheckSquare size={48} className="text-zinc-300 mb-4" />
@@ -335,21 +324,6 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                             </div>
                         )}
                     </>
-                ) : (
-                    <div className="space-y-2.5">
-                        {displayTasks.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center h-64 text-center">
-                                <CheckSquare size={48} className="text-zinc-300 mb-4" />
-                                <p className="text-zinc-400 font-semibold">нет задач на сегодня</p>
-                                <p className="text-zinc-300 text-sm mt-1">отличная работа!</p>
-                            </div>
-                        ) : (
-                            displayTasks.map(t => {
-                                const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
-                            })
-                        )}
-                    </div>
                 )}
 
                 {taskFilter !== 'bookings' && archivedTasks.length > 0 && (

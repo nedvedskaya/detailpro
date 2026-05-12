@@ -25,6 +25,7 @@ import { CalendarGrid } from '@/app/components/CalendarGrid';
 import { LoginScreen } from '@/app/components/LoginScreen';
 import { ResetPasswordPage } from '@/app/components/ResetPasswordPage';
 import { ProfilePage } from '@/app/components/ProfilePage';
+import { WelcomeModal, shouldShowWelcome } from '@/app/components/WelcomeModal';
 import { MaterialsPage } from '@/app/components/MaterialsPage';
 import { UserMenu } from '@/app/components/UserMenu';
 import { ClientDetails } from '@/app/components/ClientDetails';
@@ -111,6 +112,14 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
   const [availableModels, setAvailableModels] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
 
+  const initialDataRef = React.useRef(client || getInitialClientState());
+  const isDirty = React.useMemo(() => {
+    if (newRecords.length > 0 || newTasks.length > 0) return true;
+    const initial = initialDataRef.current;
+    const fields = ['name', 'phone', 'email', 'carBrand', 'carModel', 'city', 'birthDate', 'source', 'licensePlate', 'vin', 'comment'];
+    return fields.some(f => (formData[f] || '') !== (initial[f] || ''));
+  }, [formData, newRecords, newTasks]);
+
   useEffect(() => {
     const models = formData.carBrand && CAR_DATABASE[formData.carBrand] ? CAR_DATABASE[formData.carBrand] : [];
     setAvailableModels(models);
@@ -128,9 +137,9 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
     }
   };
   
-  // Закрытие без сохранения
+  // Закрытие без сохранения — только если ничего не менялось
   const handleClose = () => {
-    onCancel();
+    if (!isDirty) onCancel();
   };
 
   const handleChange = (e) => {
@@ -183,9 +192,9 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
     <div className="hidden md:block fixed inset-0 z-[199] bg-zinc-900/60 backdrop-blur-sm animate-in fade-in" onClick={handleClose} />
     <div className="fixed inset-0 z-[200] bg-zinc-50 flex flex-col overflow-hidden animate-in slide-in-from-bottom-5 desktop-card-modal md:bg-white" style={{height: '100dvh', minHeight: '-webkit-fill-available'}}>
         <div className="px-6 pt-safe pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0 md:!pt-5" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
-            <div className="w-[72px]"></div>
+            <Button variant="ghost" size="md" onClick={handleClose} className="text-base flex items-center gap-1"><ChevronLeft size={20} />Назад</Button>
             <span className="text-xl font-black">{String(title)}</span>
-            <Button variant="ghost" size="md" onClick={handleClose} className="text-base">Назад</Button>
+            <div className="w-[72px]"></div>
         </div>
         
         <div className="flex-1 overflow-y-auto px-6 pt-6 space-y-8 overscroll-contain -webkit-overflow-scrolling-touch md-scroll-end" style={{paddingBottom: 'calc(120px + env(safe-area-inset-bottom, 20px)'}}>
@@ -217,13 +226,13 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 </div>
                 <textarea name="comment" value={String(formData.comment || '')} onChange={handleChange} placeholder="Комментарий..." rows={3} className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium outline-none focus:border-orange-500 resize-none shadow-sm"/>
             </div>
-            <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 space-y-4">
+            <div className="space-y-4">
                 <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black text-orange-500 uppercase tracking-widest">Запись</h3>
                     <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Запись</ActionButton>
                 </div>
                 {isRecordFormOpen && (
-                    <div className="bg-white border border-orange-100 p-4 rounded-xl space-y-3">
+                    <div className="bg-white border border-zinc-200 p-4 rounded-xl space-y-3">
                         <AppointmentInputs
                             data={recordInput}
                             onChange={(e) => {
@@ -254,7 +263,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 )}
                 <div className="space-y-2">
                     {newRecords.map(r => (
-                        <div key={r.id} className="bg-white p-3 rounded-xl border border-orange-100 flex items-center justify-between shadow-sm">
+                        <div key={r.id} className="bg-white p-3 rounded-xl border border-zinc-200 flex items-center justify-between shadow-sm">
                             <div>
                                 <p className="text-sm font-bold text-zinc-800">{String(r.service || '')}</p>
                                 <div className="flex items-center gap-2">
@@ -268,7 +277,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                     ))}
                 </div>
             </div>
-            <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 space-y-4">
+            <div className="space-y-4">
                 <div className="flex items-center justify-between"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</h3><ActionButton variant="metal" size="md" onClick={() => setIsTaskFormOpen(!isTaskFormOpen)}>+ Задача</ActionButton></div>
                 {isTaskFormOpen && (
                     <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
@@ -347,6 +356,8 @@ const App = () => {
   // Один-единственный источник правды для guard'а — bootstrapState. user/studio
   // в стейте дублируются для реактивности (auth.ts хранит их в модульном кэше).
   const [bootstrapState, setBootstrapState] = useState<'pending' | 'guest' | 'authed'>('pending');
+  const [showWelcome, setShowWelcome] = useState(false);
+  const [scrollProfileToTg, setScrollProfileToTg] = useState(false);
   const [user, setUser] = useState<UserData | null>(null);
   const [studio, setStudio] = useState<Studio | null>(null);
   // Простая маршрутизация без react-router. Инициализация из window.location:
@@ -433,7 +444,11 @@ const App = () => {
   }, []);
 
   // Все производные хуки должны быть вызваны ДО любого условного return.
-  const [activeTab, setActiveTab] = useState('clients');
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('crm_active_tab') || 'clients');
+  const setActiveTabPersist = (tab: string) => {
+    localStorage.setItem('crm_active_tab', tab);
+    setActiveTab(tab);
+  };
   // Глобальный flag «подписка истекла» — поднимается из api.ts при 402.
   // Если true, поверх UI рисуем LockScreen с CTA «Перейти к тарифам».
   // /api/profile продолжает работать (не за requireActiveStudio), значит
@@ -470,7 +485,8 @@ const App = () => {
           service: record.service,
           title: `${client.carBrand || ''} (${record.service || ''})`,
           type: 'work',
-          isCompleted: record.isCompleted || false
+          isCompleted: record.isCompleted || false,
+          isUrgent: record.isUrgent || false
         });
       });
     });
@@ -615,6 +631,8 @@ const App = () => {
     setUser(normalized);
     setStudio(payload.studio);
     setBootstrapState('authed');
+    const serverShown = payload.user?.permissions?.welcome_shown === true;
+    if (!serverShown && shouldShowWelcome()) setShowWelcome(true);
   };
 
   const handleLogout = async () => {
@@ -656,7 +674,7 @@ const App = () => {
   }
 
   if (showProfile) {
-    return <ProfilePage onBack={() => setShowProfile(false)} onServicesChange={() => api.getServices().then(data => setPriceList(data || []))} />;
+    return <ProfilePage onBack={() => { setShowProfile(false); setScrollProfileToTg(false); }} onServicesChange={() => api.getServices().then(data => setPriceList(data || []))} scrollToTg={scrollProfileToTg} />;
   }
 
   if (showMaterials) {
@@ -696,7 +714,7 @@ const App = () => {
   if (activeTab === 'finance' && !viewerCanViewFinance) {
     // Используем setTimeout (микро-deferred), чтобы не делать setState прямо
     // в render-фазе. На следующем тике activeTab уйдёт на 'clients'.
-    setTimeout(() => setActiveTab('clients'), 0);
+    setTimeout(() => setActiveTabPersist('clients'), 0);
   }
 
   const createAndSaveTransaction = async (data: {
@@ -1446,10 +1464,10 @@ const App = () => {
           {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} priceList={priceList} canEdit={canEdit} onAddClient={handleAddClient} ClientForm={ClientForm} /></React.Suspense>}
           {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEdit} /></React.Suspense>}
 
-          {selectedClient && <ClientDetails client={clients.find(c => c.id === selectedClient.id) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} priceList={priceList} userRole={userRole} canEdit={canEdit} />}
-          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {const ok = await handleSaveClient(upd); if (ok === false) return; setEditingClient(null); if(selectedClient?.id === upd.id) setSelectedClient({...selectedClient, ...upd});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
+          {selectedClient && <ClientDetails client={clients.find(c => String(c.id) === String(selectedClient.id)) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} priceList={priceList} userRole={userRole} canEdit={canEdit} />}
+          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {const ok = await handleSaveClient(upd); if (ok === false) return; setEditingClient(null); if(String(selectedClient?.id) === String(upd.id)) setSelectedClient({...selectedClient, ...upd, records: selectedClient?.records || []});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
       </div>
-      <TabBar activeTab={activeTab} setActiveTab={setActiveTab} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
+      <TabBar activeTab={activeTab} setActiveTab={setActiveTabPersist} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
 
       {/* LockScreen: подписка истекла. Перекрываем весь UI, оставляем
           один CTA — «Перейти к тарифам». Профиль не за requireActiveStudio,
@@ -1540,6 +1558,12 @@ const App = () => {
           body { min-height: 100dvh; }
         }
       `}</style>
+      <WelcomeModal
+        isOpen={showWelcome}
+        tgLinked={user?.tgLinked}
+        onClose={() => { api.markWelcomeShown().catch(() => {}); setShowWelcome(false); }}
+        onConnectTelegram={() => { api.markWelcomeShown().catch(() => {}); setShowWelcome(false); setScrollProfileToTg(true); setShowProfile(true); }}
+      />
     </div>
   );
 };

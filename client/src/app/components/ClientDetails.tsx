@@ -159,10 +159,10 @@ export const ClientDetails = ({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="px-5 pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
+        <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold"><ChevronLeft size={24} />{editingRecordId ? 'Назад к карточке' : 'Назад'}</button>
         {!editingRecordId && canEdit
           ? <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>
           : <div />}
-        <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold">{editingRecordId ? 'Назад к карточке' : 'Назад'} <ChevronRight size={24} /></button>
       </div>
       <div className="flex-1 overflow-y-auto p-6 md:px-10 space-y-8 overscroll-contain md-scroll-end" style={{paddingBottom: '40px', WebkitOverflowScrolling: 'touch'} as any}>
         {!editingRecordId && (
@@ -267,7 +267,7 @@ export const ClientDetails = ({
           )}
           
           {(isAddingRecord || editingRecordId) && (
-            <div className="space-y-4 mb-4 bg-zinc-50 border border-zinc-200 rounded-2xl p-4">
+            <div className="bg-white border border-zinc-200 p-4 rounded-xl space-y-4 mb-4">
               <AppointmentInputs data={newRecord} onChange={(e: any) => {
                 if (e.target.name === '_batch') {
                   setNewRecord(prev => ({...prev, ...e.target.value}));
@@ -558,11 +558,11 @@ export const ClientDetails = ({
         {/* Задачи */}
         {!editingRecordId && <div>
           <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-black text-orange-500 uppercase tracking-widest">Задачи</span>
+            <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</span>
             <button onClick={() => setIsAddingTask(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>+ Создать</button>
           </div>
           {isAddingTask && (
-            <div className="bg-white p-4 rounded-2xl border border-zinc-300 shadow-sm space-y-3 mb-4 animate-in fade-in">
+            <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner mb-4 animate-in fade-in">
               <TaskFormFields
                 taskData={{
                   title: String(newTask.title || ''),

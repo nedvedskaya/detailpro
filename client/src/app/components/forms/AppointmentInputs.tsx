@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { getDateStr, matchId } from '@/utils/helpers';
 import { ServicesPicker, ServiceLine, PriceListItem } from '@/app/components/ui/ServicesPicker';
 
@@ -32,6 +33,7 @@ interface AppointmentData {
     advanceDate?: string;
     paymentStatus?: string;
     master_id?: string | null;
+    isUrgent?: boolean;
 }
 
 interface StudioMember {
@@ -264,6 +266,19 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                     </button>
                 </div>
             </div>
+
+            <button
+                type="button"
+                onClick={() => onChange({ target: { name: 'isUrgent', value: !data.isUrgent } })}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
+                    data.isUrgent
+                    ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
+                    : 'bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-400'
+                }`}
+            >
+                <AlertCircle size={16} />
+                {data.isUrgent ? 'Важная запись' : 'Отметить как важную'}
+            </button>
         </div>
     );
 };

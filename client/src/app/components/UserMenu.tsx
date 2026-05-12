@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LogOut, User, Settings, ChevronDown, BookOpen } from 'lucide-react';
 import { getUser, getStudio, logout } from '@/utils/auth';
 import { isAdmin } from '@/utils/permissions';
@@ -29,10 +29,24 @@ function formatAccessUntil(value: string | null | undefined): { label: string; t
   return { label: `Подписка до ${label}`, tone: 'ok' };
 }
 
+const AVATAR_CACHE_KEY = 'ugt_avatar_path';
+
 export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, onShowMaterials, networkIndicator }: UserMenuProps) => {
   const user = getUser();
   const studio = getStudio();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [avatarLoaded, setAvatarLoaded] = useState(false);
+
+  // Кэшируем avatarPath в sessionStorage — при следующей загрузке
+  // браузер уже имеет картинку в HTTP-кэше и показывает её мгновенно.
+  useEffect(() => {
+    if (user?.avatarPath) {
+      try { sessionStorage.setItem(AVATAR_CACHE_KEY, user.avatarPath); } catch {}
+      // Предзагрузка: создаём Image объект чтобы браузер закэшировал
+      const img = new Image();
+      img.src = user.avatarPath;
+    }
+  }, [user?.avatarPath]);
 
   if (!user) return null;
 
@@ -70,17 +84,20 @@ export const UserMenu = ({ onLogout, onShowProfile, onShowAdmin, onShowMaterials
               кеширует 1д, поэтому добавляем ?v=lastLoginAt|createdAt для обхода
               кэша при смене аватара (после нового входа /me возвращает свежий
               avatar_path; ?v= меняется и браузер запрашивает заново). */}
-          {user.avatarPath ? (
-            <img
-              src={`${user.avatarPath}?v=${user.lastLoginAt || user.createdAt || ''}`}
-              alt=""
-              className="w-6 h-6 rounded-full object-cover bg-zinc-100"
-            />
-          ) : (
-            <div className="w-6 h-6 rounded-full bg-zinc-200 text-zinc-600 text-xs font-bold flex items-center justify-center">
+          <div className="relative w-6 h-6 shrink-0">
+            <div className={`w-6 h-6 rounded-full bg-zinc-200 text-zinc-600 text-xs font-bold flex items-center justify-center absolute inset-0 transition-opacity duration-200 ${avatarLoaded ? 'opacity-0' : 'opacity-100'}`}>
               {(user.name || user.email || '?').charAt(0).toUpperCase()}
             </div>
-          )}
+            {user.avatarPath && (
+              <img
+                src={`${user.avatarPath}?v=${user.createdAt || ''}`}
+                alt=""
+                onLoad={() => setAvatarLoaded(true)}
+                onError={() => setAvatarLoaded(false)}
+                className={`w-6 h-6 rounded-full object-cover absolute inset-0 transition-opacity duration-200 ${avatarLoaded ? 'opacity-100' : 'opacity-0'}`}
+              />
+            )}
+          </div>
           <div className="text-xs font-bold text-zinc-900 truncate max-w-[140px]">
             {user.name || user.email}
           </div>

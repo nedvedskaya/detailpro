@@ -140,6 +140,7 @@ export interface Booking {
   paymentStatus: PaymentStatus;
   isPaid?: boolean;
   isCompleted?: boolean;
+  isUrgent?: boolean;
   saveError?: boolean;
   // master_id — UUID пользователя из /api/users (мастер, ведущий запись).
   // null если ещё не назначен. master_name приходит JOIN-ом с бэка для отображения.

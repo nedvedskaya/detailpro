@@ -433,7 +433,7 @@ router.post('/prodamus', rawParser, async (req, res) => {
   if (intentToken) {
     const ir = await pool.query(
       `SELECT token, studio_id, plan_id, expected_amount_kop, bonus_kop,
-              is_upgrade, prorated_credit_kop,
+              is_upgrade, prorated_credit_kop, extra_users_count,
               expires_at, consumed_at
          FROM saas_meta.payment_intents
         WHERE token = $1`,
@@ -470,11 +470,20 @@ router.post('/prodamus', rawParser, async (req, res) => {
     customFields.plan ||
     ''
   ).toString().trim() || null;
-  // Бонусы реферальной программы: сколько копеек списать с баланса плательщика.
-  // Передаётся через _param_bonus_kop в payform-URL — Prodamus сохраняет имя
-  // как есть, без срезания префикса.
-  const bonusKopRaw = payload._param_bonus_kop ?? payload.bonus_kop ?? customFields.bonus_kop ?? 0;
-  const bonusKopUsed = Math.max(0, Math.floor(Number(bonusKopRaw) || 0));
+  // Бонусы: сколько копеек списать с баланса плательщика.
+  //
+  // Источник истины — intentRow.bonus_kop (значение, которое мы сами записали
+  // в БД при createPaymentIntent). Prodamus МОЖЕТ вернуть _param_bonus_kop
+  // обратно в вебхуке, но это не гарантировано: в ряде интеграций кастомные
+  // _param_* поля не включаются в callback-тело. Поэтому:
+  //   • usedIntent=true  → берём из интента (доверенный источник)
+  //   • legacy-path      → пробуем _param_bonus_kop из payload (старое поведение)
+  const bonusKopFromPayload = Math.max(0, Math.floor(
+    Number(payload._param_bonus_kop ?? payload.bonus_kop ?? customFields.bonus_kop ?? 0) || 0
+  ));
+  const bonusKopUsed = (usedIntent && intentRow)
+    ? Math.max(0, Number(intentRow.bonus_kop) || 0)
+    : bonusKopFromPayload;
 
   // Реквизиты для отключения рекуррента через Prodamus REST setActivity.
   // Prodamus присылает их в каждом успешном webhook'е по подписке. Мы
@@ -618,10 +627,12 @@ router.post('/prodamus', rawParser, async (req, res) => {
             const accessExpr = isUpgrade
               ? `now() + ($1 || ' days')::interval`
               : `GREATEST(access_until, now()) + ($1 || ' days')::interval`;
+            const intentExtraUsers = intentRow ? (intentRow.extra_users_count || 0) : 0;
             await client.query(
               `UPDATE saas_meta.studios
                   SET access_until                = ${accessExpr},
                       plan                        = COALESCE($2, plan),
+                      extra_users_count           = $7,
                       is_active                   = TRUE,
                       cancel_pending              = FALSE,
                       prodamus_subscription_id    = COALESCE($4, prodamus_subscription_id),
@@ -629,7 +640,7 @@ router.post('/prodamus', rawParser, async (req, res) => {
                       prodamus_subscription_email = COALESCE($6, prodamus_subscription_email),
                       updated_at                  = now()
                 WHERE id = $3`,
-              [String(durationDays), dbPlan, studioId, subscriptionId, subscriptionPhone, subscriptionEmail]
+              [String(durationDays), dbPlan, studioId, subscriptionId, subscriptionPhone, subscriptionEmail, intentExtraUsers]
             );
             // Помечаем intent как consumed — повторный webhook с тем же
             // токеном не пройдёт верификацию (фолбэкнется на legacy-path).

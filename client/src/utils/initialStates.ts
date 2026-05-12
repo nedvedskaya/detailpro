@@ -26,6 +26,7 @@ export const getInitialBookingState = (options?: { clientName?: string }) => ({
   category: '',
   tags: [] as (string | number)[],
   master_id: null as string | null,
+  isUrgent: false,
 });
 
 export const getInitialRecordState = () => getInitialBookingState();

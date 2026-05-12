@@ -14,13 +14,14 @@ const PDFDocument = require('pdfkit');
 const { registerFonts, FONT } = require('./fonts.cjs');
 const L = require('./layout.cjs');
 
-const PAYMENT_LABELS = { cash: 'Наличные', card: 'Карта', transfer: 'Перевод' };
+const PAYMENT_LABELS = { cash: 'Наличные', card: 'Карта', transfer: 'Перевод', invoice: 'Счёт' };
 
 function streamWorkOrderPdf(stream, ctx) {
   const { studio, booking, workOrder } = ctx;
   const client  = ctx.client  || {};
   const vehicle = ctx.vehicle || {};
   const master  = ctx.master  || {};
+  const owner   = ctx.owner   || null;
 
   const doc = new PDFDocument({
     size: 'A4',
@@ -36,17 +37,41 @@ function streamWorkOrderPdf(stream, ctx) {
   let y = L.drawHeader(doc, {
     studio,
     docTitle:    `Заказ-наряд № ${workOrder.id}`,
-    docSubtitle: `от ${L.fmtDate(workOrder.created_at)}`,
+    docSubtitle: `от ${L.fmtDate(booking?.date || workOrder.created_at)}`,
     legalRef:    'Договор возмездного оказания услуг (ст. 779 ГК РФ)',
   });
 
   // ── СТОРОНЫ ────────────────────────────────────────────────────────
   y = L.drawSectionTitle(doc, y, 'Стороны');
-  y = L.drawFieldGrid(doc, y, [
-    { label: 'Исполнитель',     value: studio.display_name || '—' },
-    { label: 'Заказчик (ФИО)',  value: client.name  || '—' },
-    { label: 'Телефон',         value: client.phone || '—' },
-  ], 3);
+  const clientType = client.client_type || 'individual';
+  let clientFields;
+  if (clientType === 'ip') {
+    clientFields = [
+      { label: 'Исполнитель',        value: studio.display_name || '—' },
+      { label: 'Заказчик (ФИО ИП)',  value: client.name  || '—' },
+      { label: 'Телефон',            value: client.phone || '—' },
+      { label: 'ИНН',                value: client.inn   || '—' },
+      { label: 'ОГРНИП',             value: client.ogrnip || '—' },
+      { label: 'Адрес регистрации',  value: client.legal_address || '—' },
+    ];
+  } else if (clientType === 'ooo') {
+    clientFields = [
+      { label: 'Исполнитель',            value: studio.display_name   || '—' },
+      { label: 'Заказчик (организация)', value: client.company_name   || '—' },
+      { label: 'Телефон',                value: client.phone          || '—' },
+      { label: 'ИНН',                    value: client.inn            || '—' },
+      { label: 'КПП',                    value: client.kpp            || '—' },
+      { label: 'ОГРН',                   value: client.ogrn           || '—' },
+      { label: 'Юридический адрес',      value: client.legal_address  || '—' },
+    ];
+  } else {
+    clientFields = [
+      { label: 'Исполнитель',     value: studio.display_name || '—' },
+      { label: 'Заказчик (ФИО)',  value: client.name  || '—' },
+      { label: 'Телефон',         value: client.phone || '—' },
+    ];
+  }
+  y = L.drawFieldGrid(doc, y, clientFields, Math.min(clientFields.length, 3));
   y += 8;
 
   // ── АВТОМОБИЛЬ ─────────────────────────────────────────────────────
@@ -63,8 +88,8 @@ function streamWorkOrderPdf(stream, ctx) {
 
   // ── СРОКИ И МАСТЕР ─────────────────────────────────────────────────
   y = L.drawFieldGrid(doc, y, [
-    { label: 'Дата приёмки',    value: L.fmtDate(workOrder.created_at) },
-    { label: 'Время приёмки',   value: L.fmtTime(workOrder.created_at?.slice?.(11)) || L.fmtDateTime(workOrder.created_at).split('· ')[1] || '—' },
+    { label: 'Дата приёмки',    value: L.fmtDate(booking?.date || workOrder.created_at) },
+    { label: 'Время приёмки',   value: L.fmtTime(booking?.time) || L.fmtTime(workOrder.created_at?.slice?.(11)) || '—' },
     { label: 'Плановая выдача', value: workOrder.delivery_date
         ? L.fmtDate(workOrder.delivery_date) + (workOrder.delivery_time ? ` ${L.fmtTime(workOrder.delivery_time)}` : '')
         : '—' },
@@ -169,7 +194,7 @@ function streamWorkOrderPdf(stream, ctx) {
      .text('Способ оплаты', L.CONTENT_LEFT, y);
   y += 14;
   // Рисуем три бейджа в ряд, активный — с тёмной обводкой и жирным текстом.
-  const badgeOpts = ['cash', 'card', 'transfer'];
+  const badgeOpts = ['cash', 'card', 'transfer', 'invoice'];
   let bx = L.CONTENT_LEFT;
   const badgeH = 18;
   badgeOpts.forEach((key) => {
@@ -214,8 +239,8 @@ function streamWorkOrderPdf(stream, ctx) {
     ? `   дата выдачи: ${L.fmtDate(workOrder.delivery_date)}`
     : '   дата выдачи: ____________';
   L.drawSignatures(doc, y, {
-    label: 'Работы выполнил (мастер)',
-    name:  master.name || '—',
+    label: 'Исполнитель',
+    name:  owner?.name || studio?.display_name || '—',
   }, {
     label: 'Автомобиль получил, работы проверил, качеством удовлетворён, претензий не имею (заказчик)',
     name:  client.name || '—',

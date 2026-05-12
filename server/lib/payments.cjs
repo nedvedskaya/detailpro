@@ -15,17 +15,16 @@
  */
 
 const crypto = require('node:crypto');
-const { ONE_HOUR_MS } = require('./constants.cjs');
 const { pool } = require('./db.cjs');
 
 // План → форма Prodamus + цена. Должны совпадать с TARIFF_GROUPS на фронте
 // (ProfilePage.tsx). Если разойдутся — webhook увидит discrepancy в
 // expected_amount_kop и залогирует.
 const PLAN_PRICES_KOP = {
-  solo_month:   490000,
-  solo_year:   4990000,
-  studio_month: 890000,
-  studio_year: 8990000,
+  solo_month:   390000,
+  solo_year:   3900000,
+  studio_month: 590000,
+  studio_year: 5900000,
 };
 
 // Базовый URL платёжной страницы Prodamus (dynamic-режим).
@@ -37,15 +36,15 @@ const PLAN_PRICES_KOP = {
 const PAYFORM_BASE_URL = 'https://yalokontent.payform.ru/';
 
 const PLAN_LABELS_RU = {
-  solo_month:   { tariff: 'Соло',   period: '1\u00a0мес',  priceRub: 4900, productName: 'Детейл Про CRM — Соло (1 месяц)' },
-  solo_year:    { tariff: 'Соло',   period: '12\u00a0мес', priceRub: 49900, productName: 'Детейл Про CRM — Соло (12 месяцев)' },
-  studio_month: { tariff: 'Студия', period: '1\u00a0мес',  priceRub: 8900, productName: 'Детейл Про CRM — Студия (1 месяц)' },
-  studio_year:  { tariff: 'Студия', period: '12\u00a0мес', priceRub: 89900, productName: 'Детейл Про CRM — Студия (12 месяцев)' },
+  solo_month:   { tariff: 'Соло',   period: '1\u00a0мес',  priceRub: 3900, productName: 'Детейл Про CRM — Соло (1 месяц)' },
+  solo_year:    { tariff: 'Соло',   period: '12\u00a0мес', priceRub: 39000, productName: 'Детейл Про CRM — Соло (12 месяцев)' },
+  studio_month: { tariff: 'Студия', period: '1\u00a0мес',  priceRub: 5900, productName: 'Детейл Про CRM — Студия (1 месяц)' },
+  studio_year:  { tariff: 'Студия', period: '12\u00a0мес', priceRub: 59000, productName: 'Детейл Про CRM — Студия (12 месяцев)' },
 };
 
 const VALID_PLAN_IDS = Object.keys(PLAN_PRICES_KOP);
 
-const PAYMENT_INTENT_TTL_MS = ONE_HOUR_MS;
+const PAYMENT_INTENT_TTL_MS = 60 * 60 * 1000; // 60 минут
 
 /**
  * Создаёт payment_intent под указанную студию + план + пользователя.
@@ -59,12 +58,13 @@ const PAYMENT_INTENT_TTL_MS = ONE_HOUR_MS;
  *   • Error('plan_invalid') — неизвестный planId.
  *   • Error('studio_not_found') — нет такой студии.
  */
-async function createPaymentIntent({ studioId, userId, planId, ip = null, userAgent = null }) {
+async function createPaymentIntent({ studioId, userId, planId, extraUsers = 0, ip = null, userAgent = null }) {
   if (!VALID_PLAN_IDS.includes(planId)) {
     const e = new Error('plan_invalid');
     e.code = 'plan_invalid';
     throw e;
   }
+  const extraUsersCount = Math.max(0, Math.floor(Number(extraUsers) || 0));
   const sRes = await pool.query(
     `SELECT bonus_balance_kop, plan, access_until, cancel_pending
        FROM saas_meta.studios WHERE id = $1`,
@@ -77,7 +77,12 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
   }
   const studio = sRes.rows[0];
   const bonusAvailable = Number(studio.bonus_balance_kop) || 0;
-  const expectedKop = PLAN_PRICES_KOP[planId];
+  // Базовая цена + стоимость доп. пользователей (только для тарифов студии).
+  const basePriceKop = PLAN_PRICES_KOP[planId];
+  const isStudio = planId.startsWith('studio');
+  const isYear = planId.endsWith('_year');
+  const extraUsersCostKop = isStudio ? extraUsersCount * 100000 * (isYear ? 12 : 1) : 0;
+  const expectedKop = basePriceKop + extraUsersCostKop;
 
   // ── Pro-rata upgrade Соло → Студия (в рамках одного периода) ──
   // Если у студии активен Соло и она хочет купить Студия того же периода,
@@ -153,17 +158,17 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
   await pool.query(
     `INSERT INTO saas_meta.payment_intents
        (token, studio_id, user_id, plan_id, expected_amount_kop, bonus_kop,
-        is_upgrade, prorated_credit_kop,
+        is_upgrade, prorated_credit_kop, extra_users_count,
         expires_at, created_ip, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [token, studioId, userId, planId, expectedKop, bonusKop,
-     isUpgrade, proratedFinal,
+     isUpgrade, proratedFinal, extraUsersCount,
      expiresAt, ip, userAgent]
   );
 
   return {
     token, expiresAt, expectedKop, bonusKop, finalAmountKop,
-    proratedCreditKop: proratedFinal, isUpgrade,
+    proratedCreditKop: proratedFinal, isUpgrade, extraUsersCount,
   };
 }
 
@@ -184,10 +189,17 @@ async function createPaymentIntent({ studioId, userId, planId, ip = null, userAg
  * базовый URL https://yalokontent.payform.ru/ и описывать товар в
  * параметрах. До этого юзер видел полную цену независимо от скидки.
  */
-function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, customerEmail, proratedCreditKop = 0 }) {
-  const expectedKop = PLAN_PRICES_KOP[planId];
+function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, customerEmail, proratedCreditKop = 0, extraUsersCount = 0 }) {
+  const basePriceKop = PLAN_PRICES_KOP[planId];
   const label = PLAN_LABELS_RU[planId];
-  if (!expectedKop || !label) throw new Error('plan_invalid');
+  if (!basePriceKop || !label) throw new Error('plan_invalid');
+  const isStudio = planId.startsWith('studio');
+  const isYear = planId.endsWith('_year');
+  const extraUsersCostKop = isStudio ? extraUsersCount * 100000 * (isYear ? 12 : 1) : 0;
+  const expectedKop = basePriceKop + extraUsersCostKop;
+  const productName = extraUsersCount > 0
+    ? `${label.productName} + ${extraUsersCount} доп. польз.`
+    : label.productName;
   const u = new URL(PAYFORM_BASE_URL);
 
   // sys — обязательный параметр Prodamus, идентифицирует витрину/
@@ -205,7 +217,7 @@ function buildPayformUrl({ planId, intentToken, bonusKop, finalAmountKop, custom
   // Описываем товар в URL. Цена в рублях, как требует Prodamus.
   // products[0][...] — синтаксис, который Express/PHP-style парсеры
   // на стороне Prodamus распарсят как массив объектов.
-  u.searchParams.set('products[0][name]',     label.productName);
+  u.searchParams.set('products[0][name]',     productName);
   u.searchParams.set('products[0][price]',    String(expectedKop / 100));
   u.searchParams.set('products[0][quantity]', '1');
 

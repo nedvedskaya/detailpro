@@ -19,6 +19,9 @@ const { pool } = require('./db.cjs');
 const { verifySession } = require('./auth.cjs');
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'sid';
+const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE !== 'false';
+const SESSION_COOKIE_DOMAIN = process.env.SESSION_COOKIE_DOMAIN || undefined;
+const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS) || 720;
 
 // ──────────────────────────────────────────────────────────────────────
 // Парсер cookies — без зависимости от cookie-parser, чтобы не тянуть лишнее.
@@ -55,6 +58,15 @@ async function requireAuth(req, res, next) {
     }
     req.session = session;
     req.sessionToken = token;
+    // Rolling session: продлеваем cookie при каждом запросе чтобы активные
+    // пользователи не вылетали — iOS/Telegram in-app browser не хранит
+    // session cookies между запусками приложения.
+    try {
+      const expires = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000);
+      const opts = { httpOnly: true, sameSite: 'lax', secure: SESSION_COOKIE_SECURE, path: '/', expires };
+      if (SESSION_COOKIE_DOMAIN) opts.domain = SESSION_COOKIE_DOMAIN;
+      res.cookie(SESSION_COOKIE_NAME, token, opts);
+    } catch (_) { /* не ломаем запрос из-за rolling */ }
     // Не блокирующее: помечаем «студия активна сегодня» для воронки прогрева.
     // Throttled внутри funnel.cjs до 1 раза в 5 мин, чтоб не дёргать БД на каждый запрос.
     try {

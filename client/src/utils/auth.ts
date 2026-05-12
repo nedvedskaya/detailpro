@@ -111,6 +111,11 @@ export async function bootstrap(): Promise<{ user: UserData; studio: Studio } | 
     const data = (await response.json()) as MeResponse;
     cachedUser = normalizeUser(data.user);
     cachedStudio = data.studio;
+    // Предзагружаем аватарку сразу как только получили путь.
+    if (cachedUser.avatarPath) {
+      const img = new Image();
+      img.src = cachedUser.avatarPath;
+    }
     return { user: cachedUser, studio: cachedStudio };
   } catch (err) {
     // сетевые ошибки (включая AbortError по таймауту) — пробрасываем,

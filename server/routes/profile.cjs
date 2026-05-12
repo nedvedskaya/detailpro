@@ -23,8 +23,6 @@
  */
 
 const path = require('node:path');
-const { ERR } = require('../lib/errorCodes.cjs');
-const { parseTimeHHMM } = require('../lib/time_parser.cjs');
 const fs = require('node:fs/promises');
 const express = require('express');
 const multer = require('multer');
@@ -33,7 +31,7 @@ const sharp = require('sharp');
 const crypto = require('node:crypto');
 
 const { pool } = require('../lib/db.cjs');
-const { requireAuth, requireNotMaster, gateOwner } = require('../lib/middleware.cjs');
+const { requireAuth, requireNotMaster } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan, planHasDailySummary } = require('../lib/plans.cjs');
 const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
@@ -115,10 +113,23 @@ function formatDailySummaryTime(value) {
   return m ? `${m[1]}:${m[2]}` : null;
 }
 
+/**
+ * 'HH:MM' / 'H:MM' / 'HH:MM:SS' → 'HH:MM:SS' для записи в PG TIME.
+ * Возвращает null, если строка невалидна — вызывающий бросит 400.
+ */
+function parseDailySummaryTime(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+}
 
 function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
   const meta = planMeta(studioRow.plan);
-  const maxUsers = maxUsersForPlan(studioRow.plan);
+  const maxUsers = maxUsersForPlan(studioRow.plan) + (studioRow.extra_users_count || 0);
 
   // Приватные поля студии — это персональные данные владельца как ИП/юрлица:
   //   • реквизиты для документов (ИНН, ОГРН, адреса, телефон, email студии,
@@ -159,6 +170,8 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       planLabel: meta.label,
       planPriceRub: meta.priceRub,
       planUpgradeable: meta.upgradeable,
+      extraUsersCount: studioRow.extra_users_count || 0,
+      extraUserPriceRub: meta.extraUserPriceRub || 0,
       accessUntil: studioRow.access_until,
       isActive: studioRow.is_active,
       createdAt: studioRow.created_at,
@@ -219,7 +232,7 @@ router.get('/', requireAuth, async (req, res, next) => {
         u.first_name, u.last_name, u.phone, u.avatar_path,
         u.is_active, u.created_at, u.can_view_finance, u.last_login_at,
         u.tg_user_id, u.tg_username, u.tg_linked_at,
-        s.id AS studio_id, s.display_name, s.plan,
+        s.id AS studio_id, s.display_name, s.plan, s.extra_users_count,
         s.is_active AS studio_active, s.access_until,
         s.created_at AS studio_created_at,
         s.cancel_pending AS studio_cancel_pending,
@@ -236,7 +249,7 @@ router.get('/', requireAuth, async (req, res, next) => {
     [req.session.userId]
   );
   const row = rows[0];
-  if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+  if (!row) return res.status(404).json({ error: 'user_not_found' });
 
   const userRow = {
     id: row.id, email: row.email, role: row.role, name: row.name,
@@ -246,6 +259,7 @@ router.get('/', requireAuth, async (req, res, next) => {
   };
   const studioRow = {
     id: row.studio_id, display_name: row.display_name, plan: row.plan,
+    extra_users_count: row.extra_users_count || 0,
     is_active: row.studio_active, access_until: row.access_until,
     created_at: row.studio_created_at,
     cancel_pending: row.studio_cancel_pending,
@@ -286,7 +300,7 @@ router.patch('/', requireAuth, requireNotMaster, async (req, res, next) => {
 
     const keys = Object.keys(fields);
     if (keys.length === 0) {
-      return res.status(400).json({ error: ERR.NO_FIELDS_TO_UPDATE });
+      return res.status(400).json({ error: 'no_fields_to_update' });
     }
 
     // Также обновим computed name для UserMenu, если оба first/last_name заданы.
@@ -334,7 +348,7 @@ router.patch('/', requireAuth, requireNotMaster, async (req, res, next) => {
         RETURNING id, email, role, name, first_name, last_name, phone, avatar_path, is_active, created_at`,
       values
     );
-    if (!r.rows[0]) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+    if (!r.rows[0]) return res.status(404).json({ error: 'user_not_found' });
 
     res.json({
       ok: true,
@@ -347,6 +361,7 @@ router.patch('/', requireAuth, requireNotMaster, async (req, res, next) => {
       },
     });
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
 });
@@ -373,7 +388,10 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const userRow = u.rows[0];
-    if (!gateOwner(userRow, res, ERR.ONLY_OWNER_CAN_EDIT_STUDIO)) return;
+    if (!userRow) return res.status(404).json({ error: 'user_not_found' });
+    if (userRow.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_edit_studio' });
+    }
 
     const body = req.body || {};
     const fields = {};
@@ -409,7 +427,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
         fields.daily_summary_time = null;
         fields.daily_summary_time_set = true;
       } else {
-        const parsed = parseTimeHHMM(raw);
+        const parsed = parseDailySummaryTime(raw);
         if (!parsed) {
           const e = new Error('daily_summary_time_invalid'); e.status = 400; throw e;
         }
@@ -447,7 +465,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
 
     const keys = Object.keys(fields);
     if (keys.length === 0) {
-      return res.status(400).json({ error: ERR.NO_FIELDS_TO_UPDATE });
+      return res.status(400).json({ error: 'no_fields_to_update' });
     }
 
     const setClauses = [];
@@ -469,7 +487,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
                   daily_summary_time, daily_summary_time_set`,
       values
     );
-    if (!r.rows[0]) return res.status(404).json({ error: ERR.STUDIO_NOT_FOUND });
+    if (!r.rows[0]) return res.status(404).json({ error: 'studio_not_found' });
 
     const s = r.rows[0];
     res.json({
@@ -489,6 +507,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
       },
     });
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     next(err);
   }
 });
@@ -600,10 +619,13 @@ router.post('/subscription/cancel', requireAuth, async (req, res, next) => {
     [userId]
   );
   const row = u.rows[0];
-  if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_CANCEL)) return;
+  if (!row) return res.status(404).json({ error: 'user_not_found' });
+  if (row.role !== 'owner') {
+    return res.status(403).json({ error: 'only_owner_can_cancel' });
+  }
   if (row.plan !== 'solo' && row.plan !== 'studio') {
     // на trial/cancelled отменять нечего
-    return res.status(400).json({ error: ERR.NO_ACTIVE_SUBSCRIPTION });
+    return res.status(400).json({ error: 'no_active_subscription' });
   }
   if (row.cancel_pending === true) {
     return res.json({ ok: true, alreadyCancelled: true });
@@ -660,7 +682,10 @@ router.post('/subscription/resume', requireAuth, async (req, res, next) => {
   const userId = req.session.userId;
 
   const row = await getCurrentUser(userId);
-  if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_RESUME)) return;
+  if (!row) return res.status(404).json({ error: 'user_not_found' });
+  if (row.role !== 'owner') {
+    return res.status(403).json({ error: 'only_owner_can_resume' });
+  }
 
   await pool.query(
     `UPDATE saas_meta.studios SET cancel_pending = false WHERE id = $1`,
@@ -689,7 +714,10 @@ router.post('/account/request-deletion', requireAuth, async (req, res, next) => 
       [req.session.userId]
     );
     const row = u.rows[0];
-    if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_DELETE_ACCOUNT)) return;
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_delete_account' });
+    }
 
     // Toggle: если уже запрошено — отменяем; если нет — выставляем now().
     const cancel = req.body?.cancel === true;
@@ -732,7 +760,10 @@ router.post('/demo/seed', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const row = u.rows[0];
-    if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_SEED_DEMO)) return;
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_seed_demo' });
+    }
     const stats = await withTx((client) => seedDemo(client, row.schema_name, row.user_id));
     res.json({ ok: true, ...stats });
   } catch (err) {
@@ -755,7 +786,10 @@ router.post('/demo/clear', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const row = u.rows[0];
-    if (!gateOwner(row, res, ERR.ONLY_OWNER_CAN_CLEAR_DEMO)) return;
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
+    if (row.role !== 'owner') {
+      return res.status(403).json({ error: 'only_owner_can_clear_demo' });
+    }
     const result = await withTx((client) => clearDemo(client, row.schema_name));
     res.json({ ok: true, ...result });
   } catch (err) {
@@ -792,18 +826,20 @@ router.post('/demo/clear', requireAuth, async (req, res, next) => {
 router.post('/payment/intent', requireAuth, async (req, res, next) => {
   try {
     const planId = String(req.body?.plan || '').trim();
+    const extraUsers = Math.max(0, Math.floor(Number(req.body?.extraUsers) || 0));
     let result;
     try {
       result = await payments.createPaymentIntent({
         studioId:  req.session.studioId,
         userId:    req.session.userId,
         planId,
+        extraUsers,
         ip:        req.ip || null,
         userAgent: req.headers['user-agent'] || null,
       });
     } catch (e) {
       if (e.code === 'plan_invalid')      return res.status(400).json({ error: 'plan_invalid' });
-      if (e.code === 'studio_not_found')  return res.status(404).json({ error: ERR.STUDIO_NOT_FOUND });
+      if (e.code === 'studio_not_found')  return res.status(404).json({ error: 'studio_not_found' });
       throw e;
     }
 
@@ -825,6 +861,7 @@ router.post('/payment/intent', requireAuth, async (req, res, next) => {
       finalAmountKop:     result.finalAmountKop,
       customerEmail,
       proratedCreditKop:  result.proratedCreditKop,
+      extraUsersCount:    result.extraUsersCount,
     });
 
     res.json({
@@ -933,10 +970,18 @@ router.get('/payment/from-tg', async (req, res, next) => {
       );
     }
 
+    // Сохраняем текущее количество доп. пользователей при продлении из бота.
+    const studioRow = await pool.query(
+      `SELECT extra_users_count FROM saas_meta.studios WHERE id = $1`,
+      [user.studio_id]
+    );
+    const existingExtraUsers = studioRow.rows[0]?.extra_users_count || 0;
+
     const intent = await payments.createPaymentIntent({
       studioId:  user.studio_id,
       userId:    user.id,
       planId:    plan,
+      extraUsers: existingExtraUsers,
       ip:        req.ip || null,
       userAgent: req.headers['user-agent'] || null,
     });
@@ -948,6 +993,7 @@ router.get('/payment/from-tg', async (req, res, next) => {
       finalAmountKop:    intent.finalAmountKop,
       customerEmail:     user.email,
       proratedCreditKop: intent.proratedCreditKop,
+      extraUsersCount:   intent.extraUsersCount,
     });
 
     return res.redirect(302, url);
@@ -993,7 +1039,7 @@ router.get('/referral', requireAuth, async (req, res, next) => {
       [studioId]
     );
     const row = summary.rows[0];
-    if (!row) return res.status(404).json({ error: ERR.STUDIO_NOT_FOUND });
+    if (!row) return res.status(404).json({ error: 'studio_not_found' });
 
     // Список приведённых студий (последние 50). display_name + дата регистрации
     // + признак оплаты. Без раскрытия чужого email — только публичное имя.
@@ -1082,10 +1128,10 @@ router.post('/telegram/link', requireAuth, async (req, res, next) => {
       [req.session.userId]
     );
     const cur = u.rows[0];
-    if (!cur) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+    if (!cur) return res.status(404).json({ error: 'user_not_found' });
     if (cur.tg_user_id) {
       return res.status(409).json({
-        error: ERR.ALREADY_LINKED,
+        error: 'already_linked',
         tgUsername: cur.tg_username || null,
       });
     }

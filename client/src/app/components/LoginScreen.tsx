@@ -154,7 +154,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
 
     setIsLoading(true);
     try {
-      const res = await api.login({ email, password });
+      const res = await api.login({ email, password, rememberMe });
       persistRememberMe();
       onLogin(res);
     } catch (err) {
@@ -503,7 +503,7 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
         <p className="mt-6 text-center text-xs text-zinc-400">
           {mode === 'login'
             ? 'Доступ только для авторизованных пользователей'
-            : 'После регистрации сразу попадёте в систему. 3 дня пробного периода.'}
+            : 'После регистрации сразу попадёте в систему. 7 дней пробного периода.'}
         </p>
       </div>
       </div>

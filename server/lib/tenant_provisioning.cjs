@@ -3,7 +3,7 @@
  * Tenant provisioning: создание новой студии (тенанта).
  *
  * Что делает createStudio({ schemaName, displayName, ownerEmail, ownerPassword }):
- *   1. INSERT в saas_meta.studios (с trial-доступом 14 дней).
+ *   1. INSERT в saas_meta.studios (с trial-доступом 7 дней).
  *   2. CREATE SCHEMA "studio_xxx".
  *   3. Применение server/sql/100_tenant_template.sql к этой схеме
  *      (с подменой {{schema}} → имя схемы через safeIdent).
@@ -44,11 +44,10 @@ function generateReferralCode() {
 }
 
 const TENANT_TEMPLATE_PATH = path.join(__dirname, '..', 'sql', '100_tenant_template.sql');
-// Триал — 3 дня для всех новых студий. Существующие не трогаем.
-// 7 дней даём вручную через UPDATE saas_meta.studios для конкретных
-// студий-исключений (договорённость по индивидуальным контактам).
+// Триал — 7 дней для всех новых студий. Существующие не трогаем.
+// Индивидуальные продления делаем вручную через UPDATE saas_meta.studios.
 // Можно переопределить переменной TRIAL_DAYS в .env.
-const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 3;
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS) || 7;
 
 // Загружаем шаблон один раз при старте — это крошечный файл, кешируется.
 let TEMPLATE_SQL_CACHE = null;

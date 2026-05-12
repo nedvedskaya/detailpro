@@ -23,8 +23,6 @@
  */
 
 const express = require('express');
-const { ERR } = require('../lib/errorCodes.cjs');
-const { FIFTEEN_MINUTES_MS, ONE_HOUR_MS } = require('../lib/constants.cjs');
 const crypto = require('node:crypto');
 const { pool, withTx } = require('../lib/db.cjs');
 const { consumeOneTimeToken, OneTimeTokenError } = require('../lib/one_time_token.cjs');
@@ -41,7 +39,7 @@ const {
   suggestSchemaName,
 } = require('../lib/tenant_provisioning.cjs');
 const { validateSchemaName } = require('../lib/tenant.cjs');
-const { assertStrongPassword } = require('../lib/validation.cjs');
+const { assertStrongPassword, checkEmailMx } = require('../lib/validation.cjs');
 const { logAction } = require('../lib/audit.cjs');
 const { securityLog, SEVERITY } = require('../lib/security_log.cjs');
 const tgClient = require('../lib/telegram.cjs');
@@ -82,23 +80,23 @@ const { FixedWindowLimiter } = require('../lib/rate_limit.cjs');
 
 const loginByEmail = new FixedWindowLimiter({
   name: 'login.email',
-  max: 5, windowMs: FIFTEEN_MINUTES_MS, blockMs: FIFTEEN_MINUTES_MS,
+  max: 5, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
 });
 const loginByIp = new FixedWindowLimiter({
   name: 'login.ip',
-  max: 30, windowMs: FIFTEEN_MINUTES_MS, blockMs: FIFTEEN_MINUTES_MS,
+  max: 30, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
 });
 const resetByEmail = new FixedWindowLimiter({
   name: 'reset.email',
-  max: 3, windowMs: FIFTEEN_MINUTES_MS, blockMs: FIFTEEN_MINUTES_MS,
+  max: 3, windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
 });
 const resetByIp = new FixedWindowLimiter({
   name: 'reset.ip',
-  max: 10, windowMs: ONE_HOUR_MS, blockMs: ONE_HOUR_MS,
+  max: 10, windowMs: 60 * 60 * 1000, blockMs: 60 * 60 * 1000,
 });
 const signupByIp = new FixedWindowLimiter({
   name: 'signup.ip',
-  max: 5, windowMs: ONE_HOUR_MS, blockMs: ONE_HOUR_MS,
+  max: 5, windowMs: 60 * 60 * 1000, blockMs: 60 * 60 * 1000,
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -124,7 +122,9 @@ function sessionCookieOpts() {
 }
 
 function setSessionCookie(res, token, expiresAt) {
-  res.cookie(SESSION_COOKIE_NAME, token, { ...sessionCookieOpts(), expires: expiresAt });
+  const opts = { ...sessionCookieOpts() };
+  if (expiresAt) opts.expires = expiresAt;
+  res.cookie(SESSION_COOKIE_NAME, token, opts);
 }
 
 function clearSessionCookie(res) {
@@ -203,6 +203,12 @@ router.post('/signup', async (req, res, next) => {
     const acceptedPolicy = body.acceptedPolicy ?? consents.personal_data;
     const acceptedTerms = body.acceptedTerms ?? consents.terms;
     const acceptedMarketing = body.acceptedMarketing ?? consents.marketing;
+
+
+    // MX-проверка: отсекаем несуществующие домены (test@aaa.ru и т.п.)
+    if (email && !(await checkEmailMx(email))) {
+      return res.status(400).json({ error: 'email_domain_invalid' });
+    }
 
     if (!acceptedPolicy || !acceptedTerms) {
       return res.status(400).json({ error: 'consent_required' });
@@ -283,7 +289,7 @@ router.post('/signup', async (req, res, next) => {
       // /unlink-нет старый аккаунт через бота и попробует ещё раз.
       if (code === 'TG_ALREADY_LINKED') {
         return res.status(409).json({
-          error: ERR.TG_ALREADY_LINKED,
+          error: 'tg_already_linked',
           message: 'Этот Telegram уже привязан к другому аккаунту СРМ. Отправь /unlink в бота и нажми «Создать аккаунт» снова.',
         });
       }
@@ -380,9 +386,9 @@ async function sendBotWelcomeAfterSignup(userId) {
 // ──────────────────────────────────────────────────────────────────────
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, rememberMe } = req.body || {};
     if (typeof email !== 'string' || typeof password !== 'string') {
-      return res.status(400).json({ error: ERR.EMAIL_PASSWORD_REQUIRED });
+      return res.status(400).json({ error: 'email_password_required' });
     }
     const emailKey = email.toLowerCase();
     const ipKey = clientIp(req);
@@ -398,7 +404,7 @@ router.post('/login', async (req, res, next) => {
         email: emailKey,
         route: 'POST /api/auth/login',
       });
-      return res.status(429).json({ error: ERR.TOO_MANY_ATTEMPTS });
+      return res.status(429).json({ error: 'too_many_attempts' });
     }
 
     const { rows } = await pool.query(
@@ -426,7 +432,7 @@ router.post('/login', async (req, res, next) => {
         reason: 'unknown_email',
         route: 'POST /api/auth/login',
       });
-      return res.status(401).json({ error: ERR.INVALID_CREDENTIALS });
+      return res.status(401).json({ error: 'invalid_credentials' });
     }
 
     const ok = await verifyPassword(password, user.password_hash);
@@ -442,14 +448,14 @@ router.post('/login', async (req, res, next) => {
         reason: 'wrong_password',
         route: 'POST /api/auth/login',
       });
-      return res.status(401).json({ error: ERR.INVALID_CREDENTIALS });
+      return res.status(401).json({ error: 'invalid_credentials' });
     }
 
     if (!user.is_active) {
-      return res.status(403).json({ error: ERR.USER_DISABLED });
+      return res.status(403).json({ error: 'user_disabled' });
     }
     if (!user.studio_active) {
-      return res.status(403).json({ error: ERR.STUDIO_DISABLED });
+      return res.status(403).json({ error: 'studio_disabled' });
     }
     // Если access_until истёк — всё равно даём логин (чтобы юзер мог доплатить),
     // но дадим знать клиенту. requireActiveStudio сам блокнёт CRM-роуты.
@@ -495,7 +501,7 @@ router.post('/login', async (req, res, next) => {
       userAgent: req.headers['user-agent'] || null,
       ip: clientIp(req),
     });
-    setSessionCookie(res, session.token, session.expiresAt);
+    setSessionCookie(res, session.token, rememberMe === false ? null : session.expiresAt);
 
     res.json({
       ok: true,
@@ -549,6 +555,21 @@ router.post('/logout', async (req, res, next) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────
+// POST /api/auth/welcome-shown  — помечает welcome как показанный
+// ──────────────────────────────────────────────────────────────────────
+router.post('/welcome-shown', requireAuth, async (req, res, next) => {
+  try {
+    await pool.query(
+      `UPDATE saas_meta.users
+          SET permissions = COALESCE(permissions, '{}'::jsonb) || '{"welcome_shown":true}'::jsonb
+        WHERE id = $1`,
+      [req.session.userId]
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ──────────────────────────────────────────────────────────────────────
 // GET /api/auth/me
 // ──────────────────────────────────────────────────────────────────────
 router.get('/me', requireAuth, async (req, res, next) => {
@@ -558,14 +579,14 @@ router.get('/me', requireAuth, async (req, res, next) => {
               u.first_name, u.last_name, u.phone, u.avatar_path, u.created_at,
               u.is_active, u.can_view_finance, u.permissions, u.last_login_at,
               s.id AS studio_id, s.schema_name, s.display_name, s.plan, s.is_active AS studio_active,
-              s.access_until, s.created_at AS studio_created_at
+              s.access_until, s.created_at AS studio_created_at, s.extra_users_count
          FROM saas_meta.users u
          JOIN saas_meta.studios s ON s.id = u.studio_id
         WHERE u.id = $1`,
       [req.session.userId]
     );
     const row = rows[0];
-    if (!row) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+    if (!row) return res.status(404).json({ error: 'user_not_found' });
 
     // Computed name: предпочтение first+last, иначе legacy users.name.
     const composed = [row.first_name, row.last_name].filter(Boolean).join(' ').trim();
@@ -603,6 +624,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         isActive: row.studio_active,
         accessUntil: row.access_until,
         createdAt: row.studio_created_at,
+        extraUsersCount: row.extra_users_count || 0,
       },
     });
   } catch (err) {
@@ -633,7 +655,7 @@ router.post('/password', requireAuth, async (req, res, next) => {
       'SELECT password_hash FROM saas_meta.users WHERE id = $1',
       [req.session.userId]
     );
-    if (!rows[0]) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+    if (!rows[0]) return res.status(404).json({ error: 'user_not_found' });
 
     const ok = await verifyPassword(oldPassword, rows[0].password_hash);
     if (!ok) return res.status(401).json({ error: 'invalid_old_password' });
@@ -822,7 +844,7 @@ router.post('/password-reset/confirm', async (req, res, next) => {
       return u.rows[0] || null;
     });
 
-    if (!user) return res.status(404).json({ error: ERR.USER_NOT_FOUND });
+    if (!user) return res.status(404).json({ error: 'user_not_found' });
 
     // Post-commit: снести все сессии (на случай если злоумышленник сидит
     // в активной сессии) и сразу выдать свежую этому браузеру.

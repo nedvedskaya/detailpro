@@ -67,7 +67,7 @@ export const BookingFormFields = ({
             onChange(e as React.ChangeEvent<HTMLInputElement>);
             // Если конец брони раньше нового начала — двигаем его вперёд.
             const v = (e.target as HTMLInputElement).value;
-            if (showEndDate && bookingData.endDate && v && bookingData.endDate < v) {
+            if (showEndDate && v) {
               onChange({ target: { name: 'endDate', value: v } } as any);
             }
           }}

@@ -67,7 +67,7 @@ const PHOTO_UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024;     // 10 MB
 const SIGNATURE_MAX_LENGTH = 300 * 1024;               // ~300 KB base64
 
 const VALID_PHOTO_TYPES = new Set(['acceptance', 'progress', 'result']);
-const VALID_PAYMENT_METHODS = new Set(['cash', 'card', 'transfer']);
+const VALID_PAYMENT_METHODS = new Set(['cash', 'card', 'transfer', 'invoice']);
 const VALID_CONDITIONS = new Set(['ok', 'minor', 'damaged']);
 
 const upload = multer({
@@ -173,12 +173,25 @@ async function loadBookingContext(schemaName, studioId, bookingId) {
     }
   }
 
+  // Собственник студии — для подписи в документах.
+  let owner = null;
+  const oRes = await pool.query(
+    `SELECT id, name, first_name, last_name FROM saas_meta.users WHERE studio_id = $1 AND role = 'owner' LIMIT 1`,
+    [studioId]
+  );
+  if (oRes.rows[0]) {
+    const o = oRes.rows[0];
+    const composed = [o.first_name, o.last_name].filter(Boolean).join(' ').trim();
+    owner = { id: o.id, name: composed || o.name || '' };
+  }
+
   return {
     studio,
     booking: row,
     client:  row.c_id  ? { id: row.c_id,  name: row.c_name,  phone: row.c_phone, email: row.c_email } : null,
     vehicle,
     master,
+    owner,
   };
 }
 
@@ -312,6 +325,12 @@ const SNAPSHOT_VEHICLE_FIELD_MAX = 100;
 const SNAPSHOT_PLATE_MAX = 20;
 const SNAPSHOT_VIN_MAX = 20;
 const SNAPSHOT_COLOR_MAX = 50;
+const SNAPSHOT_COMPANY_MAX = 255;
+const SNAPSHOT_INN_MAX = 12;
+const SNAPSHOT_KPP_MAX = 9;
+const SNAPSHOT_OGRN_MAX = 15;
+const SNAPSHOT_ADDRESS_MAX = 500;
+const VALID_CLIENT_TYPES = new Set(['individual', 'ip', 'ooo']);
 
 // Helper: строит FIELD_INVALID с конкретным путём вида `items[2].quantity`.
 function fieldInvalid(path, reason) {
@@ -324,10 +343,18 @@ function fieldInvalid(path, reason) {
 
 function sanitizeClientSnapshot(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s)) return {};
+  const clientType = VALID_CLIENT_TYPES.has(s.client_type) ? s.client_type : 'individual';
   return {
-    name:  assertOptionalString(s.name,  'client_snapshot.name',  SNAPSHOT_NAME_MAX),
-    phone: assertOptionalString(s.phone, 'client_snapshot.phone', SNAPSHOT_PHONE_MAX),
-    email: assertOptionalString(s.email, 'client_snapshot.email', SNAPSHOT_EMAIL_MAX),
+    client_type:   clientType,
+    name:          assertOptionalString(s.name,          'client_snapshot.name',          SNAPSHOT_NAME_MAX),
+    phone:         assertOptionalString(s.phone,         'client_snapshot.phone',         SNAPSHOT_PHONE_MAX),
+    email:         assertOptionalString(s.email,         'client_snapshot.email',         SNAPSHOT_EMAIL_MAX),
+    company_name:  assertOptionalString(s.company_name,  'client_snapshot.company_name',  SNAPSHOT_COMPANY_MAX),
+    inn:           assertOptionalString(s.inn,           'client_snapshot.inn',           SNAPSHOT_INN_MAX),
+    kpp:           assertOptionalString(s.kpp,           'client_snapshot.kpp',           SNAPSHOT_KPP_MAX),
+    ogrn:          assertOptionalString(s.ogrn,          'client_snapshot.ogrn',          SNAPSHOT_OGRN_MAX),
+    ogrnip:        assertOptionalString(s.ogrnip,        'client_snapshot.ogrnip',        SNAPSHOT_OGRN_MAX),
+    legal_address: assertOptionalString(s.legal_address, 'client_snapshot.legal_address', SNAPSHOT_ADDRESS_MAX),
   };
 }
 

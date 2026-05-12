@@ -352,6 +352,28 @@ function handleFieldError(err, res) {
   return false;
 }
 
+
+const dns = require('dns').promises;
+
+// MX-проверка: у домена должен быть хотя бы один почтовый сервер.
+// Отсекает несуществующие домены (aaa.ru, test.com и т.п.).
+// Реальные провайдеры (gmail.com, yandex.ru, mail.ru, icloud.com) проходят.
+// Таймаут DNS ~2-5с — добавляем race с 3-секундным промисом.
+async function checkEmailMx(email) {
+  if (!isValidEmail(email)) return false;
+  const domain = email.split('@')[1].toLowerCase();
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('timeout')), 3000)
+  );
+  try {
+    const records = await Promise.race([dns.resolveMx(domain), timeout]);
+    return Array.isArray(records) && records.length > 0;
+  } catch {
+    // При ошибке DNS (NXDOMAIN, timeout, etc.) — считаем домен невалидным
+    return false;
+  }
+}
+
 module.exports = {
   EMAIL_REGEX,
   PASSWORD_MIN_LENGTH,
@@ -372,4 +394,5 @@ module.exports = {
   parsePagination,
   assertPngBase64,
   handleFieldError,
+  checkEmailMx,
 };

@@ -9,6 +9,8 @@ interface CalendarEvent {
     endDate?: string;
     service?: string;
     title?: string;
+    isCompleted?: boolean;
+    isUrgent?: boolean;
 }
 
 interface CalendarGridProps {
@@ -202,7 +204,11 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                 }}
             >
                 {processedEvents.map((ev) => {
-                    const bgClass = ev.isCompleted ? 'bg-gradient-to-r from-zinc-300 to-zinc-400' : 'bg-gradient-to-r from-orange-400 to-orange-500';
+                    const bgClass = ev.isCompleted
+                        ? 'bg-gradient-to-r from-zinc-300 to-zinc-400'
+                        : ev.isUrgent
+                        ? 'bg-gradient-to-r from-red-500 to-red-600'
+                        : 'bg-gradient-to-r from-orange-400 to-orange-500';
                     
                     // Скругление углов
                     let roundedClass = 'rounded';
@@ -225,7 +231,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                     return (
                         <div
                             key={ev.eventId}
-                            className={`absolute px-1.5 py-1 ${roundedClass} text-[9px] font-bold text-white shadow-sm pointer-events-auto cursor-pointer overflow-hidden whitespace-nowrap text-ellipsis ${bgClass}`}
+                            className={`absolute px-1 py-0.5 ${roundedClass} text-[8px] font-bold text-white shadow-sm pointer-events-auto cursor-pointer overflow-hidden whitespace-nowrap text-ellipsis ${bgClass}`}
                             style={{
                                 left: leftPos,
                                 width: widthCalc,

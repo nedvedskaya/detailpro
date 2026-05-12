@@ -15,8 +15,8 @@
 
 const PLANS = Object.freeze({
   trial:     { maxUsers: 3, priceRub: 0,    label: 'Пробный',  upgradeable: true  },
-  solo:      { maxUsers: 1, priceRub: 4900, label: 'Соло',     upgradeable: true  },
-  studio:    { maxUsers: 3, priceRub: 8900, label: 'Студия',   upgradeable: false },
+  solo:      { maxUsers: 1, priceRub: 3900, label: 'Соло',     upgradeable: true  },
+  studio:    { maxUsers: 3, priceRub: 5900, extraUserPriceRub: 1000, label: 'Студия',   upgradeable: false },
   cancelled: { maxUsers: 0, priceRub: 0,    label: 'Отменён',  upgradeable: true  },
 });
 

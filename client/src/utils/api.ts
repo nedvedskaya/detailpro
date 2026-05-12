@@ -164,8 +164,11 @@ export const api = {
       events: Array<{ id: number; kind: 'credit' | 'debit'; amountKop: number; sourceStudioId: string | null; paymentOrderId: string | null; createdAt: string }>;
     }>('/profile/referral');
   },
-  login(payload: { email: string; password: string }) {
+  login(payload: { email: string; password: string; rememberMe?: boolean }) {
     return send<{ user: any; studio: Studio }>('POST', '/auth/login', payload);
+  },
+  markWelcomeShown() {
+    return send<{ ok: boolean }>('POST', '/auth/welcome-shown');
   },
   logout() {
     return send<void>('POST', '/auth/logout');
@@ -248,7 +251,7 @@ export const api = {
   // чужой подпиской. После получения intent фронт вшивает token как
   // `_param_intent` в payform-URL → webhook верифицирует и берёт studio_id
   // из сервера, а не из payload (см. server/sql/011_payment_intents.sql).
-  createPaymentIntent(plan: 'solo_month' | 'solo_year' | 'studio_month' | 'studio_year') {
+  createPaymentIntent(plan: 'solo_month' | 'solo_year' | 'studio_month' | 'studio_year', extraUsers = 0) {
     return send<{
       token: string;
       expiresAt: string;
@@ -260,7 +263,7 @@ export const api = {
       // обратной совместимости со старыми билдами клиента — фронт
       // обработает отсутствие явной ошибкой.
       payformUrl?: string;
-    }>('POST', '/profile/payment/intent', { plan });
+    }>('POST', '/profile/payment/intent', { plan, ...(extraUsers > 0 ? { extraUsers } : {}) });
   },
 
   // ────── Telegram-привязка (Фаза 1 TG-интеграции) ──────

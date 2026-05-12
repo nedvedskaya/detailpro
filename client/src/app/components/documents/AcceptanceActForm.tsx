@@ -91,8 +91,15 @@ export const AcceptanceActForm = ({
 
   // Snapshot-поля клиента и авто. Заполняются из карточки клиента (через
   // getDocumentContext); если в карточке пусто, пользователь вписывает вручную.
+  const [clientType, setClientType]   = useState<'individual' | 'ip' | 'ooo'>('individual');
   const [clientName, setClientName]   = useState('');
   const [clientPhone, setClientPhone] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [inn, setInn]                 = useState('');
+  const [kpp, setKpp]                 = useState('');
+  const [ogrn, setOgrn]               = useState('');
+  const [ogrnip, setOgrnip]           = useState('');
+  const [legalAddress, setLegalAddress] = useState('');
   const [carBrand, setCarBrand]       = useState('');
   const [carModel, setCarModel]       = useState('');
   const [carYear, setCarYear]         = useState('');
@@ -141,8 +148,15 @@ export const AcceptanceActForm = ({
         setPhotosCount(row?.photos_count || 0);
 
         // Snapshot имеет приоритет — пользователь мог уже вписать данные.
+        setClientType(cs.client_type || 'individual');
         setClientName(pick(cs.name,  cv.name));
         setClientPhone(pick(cs.phone, cv.phone));
+        setCompanyName(pick(cs.company_name));
+        setInn(pick(cs.inn));
+        setKpp(pick(cs.kpp));
+        setOgrn(pick(cs.ogrn));
+        setOgrnip(pick(cs.ogrnip));
+        setLegalAddress(pick(cs.legal_address));
         setCarBrand(pick(vs.brand,  vv.brand));
         setCarModel(pick(vs.model,  vv.model));
         setCarYear(pick(vs.year,   vv.year));
@@ -191,9 +205,16 @@ export const AcceptanceActForm = ({
         damage_description: damageDescription.trim() || null,
         valuables: valuables.trim() || null,
         client_snapshot: {
-          name:  clientName.trim()  || null,
-          phone: clientPhone.trim() || null,
-          email: null,
+          client_type:   clientType,
+          name:          clientName.trim()     || null,
+          phone:         clientPhone.trim()    || null,
+          email:         null,
+          company_name:  companyName.trim()    || null,
+          inn:           inn.trim()            || null,
+          kpp:           kpp.trim()            || null,
+          ogrn:          ogrn.trim()           || null,
+          ogrnip:        ogrnip.trim()         || null,
+          legal_address: legalAddress.trim()   || null,
         },
         vehicle_snapshot: {
           brand:         carBrand.trim() || null,
@@ -255,7 +276,7 @@ export const AcceptanceActForm = ({
           <Loader2 className="animate-spin mr-2" size={18} /> Загрузка…
         </div>
       ) : (
-        <div className="space-y-6 max-w-3xl mx-auto">
+        <div className="space-y-6 max-w-3xl mx-auto pb-28">
 
           {/* ── Заказчик и автомобиль ── */}
           <div className="space-y-4">
@@ -263,9 +284,53 @@ export const AcceptanceActForm = ({
               <div className="text-xs font-black text-zinc-400 uppercase tracking-widest mb-2">
                 Заказчик
               </div>
+              {/* Переключатель типа заказчика */}
+              <div className="flex gap-1 mb-3 p-1 bg-zinc-100 rounded-xl w-fit">
+                {([['individual', 'Физ. лицо'], ['ip', 'ИП'], ['ooo', 'ООО']] as const).map(([v, label]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setClientType(v)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                      clientType === v
+                        ? 'bg-white text-zinc-900 shadow-sm'
+                        : 'text-zinc-500 hover:text-zinc-700'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FieldInput label="ФИО"     value={clientName}  onChange={setClientName}  placeholder="Иванов Иван Иванович" />
-                <FieldInput label="Телефон" value={clientPhone} onChange={setClientPhone} placeholder="+7 999 123-45-67" />
+                {clientType === 'individual' && (
+                  <>
+                    <FieldInput label="ФИО"     value={clientName}  onChange={setClientName}  placeholder="Иванов Иван Иванович" />
+                    <FieldInput label="Телефон" value={clientPhone} onChange={setClientPhone} placeholder="+7 999 123-45-67" />
+                  </>
+                )}
+                {clientType === 'ip' && (
+                  <>
+                    <FieldInput label="ФИО ИП"           value={clientName}    onChange={setClientName}    placeholder="Иванов Иван Иванович" />
+                    <FieldInput label="Телефон"           value={clientPhone}   onChange={setClientPhone}   placeholder="+7 999 123-45-67" />
+                    <FieldInput label="ИНН"               value={inn}           onChange={setInn}           placeholder="123456789012" inputMode="numeric" />
+                    <FieldInput label="ОГРНИП"            value={ogrnip}        onChange={setOgrnip}        placeholder="321000000000001" inputMode="numeric" />
+                    <div className="sm:col-span-2">
+                      <FieldInput label="Адрес регистрации" value={legalAddress} onChange={setLegalAddress} placeholder="г. Москва, ул. Примерная, д. 1" />
+                    </div>
+                  </>
+                )}
+                {clientType === 'ooo' && (
+                  <>
+                    <FieldInput label="Название организации" value={companyName}   onChange={setCompanyName}   placeholder='ООО "Детейл"' />
+                    <FieldInput label="Телефон"              value={clientPhone}   onChange={setClientPhone}   placeholder="+7 999 123-45-67" />
+                    <FieldInput label="ИНН"                  value={inn}           onChange={setInn}           placeholder="1234567890" inputMode="numeric" />
+                    <FieldInput label="КПП"                  value={kpp}           onChange={setKpp}           placeholder="123456789" inputMode="numeric" />
+                    <FieldInput label="ОГРН"                 value={ogrn}          onChange={setOgrn}          placeholder="1234567890123" inputMode="numeric" />
+                    <div className="sm:col-span-2">
+                      <FieldInput label="Юридический адрес"  value={legalAddress}  onChange={setLegalAddress}  placeholder="г. Москва, ул. Примерная, д. 1" />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <div>
