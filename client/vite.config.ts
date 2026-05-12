@@ -56,19 +56,16 @@ export default defineConfig({
     // это сознательный trade-off: лучше явный fail, чем тащить полифилы
     // ради ~1% старых устройств.
     target: ['chrome109', 'edge109', 'safari16', 'firefox109'],
+    // Не вставляем в HTML автоматические <link rel="modulepreload"> для
+    // зависимых чанков. На нестабильных VPN/провайдерах это уменьшает
+    // стартовую пачку запросов: CRM сначала загружает основной интерфейс,
+    // а тяжёлые разделы подтягиваются только при открытии.
+    modulePreload: false,
     minify: 'terser',
     terserOptions: {
       compress: {
         drop_console: true,
         drop_debugger: true,
-      },
-    },
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          'ui-vendor': ['lucide-react'],
-          'chart-vendor': ['recharts'],
-        },
       },
     },
     chunkSizeWarningLimit: 1000,
