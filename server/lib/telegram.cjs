@@ -34,13 +34,18 @@ const KNOWN_GOOD_IPS = [
   '149.154.167.220',  // DC2 main, проверено reachable
   '149.154.175.50',   // DC4, проверено reachable
 ];
-let preferredIpIndex = 0;
+const API_ENDPOINTS = [
+  // DNS-имя держим первым: если Telegram меняет маршруты, сервер не зависает
+  // на устаревших "known-good" IP и сам подхватывает свежий A-record.
+  API_HOST,
+  ...KNOWN_GOOD_IPS,
+];
+let preferredEndpointIndex = 0;
 
-// Возвращает текущий known-good IP api.telegram.org. Используется ниже
-// напрямую как `host:` в https.request — обходит DNS-резолв (который вернул бы
-// заблокированный TG IP) и servername сохраняет правильное имя для SNI/TLS.
-function preferredApiIp() {
-  return KNOWN_GOOD_IPS[preferredIpIndex] || KNOWN_GOOD_IPS[0];
+// Возвращает текущий endpoint Telegram API. Обычно это DNS-имя; если маршрут
+// до него сломался, call() временно переключится на один из проверенных IP.
+function preferredApiEndpoint() {
+  return API_ENDPOINTS[preferredEndpointIndex] || API_ENDPOINTS[0];
 }
 
 function token() {
@@ -64,25 +69,27 @@ async function call(method, body, opts = {}) {
   // подождать дольше (timeout=30s на стороне TG → клиенту ставим ≥35s).
   const timeoutMs = opts.timeoutMs || 10_000;
 
-  // Делаем до 2 попыток: если первая упала по timeout/socket — переключаемся
-  // на следующий IP из KNOWN_GOOD_IPS (вдруг тот, что использовали, вылетел).
+  // Делаем несколько попыток: если endpoint упал по timeout/socket —
+  // переключаемся на следующий. Это важно для Telegram в RU-сетях: иногда
+  // "рабочий вчера" IP становится ENETUNREACH, а DNS-имя уже ведет в живой DC.
   let lastErr = null;
-  for (let attempt = 0; attempt < KNOWN_GOOD_IPS.length; attempt++) {
-    const r = await callOnce(t, method, body, timeoutMs);
+  for (let attempt = 0; attempt < API_ENDPOINTS.length; attempt++) {
+    const endpoint = preferredApiEndpoint();
+    const r = await callOnce(t, method, body, timeoutMs, endpoint);
     if (r.ok) return r;
     lastErr = r;
-    // Сетевые ошибки → ротируем IP. Логические ошибки (status 4xx) — нет смысла.
+    // Сетевые ошибки → ротируем endpoint. Логические ошибки (status 4xx) — нет смысла.
     if (r.error !== 'network' && r.error !== 'timeout') return r;
-    preferredIpIndex = (preferredIpIndex + 1) % KNOWN_GOOD_IPS.length;
+    preferredEndpointIndex = (preferredEndpointIndex + 1) % API_ENDPOINTS.length;
   }
   return lastErr || { ok: false, error: 'unknown' };
 }
 
-function callOnce(t, method, body, timeoutMs) {
+function callOnce(t, method, body, timeoutMs, endpoint) {
   return new Promise((resolve) => {
     const payload = JSON.stringify(body || {});
     const req = https.request({
-      host: preferredApiIp(),     // напрямую IP, минуя DNS (заблокирован)
+      host: endpoint,
       port: 443,
       path: `/bot${t}/${method}`,
       method: 'POST',
