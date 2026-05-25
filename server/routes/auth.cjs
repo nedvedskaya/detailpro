@@ -322,6 +322,7 @@ router.post('/signup', async (req, res, next) => {
       schemaName: result.schemaName,
       userAgent: req.headers['user-agent'] || null,
       ip: clientIp(req),
+      rememberMe: true,
     });
     setSessionCookie(res, session.token, session.expiresAt);
 
@@ -498,6 +499,7 @@ router.post('/login', async (req, res, next) => {
       schemaName: user.schema_name,
       userAgent: req.headers['user-agent'] || null,
       ip: clientIp(req),
+      rememberMe: rememberMe !== false,
     });
     setSessionCookie(res, session.token, rememberMe === false ? null : session.expiresAt);
 

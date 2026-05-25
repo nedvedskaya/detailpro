@@ -51,6 +51,13 @@ function sessionIdleMs() {
   return hours * 60 * 60 * 1000;
 }
 
+function rememberedSessionIdleMs() {
+  // Для галочки «Запомнить меня»: пользователь ожидает, что после закрытия
+  // браузера СРМ не попросит email/пароль заново. Держим в рамках absolute TTL.
+  const hours = Number(process.env.SESSION_REMEMBER_IDLE_HOURS) || 720; // 30 дней
+  return Math.min(hours * 60 * 60 * 1000, sessionTtlMs());
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Пароли
 // ──────────────────────────────────────────────────────────────────────
@@ -127,17 +134,18 @@ async function verifyPassword(plain, stored) {
  * @param {string} ctx.schemaName
  * @param {string} [ctx.userAgent]
  * @param {string} [ctx.ip]
+ * @param {boolean} [ctx.rememberMe]
  * @returns {Promise<{ token: string, expiresAt: Date }>}
  */
-async function createSession({ userId, studioId, schemaName, userAgent, ip }) {
+async function createSession({ userId, studioId, schemaName, userAgent, ip, rememberMe = false }) {
   const token = crypto.randomBytes(SESSION_TOKEN_BYTES).toString('base64url');
   const expiresAt = new Date(Date.now() + sessionTtlMs());
 
   await pool.query(
     `INSERT INTO saas_meta.sessions
-       (token, user_id, studio_id, schema_name, expires_at, user_agent, ip)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [token, userId, studioId, schemaName, expiresAt, userAgent || null, ip || null]
+       (token, user_id, studio_id, schema_name, expires_at, remember_me, user_agent, ip)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [token, userId, studioId, schemaName, expiresAt, rememberMe === true, userAgent || null, ip || null]
   );
 
   return { token, expiresAt };
@@ -157,6 +165,7 @@ async function verifySession(token) {
   // (entity user_name), второе — в гейт «manager без финансов» в tenant.cjs.
   const { rows } = await pool.query(
     `SELECT s.user_id, s.studio_id, s.schema_name, s.expires_at, s.last_used_at,
+            s.remember_me,
             u.role, u.is_active, u.name, u.can_view_finance, u.permissions
        FROM saas_meta.sessions s
        JOIN saas_meta.users u ON u.id = s.user_id
@@ -179,10 +188,11 @@ async function verifySession(token) {
   }
 
   // Idle TTL: если last_used_at старше idle-окна — считаем сессию мёртвой.
-  // Защита от давно украденной/забытой cookie: даже если absolute TTL = 30 дней,
-  // неактивная сессия живёт максимум sessionIdleMs (по дефолту 14 дней).
+  // Защита от давно украденной/забытой cookie: обычная неактивная сессия живёт
+  // максимум sessionIdleMs (по дефолту 3 дня), remembered-сессия — дольше.
   const lastUsedMs = row.last_used_at ? new Date(row.last_used_at).getTime() : 0;
-  if (lastUsedMs && Date.now() - lastUsedMs > sessionIdleMs()) {
+  const idleMs = row.remember_me ? rememberedSessionIdleMs() : sessionIdleMs();
+  if (lastUsedMs && Date.now() - lastUsedMs > idleMs) {
     await pool.query('DELETE FROM saas_meta.sessions WHERE token = $1', [token]);
     return null;
   }
@@ -234,11 +244,19 @@ async function invalidateAllStudioSessions(studioId) {
  */
 async function cleanupExpiredSessions() {
   const idleHours = Number(process.env.SESSION_IDLE_HOURS) || 72;
+  const rememberIdleHours = Number(process.env.SESSION_REMEMBER_IDLE_HOURS) || 720;
   const { rowCount } = await pool.query(
     `DELETE FROM saas_meta.sessions
        WHERE expires_at <= now()
-          OR last_used_at < now() - ($1::int || ' hours')::interval`,
-    [idleHours]
+          OR (
+            remember_me = false
+            AND last_used_at < now() - ($1::int || ' hours')::interval
+          )
+          OR (
+            remember_me = true
+            AND last_used_at < now() - ($2::int || ' hours')::interval
+          )`,
+    [idleHours, rememberIdleHours]
   );
   return rowCount;
 }

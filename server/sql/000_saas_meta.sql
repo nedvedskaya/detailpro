@@ -59,9 +59,12 @@ CREATE TABLE IF NOT EXISTS saas_meta.sessions (
     expires_at      TIMESTAMPTZ NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    remember_me     BOOLEAN NOT NULL DEFAULT FALSE,
     user_agent      TEXT,
     ip              INET
 );
+ALTER TABLE saas_meta.sessions
+    ADD COLUMN IF NOT EXISTS remember_me BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON saas_meta.sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_studio ON saas_meta.sessions(studio_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON saas_meta.sessions(expires_at);
