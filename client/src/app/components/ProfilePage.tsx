@@ -670,8 +670,8 @@ const DemoDataField = () => {
 };
 
 // ──────────────────────────────────────────────────────────────────────
-// Расчёт сколько бонусов применится — нужен ТОЛЬКО для UI-превью (старая
-// перечёркнутая цена + строка «Применятся бонусы: до X»). Реальное значение,
+// Расчёт сколько бонусов применится — нужен ТОЛЬКО для UI-превью строки
+// «Применятся бонусы: до X». Реальное значение,
 // которое уйдёт в Prodamus, считает сервер при выдаче intent — фронт
 // никогда не отправляет этот расчёт «на доверии».
 //
@@ -782,7 +782,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
   };
 
   // UI-превью: сколько применится бонусов на месячном/годовом — для
-  // перечёркнутой цены и подписи внизу карточки. Реальное значение
+  // подписи внизу карточки. Реальное значение
   // считает сервер при создании intent'а.
   // Pro-rata зачёт от Соло применяется ДО бонусов: вычитаем его сначала,
   // и только из остатка считаем сколько бонусов влезет (с учётом MIN 50 ₽).
@@ -793,10 +793,8 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
   const yearlyAfterProrate  = Math.max(0, yearlyBaseRub  - proratedYearlyRub);
   const monthlyUse = calcBonusUsage(monthlyAfterProrate, bonusBalanceKop);
   const yearlyUse  = calcBonusUsage(yearlyAfterProrate,  bonusBalanceKop);
-  const monthlyFinalRub = Math.max(MIN_PAYABLE_RUB, monthlyUse.finalRub);
-  const yearlyFinalRub  = Math.max(MIN_PAYABLE_RUB, yearlyUse.finalRub);
-  const monthlyHasDiscount = proratedMonthlyRub > 0 || monthlyUse.useKop > 0 || extraMonthlyRub > 0;
-  const yearlyHasDiscount  = proratedYearlyRub  > 0 || yearlyUse.useKop  > 0 || extraYearlyRub  > 0;
+  const monthlyTotalRub = group.monthly.priceRub + extraMonthlyRub;
+  const yearlyTotalRub = group.yearly.priceRub + extraYearlyRub;
 
   // Студия: оранжевая рамка + лёгкий tint, бейдж «ПОПУЛЯРНО».
   // Соло: нейтральная рамка.
@@ -898,16 +896,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
         }
       >
         <span className="text-xs">{busy === group.monthly.id ? 'Открываем…' : 'Оплатить на 1 месяц'}</span>
-        {monthlyHasDiscount ? (
-          <span className="mt-0.5 text-lg font-bold">
-            <span className="line-through text-zinc-400 text-sm font-normal mr-2">
-              {formatRub(monthlyBaseRub)}
-            </span>
-            {formatRub(monthlyFinalRub)}
-          </span>
-        ) : (
-          <span className="mt-0.5 text-lg font-bold">{formatRub(group.monthly.priceRub)}</span>
-        )}
+        <span className="mt-0.5 text-lg font-bold">{formatRub(monthlyTotalRub)}</span>
       </button>
 
       {/* Кнопка «Оплатить на 12 месяцев» с ribbon-бейджем скидки сбоку.
@@ -931,16 +920,7 @@ const TariffCardView = ({ group, isCurrent, email, bonusBalanceKop = 0, prorated
           </span>
         )}
         <span className="text-xs opacity-90">{busy === group.yearly.id ? 'Открываем…' : 'Оплатить на 12 месяцев'}</span>
-        {yearlyHasDiscount ? (
-          <span className="mt-0.5 text-lg font-bold">
-            <span className="line-through opacity-70 text-sm font-normal mr-2">
-              {formatRub(yearlyBaseRub)}
-            </span>
-            {formatRub(yearlyFinalRub)}
-          </span>
-        ) : (
-          <span className="mt-0.5 text-lg font-bold">{formatRub(group.yearly.priceRub)}</span>
-        )}
+        <span className="mt-0.5 text-lg font-bold">{formatRub(yearlyTotalRub)}</span>
       </button>
 
       {error && (
