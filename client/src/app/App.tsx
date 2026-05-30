@@ -217,12 +217,11 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                         <input type="text" name="birthDate" value={String(formData.birthDate || '')} onChange={handleChange} placeholder="ДД.ММ.ГГГГ" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" />
                     </div>
                     <AutocompleteInput name="city" value={formData.city} onChange={handleChange} options={CITIES_DATABASE} placeholder="Город" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" />
-                    <div className="bg-white border border-zinc-300 rounded-xl p-4 shadow-sm">
-                        <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="bg-white border border-zinc-300 rounded-xl p-3 shadow-sm">
+                        <div className="flex items-center justify-between gap-3 mb-2">
                             <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Цветовая метка</span>
-                            <span className="text-xs font-bold text-zinc-400">{CLIENT_CARD_COLORS.find(color => color.id === (formData.cardColor || 'none'))?.label || 'Без метки'}</span>
                         </div>
-                        <div className="grid grid-cols-4 gap-2">
+                        <div className="flex flex-wrap gap-2">
                             {CLIENT_CARD_COLORS.map((color) => {
                                 const selected = (formData.cardColor || 'none') === color.id;
                                 return (
@@ -230,13 +229,13 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                                         key={color.id}
                                         type="button"
                                         onClick={() => setFormData(prev => ({ ...prev, cardColor: color.id }))}
-                                        className={`h-11 rounded-xl border flex items-center justify-center transition-all ${selected ? 'border-zinc-900 ring-2 ring-zinc-900/10' : 'border-zinc-200 hover:border-zinc-400'}`}
+                                        className={`h-8 min-w-8 rounded-lg border flex items-center justify-center transition-all ${selected ? 'border-zinc-900 ring-2 ring-zinc-900/10' : 'border-zinc-200 hover:border-zinc-400'}`}
                                         aria-label={color.label}
                                         title={color.label}
                                     >
                                         {color.hex
-                                            ? <span className="w-6 h-6 rounded-full" style={{ backgroundColor: color.hex }} />
-                                            : <span className="text-xs font-bold text-zinc-500">Нет</span>}
+                                            ? <span className="w-[18px] h-[18px] rounded-full" style={{ backgroundColor: color.hex }} />
+                                            : <span className="text-[10px] font-bold text-zinc-500 px-1.5">Нет</span>}
                                     </button>
                                 );
                             })}
@@ -527,10 +526,13 @@ const App = () => {
           endDate: record.endDate,
           time: record.time,
           service: record.service,
+          category: record.category,
+          paymentStatus: record.paymentStatus,
           title: `${client.carBrand || ''} (${record.service || ''})`,
           type: 'work',
           isCompleted: record.isCompleted || false,
-          isUrgent: record.isUrgent || false
+          isUrgent: record.isUrgent || false,
+          recordColor: record.recordColor || 'none'
         });
       });
     });

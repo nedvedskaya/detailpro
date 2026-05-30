@@ -330,13 +330,14 @@ export const ClientDetails = ({
             <div className="space-y-3">
               {activeRecords.map((record: any) => {
                 const category = findCategoryById(categories || [], record.category);
-                const topBarColor = 'bg-gradient-to-r from-orange-400 to-orange-500';
+                const recordColorHex = getClientCardColorHex(record.recordColor || (record.isUrgent ? 'red' : 'none'));
+                const topBarColor = recordColorHex ? '' : 'bg-gradient-to-r from-orange-400 to-orange-500';
                 const iconColor = 'text-orange-500';
 
                 return (
                   <div key={record.id} className="space-y-2">
                     <div className="rounded-2xl bg-zinc-100 border border-zinc-200 shadow-md overflow-hidden">
-                      <div className={`h-1.5 ${topBarColor}`}></div>
+                      <div className={`h-1.5 ${topBarColor}`} style={recordColorHex ? { backgroundColor: recordColorHex } : undefined}></div>
                       
                       <div className="p-3 space-y-2.5">
                         <div className="flex items-center justify-between">
@@ -351,6 +352,11 @@ export const ClientDetails = ({
                         
                         <div>
                           <h3 className="text-sm font-semibold text-zinc-900 leading-snug line-clamp-2">{String(record.service || '')}</h3>
+                          {recordColorHex && (
+                            <div className="flex items-center gap-1.5 mt-2">
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: recordColorHex }} />
+                            </div>
+                          )}
                           {category && (
                             <div className="flex items-center gap-1.5 mt-2">
                               <div className="w-2 h-2 rounded-full" style={{ backgroundColor: category.color }} />

@@ -1,5 +1,6 @@
 import React from 'react';
 import { parseDateParts } from '@/utils/helpers';
+import { getClientCardColorHex, getReadableTextColor } from '@/utils/clientColors';
 
 interface CalendarEvent {
     id?: string;
@@ -11,6 +12,7 @@ interface CalendarEvent {
     title?: string;
     isCompleted?: boolean;
     isUrgent?: boolean;
+    recordColor?: string;
 }
 
 interface CalendarGridProps {
@@ -204,10 +206,10 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                 }}
             >
                 {processedEvents.map((ev) => {
-                    const bgClass = ev.isCompleted
+                    const recordColor = ev.recordColor || (ev.isUrgent ? 'red' : 'none');
+                    const colorHex = getClientCardColorHex(recordColor);
+                    const fallbackBgClass = ev.isCompleted
                         ? 'bg-gradient-to-r from-zinc-300 to-zinc-400'
-                        : ev.isUrgent
-                        ? 'bg-gradient-to-r from-red-500 to-red-600'
                         : 'bg-gradient-to-r from-orange-400 to-orange-500';
                     
                     // Скругление углов
@@ -231,7 +233,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                     return (
                         <div
                             key={ev.eventId}
-                            className={`absolute px-1 py-0.5 ${roundedClass} text-[8px] font-bold text-white shadow-sm pointer-events-auto cursor-pointer overflow-hidden whitespace-nowrap text-ellipsis ${bgClass}`}
+                            className={`absolute px-1 py-0.5 ${roundedClass} text-[8px] font-bold shadow-sm pointer-events-auto cursor-pointer overflow-hidden whitespace-nowrap text-ellipsis ${colorHex && !ev.isCompleted ? '' : `${fallbackBgClass} text-white`}`}
                             style={{
                                 left: leftPos,
                                 width: widthCalc,
@@ -239,6 +241,7 @@ export const CalendarGrid: React.FC<CalendarGridProps> = ({
                                 height: '18px',
                                 minHeight: '18px',
                                 zIndex: 10,
+                                ...(colorHex && !ev.isCompleted ? { backgroundColor: colorHex, color: getReadableTextColor(recordColor) } : {}),
                             }}
                             onClick={(e) => {
                                 e.stopPropagation();

@@ -11,6 +11,7 @@ import { AppointmentInputs } from '@/app/components/forms/AppointmentInputs';
 import { CalendarGrid } from '@/app/components/CalendarGrid';
 import { showToast } from '@/app/components/ui/Toast';
 import { PaymentBadge } from '@/app/components/ui/PaymentBadge';
+import { getClientCardColorHex } from '@/utils/clientColors';
 
 interface CalendarViewProps {
     events: any[];
@@ -134,6 +135,7 @@ export const CalendarView = ({
                      categories={categories}
                      tags={tags}
                      users={users}
+                     priceList={priceList}
                  />
              )}
              <div className="px-4 py-2 flex items-center justify-between bg-white/50 backdrop-blur-sm shrink-0">
@@ -192,7 +194,8 @@ export const CalendarView = ({
                                     const category = findCategoryById(categories || [], ev.category);
                                     const record = client?.records?.find((r: any) => r.id === ev.recordId);
                                     const isCompleted = record?.isCompleted;
-                                    const isUrgent = record?.isUrgent;
+                                    const recordColor = record?.recordColor || ev.recordColor || (record?.isUrgent ? 'red' : 'none');
+                                    const recordColorHex = getClientCardColorHex(recordColor);
                                     let bgGradient = 'from-zinc-50 to-white';
                                     let borderColor = 'border-zinc-200';
                                     let timeBg = 'bg-zinc-500';
@@ -201,10 +204,6 @@ export const CalendarView = ({
                                         bgGradient = 'from-gray-50 to-white';
                                         borderColor = 'border-gray-200';
                                         timeBg = 'bg-gray-500';
-                                    } else if (isUrgent) {
-                                        bgGradient = 'from-red-50 to-white';
-                                        borderColor = 'border-red-200';
-                                        timeBg = 'bg-red-600';
                                     } else {
                                         bgGradient = 'from-orange-50 to-white';
                                         borderColor = 'border-orange-200';
@@ -215,7 +214,10 @@ export const CalendarView = ({
                                         <div key={idx} className={`bg-gradient-to-r ${bgGradient} border ${borderColor} rounded-2xl p-4 shadow-sm`}>
                                             <div className="flex items-start justify-between mb-3">
                                                 <div className="flex items-center gap-3 flex-1">
-                                                    <div className={`${timeBg} text-white rounded-xl px-3 py-2 font-black text-sm shrink-0`}>
+                                                    <div
+                                                        className={`${timeBg} text-white rounded-xl px-3 py-2 font-black text-sm shrink-0`}
+                                                        style={recordColorHex && !isCompleted ? { backgroundColor: recordColorHex } : undefined}
+                                                    >
                                                         {formatTime(ev.time)}
                                                     </div>
                                                     {ev.paymentStatus === 'paid' && (
@@ -240,6 +242,9 @@ export const CalendarView = ({
                                                             <ChevronRightIcon size={20} className="text-orange-500 shrink-0 group-hover:translate-x-1 transition-transform" strokeWidth={3} />
                                                         </div>
                                                         <p className="text-sm font-bold text-zinc-700 mt-1">{String(ev.service || 'Услуга')}</p>
+                                                        {recordColorHex && !isCompleted && (
+                                                            <div className="w-2 h-2 rounded-full mt-1" style={{ backgroundColor: recordColorHex }} />
+                                                        )}
                                                         <div className="flex items-center gap-2 mt-1 flex-wrap">
                                                             {category && (
                                                                 <div className="flex items-center gap-1.5">

@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
-import { AlertCircle } from 'lucide-react';
 import { getDateStr, matchId } from '@/utils/helpers';
 import { ServicesPicker, ServiceLine, PriceListItem } from '@/app/components/ui/ServicesPicker';
+import { CLIENT_CARD_COLORS } from '@/utils/clientColors';
 
 interface Category {
     id: string;
@@ -33,6 +33,7 @@ interface AppointmentData {
     advanceDate?: string;
     paymentStatus?: string;
     master_id?: string | null;
+    recordColor?: string;
     isUrgent?: boolean;
 }
 
@@ -267,18 +268,30 @@ export const AppointmentInputs: React.FC<AppointmentInputsProps> = ({ data, onCh
                 </div>
             </div>
 
-            <button
-                type="button"
-                onClick={() => onChange({ target: { name: 'isUrgent', value: !data.isUrgent } })}
-                className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${
-                    data.isUrgent
-                    ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
-                    : 'bg-gray-100 text-gray-400 hover:bg-red-50 hover:text-red-400'
-                }`}
-            >
-                <AlertCircle size={16} />
-                {data.isUrgent ? 'Важная запись' : 'Отметить как важную'}
-            </button>
+            <div>
+                <span className="text-xs text-gray-400 font-semibold block mb-2">Цвет записи</span>
+                <div className="flex flex-wrap gap-2">
+                    {CLIENT_CARD_COLORS.map((color) => {
+                        const selected = (data.recordColor || 'none') === color.id;
+                        return (
+                            <button
+                                key={color.id}
+                                type="button"
+                                onClick={() => onChange({ target: { name: 'recordColor', value: color.id } })}
+                                className={`h-9 min-w-9 rounded-xl border flex items-center justify-center transition-all ${
+                                    selected ? 'border-zinc-900 ring-2 ring-zinc-900/10' : 'border-zinc-200 bg-white'
+                                }`}
+                                aria-label={color.label}
+                                title={color.label}
+                            >
+                                {color.hex
+                                    ? <span className="w-5 h-5 rounded-full" style={{ backgroundColor: color.hex }} />
+                                    : <span className="text-[11px] font-bold text-zinc-500 px-2">Нет</span>}
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
         </div>
     );
 };

@@ -18,3 +18,7 @@ export const getClientCardColor = (value?: string | null) => (
 export const getClientCardColorHex = (value?: string | null) => getClientCardColor(value).hex;
 
 export const hasClientCardColor = (value?: string | null) => Boolean(getClientCardColorHex(value));
+
+export const getReadableTextColor = (value?: string | null) => (
+  value === 'yellow' ? '#18181b' : '#ffffff'
+);

@@ -821,7 +821,7 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
   const {
     client_id, vehicle_id, booking_id, service_name, description, amount,
     date, time, master_id, is_paid, is_completed, is_urgent,
-    advance, advance_date, end_date, category_id, payment_status, tags,
+    advance, advance_date, end_date, category_id, payment_status, tags, record_color, recordColor,
     services: rawServices,
   } = req.body || {};
   const cid = badId(client_id);
@@ -858,8 +858,8 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
     `INSERT INTO {{schema}}.client_records
        (client_id, vehicle_id, booking_id, service_name, description, amount,
         date, time, master_id, is_paid, is_completed, is_urgent,
-        advance, advance_date, end_date, category_id, payment_status, tags, services)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb)
+        advance, advance_date, end_date, category_id, payment_status, tags, services, record_color)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb,$20)
      RETURNING *`,
     [
       cid, badId(vehicle_id), badId(booking_id),
@@ -871,6 +871,7 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
       payment_status || 'none',
       JSON.stringify(normalizedTags),
       JSON.stringify(finalServices),
+      normalizeClientCardColor(record_color ?? recordColor),
     ]
   );
   logAction(req, 'create', 'client_record', r.rows[0].id, finalServiceName);
@@ -895,6 +896,9 @@ router.put('/client-records/:id', canWriteCalendar, async (req, res, next) => {
       resolved = await resolveServices(req.session.schemaName, fields.services);
     } catch (err) { if (handleFieldError(err, res)) return; throw err; }
   }
+  if (fields.recordColor !== undefined && fields.record_color === undefined) {
+    fields.record_color = fields.recordColor;
+  }
 
   const allowed = {
     service_name: 'service_name',
@@ -912,6 +916,7 @@ router.put('/client-records/:id', canWriteCalendar, async (req, res, next) => {
     payment_status: 'payment_status',
     tags: 'tags',
     master_id: 'master_id',
+    record_color: 'record_color',
   };
   const set = [];
   const values = [];
@@ -931,6 +936,7 @@ router.put('/client-records/:id', canWriteCalendar, async (req, res, next) => {
       try { val = await assertUserInStudio(val, req.session.studioId, 'master_id'); }
       catch (err) { if (handleFieldError(err, res)) return; throw err; }
     }
+    if (key === 'record_color') val = normalizeClientCardColor(val);
     set.push(`${col} = $${pi++}`);
     values.push(val);
   }
