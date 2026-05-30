@@ -321,6 +321,9 @@ export const api = {
     email: string;
     password: string;
     name: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
     role: string;
     permissions?: { clients: string; tasks: string; calendar: string; finance: string } | null;
   }) {
@@ -329,6 +332,9 @@ export const api = {
   updateAdminUser(id: string, patch: {
     email?: string;
     name?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    phone?: string | null;
     role?: string;
     is_active?: boolean;
     can_view_finance?: boolean;

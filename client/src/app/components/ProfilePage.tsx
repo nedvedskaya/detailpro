@@ -45,7 +45,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Overlay } from './ui/Overlay';
-import { ChevronDown, ChevronLeft } from 'lucide-react';
+import { ChevronDown, ChevronLeft, Lock } from 'lucide-react';
 import { api } from '@/utils/api';
 import { translateApiError } from '@/utils/errorMessages';
 import { getRoleName } from '@/utils/constants';
@@ -1251,6 +1251,10 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
   // в /clients/bulk через requireRole('owner','manager').
   const [importOpen, setImportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [passwordForm, setPasswordForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+  const [passwordShow, setPasswordShow] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     void loadProfile();
@@ -1303,6 +1307,38 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
       });
     } catch (err) {
       handleApiError(err, 'Не удалось сохранить — проверьте соединение', 'updateProfile');
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const { oldPassword, newPassword, confirmPassword } = passwordForm;
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      setPasswordMessage({ type: 'error', text: 'Заполните все поля' });
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPasswordMessage({ type: 'error', text: 'Новый пароль должен быть не менее 8 символов' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordMessage({ type: 'error', text: 'Пароли не совпадают' });
+      return;
+    }
+    if (oldPassword === newPassword) {
+      setPasswordMessage({ type: 'error', text: 'Новый пароль совпадает с текущим' });
+      return;
+    }
+    try {
+      setPasswordSubmitting(true);
+      setPasswordMessage(null);
+      await api.changePassword(oldPassword, newPassword);
+      setPasswordForm({ oldPassword: '', newPassword: '', confirmPassword: '' });
+      setPasswordMessage({ type: 'success', text: 'Пароль изменён. Остальные сессии завершены.' });
+    } catch (err) {
+      setPasswordMessage({ type: 'error', text: translateApiError(err, 'Не удалось изменить пароль') });
+    } finally {
+      setPasswordSubmitting(false);
     }
   };
 
@@ -1642,11 +1678,6 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
         </div>
 
         {/* ── 1. Шапка: аватар + ФИО + роль ───────────────────────── */}
-        {/*
-          Master свой аватар не меняет — кнопка/бейдж выбора файла спрятаны,
-          сама аватарка отображается как картинка-плашка без onClick.
-          (Бэк это тоже подтверждает 403 'master_cannot_edit'.)
-        */}
         <div className="bg-white rounded-2xl shadow-sm border border-zinc-100 p-6 mb-4">
           <div className="flex flex-col items-center">
             <div className="relative">
@@ -1715,10 +1746,6 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
         </div>
 
         {/* ── 2. Личные данные ──────────────────────────────────── */}
-        {/*
-          Для master'a поля ФИО/телефон показываем в режиме просмотра — его
-          данные правит owner через админ-панель. См. canEditOwnProfile().
-        */}
         <CollapsibleSection title="Личные данные">
           <EditableField
             label="Имя"
@@ -1757,6 +1784,73 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
             <span className="text-xs text-zinc-400 block mb-1">Дата регистрации</span>
             <span className="text-zinc-900">{formatDateRu(user.createdAt)}</span>
           </div>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Пароль" defaultOpen={false}>
+          <form onSubmit={handleChangePassword} className="px-6 py-5 space-y-4">
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Текущий пароль</label>
+              <input
+                type={passwordShow ? 'text' : 'password'}
+                value={passwordForm.oldPassword}
+                onChange={(e) => {
+                  setPasswordForm({ ...passwordForm, oldPassword: e.target.value });
+                  setPasswordMessage(null);
+                }}
+                className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Новый пароль</label>
+              <input
+                type={passwordShow ? 'text' : 'password'}
+                value={passwordForm.newPassword}
+                onChange={(e) => {
+                  setPasswordForm({ ...passwordForm, newPassword: e.target.value });
+                  setPasswordMessage(null);
+                }}
+                className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+                autoComplete="new-password"
+                minLength={8}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Повторите новый пароль</label>
+              <input
+                type={passwordShow ? 'text' : 'password'}
+                value={passwordForm.confirmPassword}
+                onChange={(e) => {
+                  setPasswordForm({ ...passwordForm, confirmPassword: e.target.value });
+                  setPasswordMessage(null);
+                }}
+                className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+                autoComplete="new-password"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-zinc-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={passwordShow}
+                onChange={(e) => setPasswordShow(e.target.checked)}
+                className="w-4 h-4 accent-orange-500"
+              />
+              Показать пароли
+            </label>
+            {passwordMessage && (
+              <p className={`text-xs font-medium ${passwordMessage.type === 'success' ? 'text-emerald-600' : 'text-red-500'}`}>
+                {passwordMessage.text}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={passwordSubmitting}
+              className="w-full py-3 rounded-xl bg-zinc-900 text-white font-bold active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Lock size={16} />
+              {passwordSubmitting ? 'Сохранение…' : 'Изменить пароль'}
+            </button>
+          </form>
         </CollapsibleSection>
 
         {/* ── 2a. Telegram ─────────────────────────────────────────

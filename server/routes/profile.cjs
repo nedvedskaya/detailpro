@@ -31,7 +31,7 @@ const sharp = require('sharp');
 const crypto = require('node:crypto');
 
 const { pool } = require('../lib/db.cjs');
-const { requireAuth, requireNotMaster } = require('../lib/middleware.cjs');
+const { requireAuth } = require('../lib/middleware.cjs');
 const { planMeta, maxUsersForPlan, planHasDailySummary } = require('../lib/plans.cjs');
 const { isValidEmail } = require('../lib/validation.cjs');
 const { deactivateSubscription } = require('../lib/prodamus.cjs');
@@ -91,6 +91,24 @@ function buildDisplayName(row) {
   return combined || row.name || '';
 }
 
+function profileNameParts(row) {
+  const firstName = row.first_name || null;
+  const lastName = row.last_name || null;
+  if (firstName || lastName) return { firstName, lastName };
+
+  const legacyName = String(row.name || '').trim();
+  const emailPrefix = String(row.email || '').split('@')[0];
+  if (!legacyName || legacyName.includes('@') || legacyName === emailPrefix) {
+    return { firstName: null, lastName: null };
+  }
+
+  const parts = legacyName.split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || null,
+    lastName: parts.slice(1).join(' ') || null,
+  };
+}
+
 function computeCanViewFinance(role, flag) {
   // master никогда не видит финансы (хардкод; toggle для master в админке скрыт);
   // owner всегда видит; manager — по флагу (default true для не-мигрированных БД).
@@ -130,6 +148,7 @@ function parseDailySummaryTime(raw) {
 function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
   const meta = planMeta(studioRow.plan);
   const maxUsers = maxUsersForPlan(studioRow.plan) + (studioRow.extra_users_count || 0);
+  const nameParts = profileNameParts(userRow);
 
   // Приватные поля студии — это персональные данные владельца как ИП/юрлица:
   //   • реквизиты для документов (ИНН, ОГРН, адреса, телефон, email студии,
@@ -148,8 +167,8 @@ function shapeProfileResponse({ userRow, studioRow, currentUsers }) {
       id: userRow.id,
       email: userRow.email,
       role: userRow.role,
-      firstName: userRow.first_name,
-      lastName: userRow.last_name,
+      firstName: nameParts.firstName,
+      lastName: nameParts.lastName,
       name: buildDisplayName(userRow),
       phone: userRow.phone,
       avatarPath: userRow.avatar_path,
@@ -283,13 +302,8 @@ router.get('/', requireAuth, async (req, res, next) => {
 // PATCH /api/profile
 // Body: { firstName?, lastName?, phone? }
 // ──────────────────────────────────────────────────────────────────────
-router.patch('/', requireAuth, requireNotMaster, async (req, res, next) => {
+router.patch('/', requireAuth, async (req, res, next) => {
   try {
-    // Master-проверка вынесена в requireNotMaster (см. lib/middleware.cjs).
-    // Без неё UI на /profile у мастера показывал форму, бэк молча принимал
-    // апдейт, но иногда падал на других гардах — юзер видел красную
-    // ошибку и не понимал что именно не так.
-
     const body = req.body || {};
     const fields = {};
 
@@ -516,8 +530,7 @@ router.patch('/studio', requireAuth, async (req, res, next) => {
 // POST /api/profile/avatar
 // multipart/form-data: avatar=<file>
 // ──────────────────────────────────────────────────────────────────────
-router.post('/avatar', requireAuth, requireNotMaster, (req, res, next) => {
-  // Master-проверка — в requireNotMaster middleware.
+router.post('/avatar', requireAuth, (req, res, next) => {
   upload.single('avatar')(req, res, async (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -568,7 +581,7 @@ router.post('/avatar', requireAuth, requireNotMaster, (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 // DELETE /api/profile/avatar
 // ──────────────────────────────────────────────────────────────────────
-router.delete('/avatar', requireAuth, requireNotMaster, async (req, res, next) => {
+router.delete('/avatar', requireAuth, async (req, res, next) => {
   const userId = req.session.userId;
   const fullPath = path.join(AVATARS_DIR, `${userId}.webp`);
 

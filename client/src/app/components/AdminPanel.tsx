@@ -69,6 +69,19 @@ function generateTempPassword(): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+function splitDisplayName(name?: string | null) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' '),
+  };
+}
+
+function composeDisplayName(firstName?: string | null, lastName?: string | null, fallback?: string | null) {
+  return [firstName, lastName].map(v => String(v || '').trim()).filter(Boolean).join(' ')
+    || String(fallback || '').trim();
+}
+
 const SECTION_NAMES: Record<SectionKey, string> = {
   clients: 'Клиенты', tasks: 'Задачи', calendar: 'Календарь', finance: 'Финансы',
 };
@@ -187,16 +200,16 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
   // ── Add-модалка ──
   const [showAddModal, setShowAddModal] = useState(false);
   const [addForm, setAddForm] = useState<{
-    email: string; password: string; name: string; role: Role; permissions: SectionPermissions;
-  }>({ email: '', password: generateTempPassword(), name: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
+    email: string; password: string; firstName: string; lastName: string; phone: string; role: Role; permissions: SectionPermissions;
+  }>({ email: '', password: generateTempPassword(), firstName: '', lastName: '', phone: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [copiedAddPwd, setCopiedAddPwd] = useState(false);
 
   // ── Edit-модалка ──
   const [editTarget, setEditTarget] = useState<StudioUser | null>(null);
   const [editForm, setEditForm] = useState<{
-    name: string; role: Role; permissions: SectionPermissions;
-  }>({ name: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
+    firstName: string; lastName: string; phone: string; role: Role; permissions: SectionPermissions;
+  }>({ firstName: '', lastName: '', phone: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
   const [editSubmitting, setEditSubmitting] = useState(false);
 
   // ── Reset-password модалка (показ временного пароля один раз) ──
@@ -323,14 +336,14 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       showToast(`Лимит тарифа «${planLabel}» — ${limits.maxUsers}. Повысьте тариф в Профиле.`, 'warning');
       return;
     }
-    setAddForm({ email: '', password: generateTempPassword(), name: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
+    setAddForm({ email: '', password: generateTempPassword(), firstName: '', lastName: '', phone: '', role: 'manager', permissions: { ...MANAGER_PRESET } });
     setCopiedAddPwd(false);
     setShowAddModal(true);
   };
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!addForm.email || !addForm.password || !addForm.name) {
+    if (!addForm.email || !addForm.password || !addForm.firstName.trim()) {
       showToast('Заполните все обязательные поля', 'warning');
       return;
     }
@@ -340,10 +353,14 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
     }
     try {
       setAddSubmitting(true);
+      const displayName = composeDisplayName(addForm.firstName, addForm.lastName, addForm.email.split('@')[0]);
       const payload = {
         email: addForm.email.trim(),
         password: addForm.password,
-        name: addForm.name.trim(),
+        name: displayName,
+        firstName: addForm.firstName.trim(),
+        lastName: addForm.lastName.trim(),
+        phone: addForm.phone.trim(),
         role: addForm.role,
         permissions: addForm.permissions,
       };
@@ -375,7 +392,9 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       }
     }
     setEditForm({
-      name: u.name,
+      firstName: u.first_name || splitDisplayName(u.name).firstName,
+      lastName: u.last_name || splitDisplayName(u.name).lastName,
+      phone: u.phone || '',
       role: u.role === 'owner' ? 'owner' : u.role,
       permissions: initPerms,
     });
@@ -387,8 +406,19 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
     try {
       setEditSubmitting(true);
       const patch: Parameters<typeof api.updateAdminUser>[1] = {};
-      if (editForm.name.trim() && editForm.name.trim() !== editTarget.name) {
-        patch.name = editForm.name.trim();
+      const nextName = composeDisplayName(editForm.firstName, editForm.lastName, editTarget.email.split('@')[0]);
+      const currentName = composeDisplayName(editTarget.first_name, editTarget.last_name, editTarget.name);
+      if (nextName !== currentName) {
+        patch.name = nextName;
+      }
+      if (editForm.firstName.trim() !== (editTarget.first_name || '')) {
+        patch.firstName = editForm.firstName.trim() || null;
+      }
+      if (editForm.lastName.trim() !== (editTarget.last_name || '')) {
+        patch.lastName = editForm.lastName.trim() || null;
+      }
+      if (editForm.phone.trim() !== (editTarget.phone || '')) {
+        patch.phone = editForm.phone.trim() || null;
       }
       if (editTarget.role !== 'owner' && editForm.role !== editTarget.role) {
         patch.role = editForm.role;
@@ -641,6 +671,9 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
                           )}
                         </div>
                         <p className="text-xs text-zinc-400 font-medium truncate">{u.email}</p>
+                        {u.phone && (
+                          <p className="text-xs text-zinc-400 font-medium truncate">{u.phone}</p>
+                        )}
                       </div>
                     </div>
 
@@ -896,14 +929,35 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       {/* ─────────── Модалка: добавить сотрудника ─────────── */}
       <Modal isOpen={showAddModal} onClose={() => !addSubmitting && setShowAddModal(false)} title="Добавить сотрудника" position="center">
         <form onSubmit={handleAddSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-sm font-bold text-zinc-700 mb-1.5">Имя *</label>
             <input
               type="text"
-              value={addForm.name}
-              onChange={(e) => setAddForm({ ...addForm, name: e.target.value })}
+              value={addForm.firstName}
+              onChange={(e) => setAddForm({ ...addForm, firstName: e.target.value })}
               className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
               required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-zinc-700 mb-1.5">Фамилия</label>
+            <input
+              type="text"
+              value={addForm.lastName}
+              onChange={(e) => setAddForm({ ...addForm, lastName: e.target.value })}
+              className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+            />
+          </div>
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-zinc-700 mb-1.5">Телефон</label>
+            <input
+              type="tel"
+              value={addForm.phone}
+              onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
+              className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+              placeholder="+7 (___) ___-__-__"
             />
           </div>
           <div>
@@ -1004,14 +1058,35 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       >
         {editTarget && (
           <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-bold text-zinc-700 mb-1.5">Имя *</label>
               <input
                 type="text"
-                value={editForm.name}
-                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                value={editForm.firstName}
+                onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
                 className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
                 required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1.5">Фамилия</label>
+              <input
+                type="text"
+                value={editForm.lastName}
+                onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
+                className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+              />
+            </div>
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-zinc-700 mb-1.5">Телефон</label>
+              <input
+                type="tel"
+                value={editForm.phone}
+                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                className="w-full px-4 py-3 border border-zinc-200 rounded-xl font-bold outline-none focus:border-orange-500 transition-all"
+                placeholder="+7 (___) ___-__-__"
               />
             </div>
             <div>

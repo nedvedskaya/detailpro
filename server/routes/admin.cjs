@@ -59,6 +59,12 @@ function audit(req, action, target, extra = {}) {
   return logFromReq(req, action, 'user', entityId, entityName, extra.details || null);
 }
 
+function buildUserDisplayName(firstName, lastName, fallbackName, email) {
+  return [firstName, lastName].filter(Boolean).join(' ').trim()
+    || fallbackName
+    || (typeof email === 'string' ? email.split('@')[0] : null);
+}
+
 // Генератор временного пароля (для admin-reset). 12 символов base64url —
 // ~72 бит энтропии, безопасно для одноразового пароля. Показывается в UI
 // один раз и не хранится в открытом виде нигде.
@@ -237,24 +243,33 @@ router.post('/users', async (req, res, next) => {
 
 // ──────────────────────────────────────────────────────────────────────
 // PUT /api/admin/users/:id
-// Body: { name?, role?, is_active? }
+// Body: { name?, firstName?, lastName?, phone?, role?, is_active? }
 // ──────────────────────────────────────────────────────────────────────
 router.put('/users/:id', async (req, res, next) => {
   const { id } = req.params;
   const target = await fetchOwnUserOfStudio(id, req.session.studioId);
   if (!target) return res.status(404).json({ error: 'user_not_found' });
 
-  const { name, role, is_active, can_view_finance, permissions } = req.body || {};
+  const { name, firstName, lastName, phone, role, is_active, can_view_finance, permissions } = req.body || {};
 
   // Длина name. Раньше принималась строка любого размера → DB-constraint
   // или silent truncation. Если name НЕ передан — оставляем текущее
   // значение (обработка ниже через `name !== undefined`), так что null
   // корректно сериализуется.
-  let nameC;
+  let nameC, firstNameC, lastNameC, phoneC;
   try {
     nameC = name === undefined
       ? undefined
       : (assertOptionalString(name, 'name', USER_NAME_MAX));
+    firstNameC = firstName === undefined
+      ? undefined
+      : assertOptionalString(firstName, 'firstName', USER_NAME_MAX);
+    lastNameC = lastName === undefined
+      ? undefined
+      : assertOptionalString(lastName, 'lastName', USER_NAME_MAX);
+    phoneC = phone === undefined
+      ? undefined
+      : assertOptionalString(phone, 'phone', USER_PHONE_MAX);
   } catch (err) { if (handleFieldError(err, res)) return; throw err; }
 
   // self-protection: нельзя себя downgrade или дезактивировать
@@ -280,7 +295,12 @@ router.put('/users/:id', async (req, res, next) => {
 
   const newRole = role && VALID_ROLES.includes(role) ? role : target.role;
   const newActive = typeof is_active === 'boolean' ? is_active : target.is_active;
-  const newName = nameC !== undefined ? nameC : target.name;
+  const newFirstName = firstNameC !== undefined ? firstNameC : target.first_name;
+  const newLastName = lastNameC !== undefined ? lastNameC : target.last_name;
+  const newPhone = phoneC !== undefined ? phoneC : target.phone;
+  const newName = nameC !== undefined
+    ? nameC
+    : buildUserDisplayName(newFirstName, newLastName, target.name, target.email);
 
   // Видимость финансов:
   //   - master никогда не видит → принудительно false
@@ -307,11 +327,16 @@ router.put('/users/:id', async (req, res, next) => {
 
   const r = await pool.query(
     `UPDATE saas_meta.users
-        SET name = $1, role = $2, is_active = $3, can_view_finance = $4, permissions = $5
-      WHERE id = $6 AND studio_id = $7
+        SET name = $1, first_name = $2, last_name = $3, phone = $4,
+            role = $5, is_active = $6, can_view_finance = $7, permissions = $8
+      WHERE id = $9 AND studio_id = $10
       RETURNING id, email, name, first_name, last_name, phone, avatar_path,
                 role, is_active, created_at, can_view_finance, permissions, last_login_at`,
-    [newName, newRole, newActive, newFinance, newPermissions ? JSON.stringify(newPermissions) : null, id, req.session.studioId]
+    [
+      newName, newFirstName, newLastName, newPhone,
+      newRole, newActive, newFinance, newPermissions ? JSON.stringify(newPermissions) : null,
+      id, req.session.studioId,
+    ]
   );
 
   // Diff для аудита: что реально поменялось. Все строки сразу на русском —
@@ -320,6 +345,9 @@ router.put('/users/:id', async (req, res, next) => {
   const yn = (b) => (b ? 'да' : 'нет');
   const changes = [];
   if (newName !== target.name) changes.push(`имя: «${target.name}» → «${newName}»`);
+  if (newFirstName !== target.first_name) changes.push('имя в профиле: обновлено');
+  if (newLastName !== target.last_name) changes.push('фамилия в профиле: обновлена');
+  if (newPhone !== target.phone) changes.push('телефон: обновлён');
   if (newRole !== target.role) changes.push(`роль: ${ROLE_RU[target.role] || target.role} → ${ROLE_RU[newRole] || newRole}`);
   if (newActive !== target.is_active) changes.push(`активен: ${yn(target.is_active)} → ${yn(newActive)}`);
   if (newFinance !== (target.can_view_finance !== false)) {

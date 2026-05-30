@@ -1188,7 +1188,7 @@ router.get('/activity-logs', requireRole('owner'), async (req, res, next) => {
 
 router.get('/users', async (req, res, next) => {
   const r = await query(
-    `SELECT id, email, name, role, is_active, created_at
+    `SELECT id, email, name, first_name, last_name, phone, role, is_active, created_at
        FROM saas_meta.users
       WHERE studio_id = $1
       ORDER BY name NULLS LAST, email`,
@@ -1201,6 +1201,9 @@ router.get('/users', async (req, res, next) => {
     id: u.id,
     email: u.email,
     name: u.name,
+    first_name: u.first_name,
+    last_name: u.last_name,
+    phone: u.phone,
     role: u.role,
     is_active: u.is_active,
     created_at: u.created_at,
