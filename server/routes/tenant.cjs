@@ -77,7 +77,7 @@ function normalizeTags(raw, fieldName = 'tags') {
 router.get('/clients', async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
-    `SELECT id, name, phone, email, city, source, notes, birth_date, avatar, created_at, updated_at
+    `SELECT id, name, phone, email, city, source, notes, birth_date, avatar, card_color, created_at, updated_at
        FROM {{schema}}.clients ORDER BY created_at DESC`
   );
   res.json(r.rows);
@@ -93,9 +93,16 @@ const CLIENT_EMAIL_MAX = 254;       // RFC 5321
 const CLIENT_CITY_MAX = 100;
 const CLIENT_SOURCE_MAX = 100;
 const CLIENT_NOTES_MAX = 5000;
+const CLIENT_CARD_COLORS = new Set(['none', 'red', 'yellow', 'green', 'blue', 'purple', 'pink', 'gray']);
+
+function normalizeClientCardColor(raw) {
+  if (typeof raw !== 'string') return 'none';
+  const value = raw.trim().toLowerCase();
+  return CLIENT_CARD_COLORS.has(value) ? value : 'none';
+}
 
 router.post('/clients', canWriteClients, async (req, res, next) => {
-  const { name, phone, email, notes, source, city, birth_date, avatar } = req.body || {};
+  const { name, phone, email, notes, source, city, birth_date, avatar, card_color, cardColor } = req.body || {};
   let nameC, phoneC, emailC, notesC, sourceC, cityC;
   try {
     nameC   = assertString(name, 'name', CLIENT_NAME_MAX);
@@ -108,9 +115,9 @@ router.post('/clients', canWriteClients, async (req, res, next) => {
 
   const r = await queryInSchema(
     req.session.schemaName,
-    `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date, avatar)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null]
+    `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date, avatar, card_color)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null, normalizeClientCardColor(card_color ?? cardColor)]
   );
   logAction(req, 'create', 'client', r.rows[0].id, r.rows[0].name);
   // Помечаем первое создание клиента для воронки прогрева (no-op для повторных).
@@ -133,7 +140,7 @@ router.post('/clients', canWriteClients, async (req, res, next) => {
 router.put('/clients/:id', canWriteClients, async (req, res, next) => {
   const id = badId(req.params.id);
   if (!id) return res.status(400).json({ error: 'invalid_id' });
-  const { name, phone, email, notes, source, city, birth_date, avatar } = req.body || {};
+  const { name, phone, email, notes, source, city, birth_date, avatar, card_color, cardColor } = req.body || {};
   let nameC, phoneC, emailC, notesC, sourceC, cityC;
   try {
     nameC   = assertString(name, 'name', CLIENT_NAME_MAX);
@@ -148,10 +155,10 @@ router.put('/clients/:id', canWriteClients, async (req, res, next) => {
     req.session.schemaName,
     `UPDATE {{schema}}.clients
         SET name=$1, phone=$2, email=$3, notes=$4, source=$5, city=$6, birth_date=$7,
-            avatar = COALESCE($8, avatar), updated_at = now()
-      WHERE id=$9 RETURNING *`,
+            avatar = COALESCE($8, avatar), card_color=$9, updated_at = now()
+      WHERE id=$10 RETURNING *`,
     [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null,
-     avatar !== undefined ? avatar : null, id]
+     avatar !== undefined ? avatar : null, normalizeClientCardColor(card_color ?? cardColor), id]
   );
   if (!r.rows[0]) return res.status(404).json({ error: 'client_not_found' });
   logAction(req, 'update', 'client', id, r.rows[0].name);

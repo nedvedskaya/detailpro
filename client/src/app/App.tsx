@@ -58,6 +58,7 @@ import type { Studio, UserData, Role } from '@/utils/types';
 import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canEditEntities, canEditTasks, canViewFinance } from '@/utils/permissions';
 import { api } from '@/utils/api';
 import { validateClient, validateTask, hasErrors } from '@/utils/validation';
+import { CLIENT_CARD_COLORS } from '@/utils/clientColors';
 
 // --- HELPER COMPONENTS ---
 
@@ -116,7 +117,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
   const isDirty = React.useMemo(() => {
     if (newRecords.length > 0 || newTasks.length > 0) return true;
     const initial = initialDataRef.current;
-    const fields = ['name', 'phone', 'email', 'carBrand', 'carModel', 'city', 'birthDate', 'source', 'licensePlate', 'vin', 'comment'];
+    const fields = ['name', 'phone', 'email', 'carBrand', 'carModel', 'city', 'birthDate', 'source', 'licensePlate', 'vin', 'comment', 'cardColor'];
     return fields.some(f => (formData[f] || '') !== (initial[f] || ''));
   }, [formData, newRecords, newTasks]);
 
@@ -216,6 +217,31 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                         <input type="text" name="birthDate" value={String(formData.birthDate || '')} onChange={handleChange} placeholder="ДД.ММ.ГГГГ" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" />
                     </div>
                     <AutocompleteInput name="city" value={formData.city} onChange={handleChange} options={CITIES_DATABASE} placeholder="Город" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" />
+                    <div className="bg-white border border-zinc-300 rounded-xl p-4 shadow-sm">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                            <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Цветовая метка</span>
+                            <span className="text-xs font-bold text-zinc-400">{CLIENT_CARD_COLORS.find(color => color.id === (formData.cardColor || 'none'))?.label || 'Без метки'}</span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-2">
+                            {CLIENT_CARD_COLORS.map((color) => {
+                                const selected = (formData.cardColor || 'none') === color.id;
+                                return (
+                                    <button
+                                        key={color.id}
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, cardColor: color.id }))}
+                                        className={`h-11 rounded-xl border flex items-center justify-center transition-all ${selected ? 'border-zinc-900 ring-2 ring-zinc-900/10' : 'border-zinc-200 hover:border-zinc-400'}`}
+                                        aria-label={color.label}
+                                        title={color.label}
+                                    >
+                                        {color.hex
+                                            ? <span className="w-6 h-6 rounded-full" style={{ backgroundColor: color.hex }} />
+                                            : <span className="text-xs font-bold text-zinc-500">Нет</span>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
                 </div>
                 <div className="flex gap-3">
                     <div className="w-1/2 relative"><AutocompleteInput name="carBrand" value={formData.carBrand} onChange={handleChange} options={Object.keys(CAR_DATABASE)} aliases={CAR_ALIASES} placeholder="Марка" className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-bold outline-none shadow-sm" disabled={readOnlyIdentity} /><ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" /></div>

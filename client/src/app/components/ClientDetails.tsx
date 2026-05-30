@@ -16,6 +16,7 @@ import { BTN_METAL, CARD_METAL } from '@/utils/constants';
 import { PaymentBadge } from '@/app/components/ui/PaymentBadge';
 import { formatDate, formatTime, formatMoney, getDateStr, findCategoryById, matchId } from '@/utils/helpers';
 import { getInitialTaskState, getInitialRecordState } from '@/utils/initialStates';
+import { getClientCardColorHex } from '@/utils/clientColors';
 import { validateClientRecord, validateTask, hasErrors } from '@/utils/validation';
 import { sanitizeTelUrl, sanitizeWhatsAppUrl, sanitizeTelegramUrl, safeOpenLink } from '@/utils/sanitize';
 
@@ -68,6 +69,7 @@ export const ClientDetails = ({
   const [completingRecordId, setCompletingRecordId] = useState<any>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<any>(null);
   const [savingRecord, setSavingRecord] = useState(false);
+  const cardColorHex = getClientCardColorHex(client.cardColor);
   // Открытое окно документа (акт приёмки / заказ-наряд) для конкретной брони.
   // null — закрыто. id здесь — bookingId; форма сама подгрузит/создаст документ.
   const [openDoc, setOpenDoc] = useState<{ bookingId: number; type: 'act' | 'order'; title: string } | null>(null);
@@ -180,7 +182,10 @@ export const ClientDetails = ({
               onAvatarDelete={onUpdateAvatar ? () => onUpdateAvatar(client.id, null) : undefined}
             />
           </div>
-          <h2 className="text-3xl font-black text-black leading-tight mb-2">{String(client.name || '')}</h2>
+          <h2 className="text-3xl font-black text-black leading-tight mb-2 inline-flex items-center justify-center gap-2 max-w-full">
+            {cardColorHex && <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: cardColorHex }} />}
+            <span className="truncate">{String(client.name || '')}</span>
+          </h2>
           <span className="text-xl font-medium text-zinc-400">{String(client.phone || '')}</span>
           
           <div className="mt-4 mb-6" />

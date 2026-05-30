@@ -172,6 +172,7 @@ export interface Client {
   birthDate?: string;
   city?: string;
   source?: string;
+  cardColor?: string;
   // поле branch удалено: в SaaS-модели нет филиалов
   carBrand?: string;
   carModel?: string;

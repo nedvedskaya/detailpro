@@ -1,6 +1,7 @@
 import { Car, Cake } from 'lucide-react';
 import { Badge, ActionButtons } from '@/app/components/ui';
 import { ClientAvatar } from '@/app/components/ui/ClientAvatar';
+import { getClientCardColorHex } from '@/utils/clientColors';
 import { isBirthdayToday } from '@/utils/helpers';
 
 interface ClientListCardProps {
@@ -19,6 +20,7 @@ export const ClientListCard = ({
   const activeRecords = (client.records || []).filter((r: any) => !r.isCompleted);
   const hasActiveBooking = activeRecords.length > 0;
   const hasBirthday = isBirthdayToday(client.birthDate);
+  const cardColorHex = getClientCardColorHex(client.cardColor);
 
   return (
     <div 
@@ -30,6 +32,9 @@ export const ClientListCard = ({
       {hasActiveBooking && (
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-500 to-orange-600" />
       )}
+      {cardColorHex && (
+        <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ backgroundColor: cardColorHex }} />
+      )}
       
       <div className="flex items-start gap-3">
         <ClientAvatar name={client.name} avatar={client.avatar} size="sm" />
@@ -37,8 +42,9 @@ export const ClientListCard = ({
         {/* Основная информация */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between mb-1">
-            <h3 className="font-bold text-base text-zinc-900 truncate">
-              {String(client.name || '')}
+            <h3 className="font-bold text-base text-zinc-900 truncate flex items-center gap-2 min-w-0">
+              {cardColorHex && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cardColorHex }} />}
+              <span className="truncate">{String(client.name || '')}</span>
             </h3>
             <ActionButtons onEdit={onEdit} onDelete={onDelete} />
           </div>

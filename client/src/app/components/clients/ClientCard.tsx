@@ -1,4 +1,5 @@
 import { ContactButtons } from '@/app/components/ui';
+import { getClientCardColorHex } from '@/utils/clientColors';
 import { formatDate } from '@/utils/helpers';
 
 interface ClientCardProps {
@@ -14,11 +15,17 @@ export const ClientCard = ({
   showComment = true,
   className = '' 
 }: ClientCardProps) => {
+  const cardColorHex = getClientCardColorHex(client.cardColor);
+
   if (compact) {
     return (
-      <div className={`p-3 bg-zinc-50 rounded-lg border border-zinc-200 ${className}`}>
+      <div className={`p-3 bg-zinc-50 rounded-lg border border-zinc-200 relative overflow-hidden ${className}`}>
+        {cardColorHex && <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ backgroundColor: cardColorHex }} />}
         <div className="flex items-center justify-between mb-2">
-          <h4 className="font-bold text-sm">{String(client.name || '')}</h4>
+          <h4 className="font-bold text-sm flex items-center gap-2 min-w-0">
+            {cardColorHex && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cardColorHex }} />}
+            <span className="truncate">{String(client.name || '')}</span>
+          </h4>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-600">
           <span>{String(client.phone || '')}</span>
@@ -30,9 +37,13 @@ export const ClientCard = ({
   }
 
   return (
-    <div className={`p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3 ${className}`}>
+    <div className={`p-4 rounded-xl bg-zinc-50 border border-zinc-200 space-y-3 relative overflow-hidden ${className}`}>
+      {cardColorHex && <div className="absolute left-0 top-0 bottom-0 w-1.5" style={{ backgroundColor: cardColorHex }} />}
       <div className="flex items-center justify-between">
-        <h4 className="font-bold text-sm">{String(client.name || '')}</h4>
+        <h4 className="font-bold text-sm flex items-center gap-2 min-w-0">
+          {cardColorHex && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: cardColorHex }} />}
+          <span className="truncate">{String(client.name || '')}</span>
+        </h4>
         <ContactButtons phone={client.phone} size="md" />
       </div>
       

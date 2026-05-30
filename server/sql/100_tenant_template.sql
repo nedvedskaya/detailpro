@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS {{schema}}.clients (
     source       VARCHAR(100),         -- откуда пришёл клиент
     birth_date   VARCHAR(20),          -- свободный формат (как в исходном CRM)
     avatar       TEXT,                 -- base64-картинка (как в исходном; на S3 — позже)
+    card_color   TEXT NOT NULL DEFAULT 'none',
     is_demo      BOOLEAN NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -473,6 +474,7 @@ $cross_tenant_triggers$;
 -- Новые студии получают is_demo сразу из CREATE TABLE выше.
 -- ──────────────────────────────────────────────────────────────────────
 ALTER TABLE {{schema}}.clients         ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE {{schema}}.clients         ADD COLUMN IF NOT EXISTS card_color TEXT NOT NULL DEFAULT 'none';
 ALTER TABLE {{schema}}.vehicles        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.services        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE {{schema}}.bookings        ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;

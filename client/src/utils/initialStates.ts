@@ -40,6 +40,7 @@ export const getInitialClientState = () => ({
   phone: '',
   birthDate: '',
   city: '',
+  cardColor: 'none',
   avatar: null as string | null,
   carBrand: '',
   carModel: '',

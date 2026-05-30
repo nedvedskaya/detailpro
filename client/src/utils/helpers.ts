@@ -332,6 +332,7 @@ export const normalizeClient = (client: any, records: any[] = []) => {
     ...client,
     city: client.city || '',
     source: client.source || '',
+    cardColor: client.card_color || client.cardColor || 'none',
     birthDate: client.birth_date || '',
     avatar: client.avatar || null,
     carBrand: parsedNotes.carBrand || '',
@@ -367,6 +368,7 @@ export const buildClientPayload = (data: any) => ({
   email: data.email || '',
   city: data.city || '',
   source: data.source || '',
+  card_color: data.cardColor || 'none',
   birth_date: data.birthDate || null,
   avatar: data.avatar || null,
   notes: JSON.stringify({
