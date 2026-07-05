@@ -46,6 +46,7 @@ import { Modal } from '@/app/components/ui/Modal';
 import { showToast } from '@/app/components/ui/Toast';
 import { handleApiError } from '@/utils/stateHelpers';
 import { getUser } from '@/utils/auth';
+import { isAllowedAuthEmail, isValidEmail } from '@/utils/validation';
 import type { ProfileResponse, Role, StudioUser, ActivityLogEntry } from '@/utils/types';
 
 interface AdminPanelProps {
@@ -347,6 +348,15 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       showToast('Заполните все обязательные поля', 'warning');
       return;
     }
+    const email = addForm.email.trim();
+    if (!isValidEmail(email)) {
+      showToast('Введите корректный email', 'warning');
+      return;
+    }
+    if (!isAllowedAuthEmail(email)) {
+      showToast('Для нового сотрудника используйте российскую почту: Яндекс, Mail.ru или корпоративный домен РФ', 'warning');
+      return;
+    }
     if (addForm.password.length < 8) {
       showToast('Пароль должен быть не менее 8 символов', 'warning');
       return;
@@ -355,7 +365,7 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
       setAddSubmitting(true);
       const displayName = composeDisplayName(addForm.firstName, addForm.lastName, addForm.email.split('@')[0]);
       const payload = {
-        email: addForm.email.trim(),
+        email,
         password: addForm.password,
         name: displayName,
         firstName: addForm.firstName.trim(),
