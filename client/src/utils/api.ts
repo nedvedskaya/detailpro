@@ -309,8 +309,8 @@ export const api = {
       delivery: 'tg' | 'no_channel' | 'tg_if_linked';
     }>('POST', '/auth/password-reset/request', { email });
   },
-  confirmPasswordReset(token: string, newPassword: string) {
-    return send<{ ok: true }>('POST', '/auth/password-reset/confirm', { token, newPassword });
+  confirmPasswordReset(token: string, newPassword: string, rememberMe = true) {
+    return send<{ ok: true }>('POST', '/auth/password-reset/confirm', { token, newPassword, rememberMe });
   },
 
   // ────── админка студии (role=owner) ──────

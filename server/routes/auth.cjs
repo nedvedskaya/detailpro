@@ -132,6 +132,15 @@ function clearSessionCookie(res) {
   res.clearCookie(SESSION_COOKIE_NAME, { ...sessionCookieOpts(), expires: new Date(0) });
 }
 
+async function currentSessionRememberMe(req) {
+  if (!req.sessionToken) return false;
+  const { rows } = await pool.query(
+    'SELECT remember_me FROM saas_meta.sessions WHERE token = $1',
+    [req.sessionToken]
+  );
+  return rows[0]?.remember_me === true;
+}
+
 async function recordConsent(client, { userId, email, types, policyVersion, policyUrl, ip, userAgent }) {
   // types — массив строк: ['personal_data', 'terms', ...]
   for (const t of types) {
@@ -661,6 +670,7 @@ router.post('/password', requireAuth, async (req, res, next) => {
     if (!ok) return res.status(401).json({ error: 'invalid_old_password' });
 
     const newHash = await hashPassword(newPassword);
+    const rememberMe = await currentSessionRememberMe(req);
     await pool.query(
       'UPDATE saas_meta.users SET password_hash = $1 WHERE id = $2',
       [newHash, req.session.userId]
@@ -675,8 +685,9 @@ router.post('/password', requireAuth, async (req, res, next) => {
       schemaName: req.session.schemaName,
       userAgent: req.headers['user-agent'] || null,
       ip: clientIp(req),
+      rememberMe,
     });
-    setSessionCookie(res, session.token, session.expiresAt);
+    setSessionCookie(res, session.token, rememberMe ? session.expiresAt : null);
 
     res.json({ ok: true });
   } catch (err) {
@@ -798,7 +809,7 @@ router.post('/password-reset/request', async (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 router.post('/password-reset/confirm', async (req, res, next) => {
   try {
-    const { token, newPassword } = req.body || {};
+    const { token, newPassword, rememberMe } = req.body || {};
     if (typeof token !== 'string' || !token) {
       return res.status(400).json({ error: 'token_required' });
     }
@@ -855,8 +866,9 @@ router.post('/password-reset/confirm', async (req, res, next) => {
       schemaName: user.schema_name,
       userAgent:  req.headers['user-agent'] || null,
       ip:         clientIp(req),
+      rememberMe: rememberMe !== false,
     });
-    setSessionCookie(res, session.token, session.expiresAt);
+    setSessionCookie(res, session.token, rememberMe === false ? null : session.expiresAt);
 
     // Уведомление в TG: «пароль изменён». Если не вы — поддержка.
     if (user.tg_chat_id) {
