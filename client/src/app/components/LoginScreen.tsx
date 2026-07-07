@@ -18,7 +18,7 @@ import { useState, useEffect } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { api } from '@/utils/api';
 import { translateApiError } from '@/utils/errorMessages';
-import { isValidEmail, isAllowedAuthEmail, PASSWORD_MIN_LENGTH } from '@/utils/validation';
+import { isValidEmail, PASSWORD_MIN_LENGTH } from '@/utils/validation';
 import type { Studio } from '@/utils/types';
 
 interface LoginScreenProps {
@@ -169,9 +169,6 @@ export const LoginScreen = ({ onLogin }: LoginScreenProps) => {
     if (!firstName.trim()) return setError('Введите ваше имя');
     if (!email.trim()) return setError('Введите email');
     if (!isValidEmail(email)) return setError('Введите корректный email');
-    if (!isAllowedAuthEmail(email)) {
-      return setError('Для регистрации используйте российскую почту: Яндекс, Mail.ru или корпоративный домен РФ');
-    }
     if (!password || password.length < PASSWORD_MIN_LENGTH) {
       return setError(`Пароль должен быть не менее ${PASSWORD_MIN_LENGTH} символов`);
     }

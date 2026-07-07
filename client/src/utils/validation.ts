@@ -11,45 +11,11 @@
 // Должен побайтно совпадать с EMAIL_REGEX в server/lib/validation.cjs.
 export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export const FOREIGN_PUBLIC_EMAIL_DOMAINS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'outlook.com',
-  'hotmail.com',
-  'live.com',
-  'msn.com',
-  'yahoo.com',
-  'ymail.com',
-  'aol.com',
-  'proton.me',
-  'protonmail.com',
-  'pm.me',
-  'zoho.com',
-  'gmx.com',
-  'gmx.net',
-  'mail.com',
-  'tutanota.com',
-  'tuta.com',
-  'fastmail.com',
-]);
-
 // Минимум 8 символов — синхронно с PASSWORD_MIN_LENGTH на сервере.
 export const PASSWORD_MIN_LENGTH = 8;
 
 export const isValidEmail = (v: unknown): v is string =>
   typeof v === 'string' && EMAIL_REGEX.test(v);
-
-export const getEmailDomain = (v: unknown): string =>
-  isValidEmail(v) ? v.split('@').pop()!.toLowerCase() : '';
-
-export const isForeignPublicEmail = (v: unknown): boolean =>
-  FOREIGN_PUBLIC_EMAIL_DOMAINS.has(getEmailDomain(v));
-
-export const isAllowedAuthEmail = (v: unknown): boolean =>
-  isValidEmail(v) && !isForeignPublicEmail(v);
 
 export const isValidPassword = (v: unknown): v is string =>
   typeof v === 'string' && v.length >= PASSWORD_MIN_LENGTH;

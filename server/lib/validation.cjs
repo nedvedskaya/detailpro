@@ -25,35 +25,6 @@
 // пустая локальная часть, нет домена, нет TLD, пробелы.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Домены публичных иностранных почтовых сервисов. Для регистрации новых
-// аккаунтов используем консервативный фильтр: собственная email+password
-// авторизация остаётся нашей, но новые пользователи не должны заводиться на
-// очевидные Gmail/Apple/Outlook/etc. адреса из-за требований к авторизации РФ.
-const FOREIGN_PUBLIC_EMAIL_DOMAINS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'outlook.com',
-  'hotmail.com',
-  'live.com',
-  'msn.com',
-  'yahoo.com',
-  'ymail.com',
-  'aol.com',
-  'proton.me',
-  'protonmail.com',
-  'pm.me',
-  'zoho.com',
-  'gmx.com',
-  'gmx.net',
-  'mail.com',
-  'tutanota.com',
-  'tuta.com',
-  'fastmail.com',
-]);
-
 // Минимальная длина пароля. Меняется только здесь (до этого было захардкожено
 // в auth/admin/tenant_provisioning — ловили баг, что в одном месте 8, в другом 6).
 const PASSWORD_MIN_LENGTH = 8;
@@ -68,20 +39,6 @@ const PG_INT4_MAX = 2147483647;
  */
 function isValidEmail(v) {
   return typeof v === 'string' && EMAIL_REGEX.test(v);
-}
-
-function emailDomain(v) {
-  if (!isValidEmail(v)) return '';
-  return v.split('@').pop().toLowerCase();
-}
-
-function isForeignPublicEmail(v) {
-  const domain = emailDomain(v);
-  return Boolean(domain && FOREIGN_PUBLIC_EMAIL_DOMAINS.has(domain));
-}
-
-function isAllowedAuthEmail(v) {
-  return isValidEmail(v) && !isForeignPublicEmail(v);
 }
 
 /**
@@ -419,12 +376,9 @@ async function checkEmailMx(email) {
 
 module.exports = {
   EMAIL_REGEX,
-  FOREIGN_PUBLIC_EMAIL_DOMAINS,
   PASSWORD_MIN_LENGTH,
   PG_INT4_MAX,
   isValidEmail,
-  isForeignPublicEmail,
-  isAllowedAuthEmail,
   isValidPassword,
   isCommonPassword,
   isRepeatingChar,

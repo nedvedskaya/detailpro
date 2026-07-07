@@ -46,7 +46,7 @@ import { Modal } from '@/app/components/ui/Modal';
 import { showToast } from '@/app/components/ui/Toast';
 import { handleApiError } from '@/utils/stateHelpers';
 import { getUser } from '@/utils/auth';
-import { isAllowedAuthEmail, isValidEmail } from '@/utils/validation';
+import { isValidEmail } from '@/utils/validation';
 import type { ProfileResponse, Role, StudioUser, ActivityLogEntry } from '@/utils/types';
 
 interface AdminPanelProps {
@@ -351,10 +351,6 @@ export const AdminPanel = ({ onBack, onUsersChange }: AdminPanelProps) => {
     const email = addForm.email.trim();
     if (!isValidEmail(email)) {
       showToast('Введите корректный email', 'warning');
-      return;
-    }
-    if (!isAllowedAuthEmail(email)) {
-      showToast('Для нового сотрудника используйте российскую почту: Яндекс, Mail.ru или корпоративный домен РФ', 'warning');
       return;
     }
     if (addForm.password.length < 8) {

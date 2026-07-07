@@ -39,7 +39,7 @@ const {
   suggestSchemaName,
 } = require('../lib/tenant_provisioning.cjs');
 const { validateSchemaName } = require('../lib/tenant.cjs');
-const { assertStrongPassword, checkEmailMx, isValidEmail, isAllowedAuthEmail } = require('../lib/validation.cjs');
+const { assertStrongPassword, checkEmailMx, isValidEmail } = require('../lib/validation.cjs');
 const { logAction } = require('../lib/audit.cjs');
 const { securityLog, SEVERITY } = require('../lib/security_log.cjs');
 const tgClient = require('../lib/telegram.cjs');
@@ -215,9 +215,6 @@ router.post('/signup', async (req, res, next) => {
 
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'email_invalid' });
-    }
-    if (!isAllowedAuthEmail(email)) {
-      return res.status(400).json({ error: 'foreign_email_not_allowed' });
     }
 
     // MX-проверка: отсекаем несуществующие домены (test@aaa.ru и т.п.)

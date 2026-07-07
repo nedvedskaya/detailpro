@@ -39,7 +39,6 @@ const { planMeta, maxUsersForPlan } = require('../lib/plans.cjs');
 const { logFromReq } = require('../lib/audit.cjs');
 const {
   isValidEmail,
-  isAllowedAuthEmail,
   assertStrongPassword,
   assertString,
   assertOptionalString,
@@ -165,9 +164,6 @@ router.post('/users', async (req, res, next) => {
   const { email, password, name, firstName, lastName, phone, role, can_view_finance, permissions } = req.body || {};
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: 'email_invalid' });
-  }
-  if (!isAllowedAuthEmail(email)) {
-    return res.status(400).json({ error: 'foreign_email_not_allowed' });
   }
   // Раннее отклонение: слабый пароль или слишком короткий → 400 со специфическим
   // кодом, чтобы фронт мог показать «придумайте надёжнее» вместо generic ошибки.
