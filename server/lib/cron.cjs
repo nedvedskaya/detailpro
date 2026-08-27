@@ -30,10 +30,20 @@ const funnelDispatcher = require('./funnel_dispatcher.cjs');
 const cleanup = require('./cleanup.cjs');
 const birthdays = require('./birthdays.cjs');
 
-const ACTIVITY_RETENTION_DAYS = Number(process.env.ACTIVITY_RETENTION_DAYS) || 90;
-const CRON_INTERVAL_MS = Number(process.env.CRON_INTERVAL_MS) || ONE_DAY_MS;
+function boundedInt(name, fallback, min, max) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+const ACTIVITY_RETENTION_DAYS = boundedInt('ACTIVITY_RETENTION_DAYS', 90, 1, 3650);
+const CRON_INTERVAL_MS = boundedInt('CRON_INTERVAL_MS', ONE_DAY_MS, 60_000, 31 * ONE_DAY_MS);
 // Тикер TG-напоминаний. 5 минут — окна 9:00-9:09 и 55-65 мин его покрывают.
-const REMINDERS_INTERVAL_MS = Number(process.env.REMINDERS_INTERVAL_MS) || FIVE_MINUTES_MS;
+const REMINDERS_INTERVAL_MS = boundedInt('REMINDERS_INTERVAL_MS', FIVE_MINUTES_MS, 60_000, ONE_DAY_MS);
 
 let timer = null;
 let remindersTimer = null;
@@ -148,7 +158,8 @@ async function runOnce() {
   // Retention брошенных студий — warnings + delete. dryRun-флаг можно
   // включить через ENV для прогона на проде без удалений (RETENTION_DRY_RUN=true).
   try {
-    const dryRun = (process.env.RETENTION_DRY_RUN || '').toLowerCase() === 'true';
+    const deleteEnabled = (process.env.RETENTION_DELETE_ENABLED || '').toLowerCase() === 'true';
+    const dryRun = !deleteEnabled || (process.env.RETENTION_DRY_RUN || '').toLowerCase() === 'true';
     result.studiosCleanup = await cleanup.runCleanup({ dryRun });
   } catch (err) {
     console.error('[cron] studio retention cleanup failed:', err.message);

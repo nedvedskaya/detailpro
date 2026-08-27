@@ -14,9 +14,9 @@ import { PaymentBadge } from '@/app/components/ui/PaymentBadge';
 interface TasksViewProps {
     tasks: Task[];
     onToggleTask: (taskId: string | number) => void;
-    onAddTask: (task: Partial<Task>) => void;
+    onAddTask: (task: Partial<Task>) => Promise<boolean | void>;
     onDeleteTask: (taskId: string | number) => void;
-    onEditTask: (task: Task) => void;
+    onEditTask: (task: Task) => Promise<boolean | void>;
     clients: Client[];
     onOpenClient?: (client: any) => void;
     // canEdit=false → master-режим: скрываем «+» в шапке и удаление/редактирование
@@ -26,15 +26,11 @@ interface TasksViewProps {
 }
 
 const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, onDeleteTask, onEditTask, clients, onOpenClient, canEdit = true }) => {
-    // No-op обработчики для read-only режима (master). Передаём функции, а не
-    // undefined, потому что TaskItem не помечает onToggle/onEdit/onDelete как
-    // опциональные. Реальные «безопасные» хендлеры собираем после объявления
-    // handleEditTask (TDZ — нельзя ссылаться выше).
-    const noop = () => {};
     const [isAdding, setIsAdding] = useState(false);
     const [showArchive, setShowArchive] = useState(false);
     const [editingTask, setEditingTask] = useState<Task | null>(null);
     const [taskFilter, setTaskFilter] = useState('all');
+    const [savingTask, setSavingTask] = useState(false);
     const [newTask, setNewTask] = useState({
         ...getInitialTaskState(),
         clientName: ''
@@ -84,6 +80,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
     const handleEditTask = (task: Task) => {
         setEditingTask(task);
         setNewTask({
+            operationId: (task as any).operationId || (task as any).operation_id || crypto.randomUUID(),
             title: task.title || '',
             date: task.date || getDateStr(0),
             time: task.time || '12:00',
@@ -94,7 +91,8 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
         setIsAdding(true);
     };
     
-    const handleSaveTask = () => {
+    const handleSaveTask = async () => {
+        if (savingTask) return;
         const taskErrors = validateTask({ title: newTask.title });
         if (hasErrors(taskErrors)) {
           alert(Object.values(taskErrors)[0]);
@@ -109,18 +107,21 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                 clientId: client ? client.id : null
             };
             
-            if (editingTask) {
-                onEditTask({ ...editingTask, ...taskData } as Task);
+            setSavingTask(true);
+            try {
+                const result = editingTask
+                    ? await onEditTask({ ...editingTask, ...taskData } as Task)
+                    : await onAddTask(taskData);
+                if (result === false) return;
                 setEditingTask(null);
-            } else {
-                onAddTask(taskData);
+                setIsAdding(false);
+                setNewTask({
+                    ...getInitialTaskState(),
+                    clientName: ''
+                });
+            } finally {
+                setSavingTask(false);
             }
-            
-            setIsAdding(false);
-            setNewTask({
-                ...getInitialTaskState(),
-                clientName: ''
-            });
         }
     };
 
@@ -228,8 +229,9 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 size="lg"
                                 fullWidth
                                 onClick={handleSaveTask}
+                                disabled={savingTask}
                             >
-                                {editingTask ? 'Сохранить изменения' : 'Добавить задачу'}
+                                {savingTask ? 'Сохранение...' : (editingTask ? 'Сохранить изменения' : 'Добавить задачу')}
                             </Button>
                         </div>
                     </div>
@@ -298,7 +300,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 </div>
                                 {todayTasks.map(t => {
                                     const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
+                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : undefined} onDelete={canEdit ? onDeleteTask : undefined} onEdit={canEdit ? handleEditTask : undefined} client={client} onOpenClient={onOpenClient} />;
                                 })}
                             </div>
                         )}
@@ -311,7 +313,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                                 </div>
                                 {futureTasks.map(t => {
                                     const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
+                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : undefined} onDelete={canEdit ? onDeleteTask : undefined} onEdit={canEdit ? handleEditTask : undefined} client={client} onOpenClient={onOpenClient} />;
                                 })}
                             </div>
                         )}
@@ -340,7 +342,7 @@ const TasksView: React.FC<TasksViewProps> = ({ tasks, onToggleTask, onAddTask, o
                             <div className="space-y-2.5 opacity-60 animate-in fade-in">
                                 {archivedTasks.map(t => {
                                     const client = t.clientId ? clients.find(c => String(c.id) === String(t.clientId)) : null;
-                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : noop} onDelete={canEdit ? onDeleteTask : noop} onEdit={canEdit ? handleEditTask : noop} client={client} onOpenClient={onOpenClient} />;
+                                    return <TaskItem key={t.id} task={t} onToggle={canEdit ? onToggleTask : undefined} onDelete={canEdit ? onDeleteTask : undefined} onEdit={canEdit ? handleEditTask : undefined} client={client} onOpenClient={onOpenClient} />;
                                 })}
                             </div>
                         )}

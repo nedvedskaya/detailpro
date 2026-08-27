@@ -88,11 +88,27 @@ PGSSLMODE_RAW="$(get_env_var PGSSLMODE)"
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 
+# Один бэкап за раз: дублирующиеся cron/systemd-запуски не должны писать
+# одновременно. Файл блокировки остаётся, сама advisory-lock снимается при exit.
+exec 9>"$BACKUP_DIR/.backup.lock"
+if ! flock -n 9; then
+  echo "[$(date -Iseconds)] FAIL: другой backup уже выполняется" >&2
+  exit 1
+fi
+
 # Логи помечаем меткой времени
-TS="$(date +%Y%m%d-%H%M%S)"
-DATE_TAG="$(date +%F)"
-DUMP_FILE="$BACKUP_DIR/saas-${DATE_TAG}.dump"
+TS="$(date +%Y%m%d-%H%M%S)-$$"
+DUMP_FILE="$BACKUP_DIR/saas-${TS}.dump"
+DUMP_PARTIAL="$DUMP_FILE.partial"
+AVATARS_PARTIAL=""
 LOG_PREFIX="[$(date -Iseconds)]"
+
+cleanup_partial() {
+  rm -f "$DUMP_PARTIAL"
+  rm -f "$DUMP_PARTIAL.toc"
+  if [ -n "$AVATARS_PARTIAL" ]; then rm -f "$AVATARS_PARTIAL"; fi
+}
+trap cleanup_partial EXIT
 
 # ── 3. SSL/CA для managed-кластера ────────────────────────────────────
 PGSSLMODE="${PGSSLMODE_RAW:-require}"
@@ -112,7 +128,7 @@ fail() {
 }
 
 # ── 4. pg_dump ────────────────────────────────────────────────────────
-echo "$LOG_PREFIX pg_dump → $DUMP_FILE"
+echo "$LOG_PREFIX pg_dump → $DUMP_PARTIAL"
 if ! pg_dump \
       --host="$DB_HOST" \
       --port="$DB_PORT" \
@@ -120,7 +136,7 @@ if ! pg_dump \
       --no-owner \
       --no-acl \
       --format=custom \
-      --file="$DUMP_FILE" \
+      --file="$DUMP_PARTIAL" \
       "$DB_NAME"; then
   fail "pg_dump exited non-zero"
 fi
@@ -130,19 +146,22 @@ fi
 # вернёт ненулевой код. Stdout уводим в /dev/null, нам важен только exit-code
 # и факт, что в оглавлении есть хотя бы одна таблица.
 echo "$LOG_PREFIX pg_restore --list (integrity check)"
-if ! pg_restore --list "$DUMP_FILE" > "$DUMP_FILE.toc" 2>/dev/null; then
-  rm -f "$DUMP_FILE.toc"
+if ! pg_restore --list "$DUMP_PARTIAL" > "$DUMP_PARTIAL.toc" 2>/dev/null; then
+  rm -f "$DUMP_PARTIAL.toc"
   fail "pg_restore --list failed: дамп битый"
 fi
 
-ENTRIES=$(wc -l < "$DUMP_FILE.toc" | tr -d ' ')
-rm -f "$DUMP_FILE.toc"
+ENTRIES=$(wc -l < "$DUMP_PARTIAL.toc" | tr -d ' ')
+rm -f "$DUMP_PARTIAL.toc"
 
 if [ "$ENTRIES" -lt 5 ]; then
   fail "в дампе слишком мало записей: $ENTRIES — подозрение на пустую БД"
 fi
 
-chmod 600 "$DUMP_FILE"
+chmod 600 "$DUMP_PARTIAL"
+mv "$DUMP_PARTIAL" "$DUMP_FILE"
+sha256sum "$DUMP_FILE" > "$DUMP_FILE.sha256"
+chmod 600 "$DUMP_FILE.sha256"
 SIZE=$(du -h "$DUMP_FILE" | awk '{print $1}')
 echo "$LOG_PREFIX OK: размер $SIZE, записей в TOC $ENTRIES"
 
@@ -150,27 +169,30 @@ echo "$LOG_PREFIX OK: размер $SIZE, записей в TOC $ENTRIES"
 # Не пихаем в pg_dump (раздулся бы). tar отдельным файлом, ротация общая.
 # AVATARS_DIR можно переопределить в .env, по умолчанию — стандартное место.
 AVATARS_DIR="${AVATARS_DIR_RAW:-$PROJECT_ROOT/var/avatars}"
-AVATARS_TGZ="$BACKUP_DIR/avatars-${DATE_TAG}.tgz"
+AVATARS_TGZ="$BACKUP_DIR/avatars-${TS}.tgz"
+AVATARS_PARTIAL="$AVATARS_TGZ.partial"
 if [ -d "$AVATARS_DIR" ]; then
   echo "$LOG_PREFIX tar avatars/ → $AVATARS_TGZ"
-  if tar -C "$(dirname "$AVATARS_DIR")" -czf "$AVATARS_TGZ" "$(basename "$AVATARS_DIR")" 2>/dev/null; then
-    chmod 600 "$AVATARS_TGZ"
+  if tar -C "$(dirname "$AVATARS_DIR")" -czf "$AVATARS_PARTIAL" "$(basename "$AVATARS_DIR")" 2>/dev/null; then
+    chmod 600 "$AVATARS_PARTIAL"
+    mv "$AVATARS_PARTIAL" "$AVATARS_TGZ"
     AVATARS_SIZE=$(du -h "$AVATARS_TGZ" | awk '{print $1}')
     echo "$LOG_PREFIX OK avatars: $AVATARS_SIZE"
   else
     echo "$LOG_PREFIX WARN: tar avatars failed (продолжаем — БД сохранена)" >&2
-    rm -f "$AVATARS_TGZ"
+    rm -f "$AVATARS_PARTIAL"
   fi
 else
   echo "$LOG_PREFIX skip avatars: $AVATARS_DIR не существует"
 fi
 
 # ── 7. Lastrun-маркер для внешнего мониторинга ────────────────────────
-date -Iseconds > "$BACKUP_DIR/lastrun.timestamp"
+date -Iseconds > "$BACKUP_DIR/.lastrun.timestamp.$$"
+mv "$BACKUP_DIR/.lastrun.timestamp.$$" "$BACKUP_DIR/lastrun.timestamp"
 
 # ── 8. Ротация ────────────────────────────────────────────────────────
 echo "$LOG_PREFIX ротация: старше ${BACKUP_RETENTION_DAYS} дней"
-find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'saas-*.dump' -o -name 'avatars-*.tgz' \) \
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'saas-*.dump' -o -name 'saas-*.dump.sha256' -o -name 'avatars-*.tgz' \) \
      -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete || true
 
 echo "$LOG_PREFIX done"

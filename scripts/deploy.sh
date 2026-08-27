@@ -30,7 +30,7 @@
 #   DEPLOY_HOST=83.217.200.79
 #   DEPLOY_USER=deploy
 #   DEPLOY_PATH=/var/www/saas-crm
-#   DEPLOY_HEALTH_URL=https://detailprocrm.ru/api/health
+#   DEPLOY_HEALTH_URL=https://detailprocrm.ru/api/ready
 
 set -euo pipefail
 
@@ -46,7 +46,7 @@ fi
 : "${DEPLOY_HOST:?DEPLOY_HOST не задан (см. .env.deploy)}"
 : "${DEPLOY_USER:=deploy}"
 : "${DEPLOY_PATH:=/var/www/saas-crm}"
-: "${DEPLOY_HEALTH_URL:=https://detailprocrm.ru/api/health}"
+: "${DEPLOY_HEALTH_URL:=https://detailprocrm.ru/api/ready}"
 
 REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
 TS="$(date -Iseconds)"

@@ -106,6 +106,7 @@ export async function bootstrap(): Promise<{ user: UserData; studio: Studio } | 
   try {
     const response = await fetch('/api/auth/me', {
       credentials: 'include',
+      cache: 'no-store',
       signal: ctrl.signal,
     });
     if (response.status === 401) {
@@ -164,6 +165,7 @@ export async function logout(): Promise<void> {
     await fetch('/api/auth/logout', {
       method: 'POST',
       credentials: 'include',
+      cache: 'no-store',
     }).catch(() => {});
   } finally {
     cachedUser = null;

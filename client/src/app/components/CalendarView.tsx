@@ -26,6 +26,7 @@ interface CalendarViewProps {
     // canEdit=false → master-режим: скрываем «+» в шапке. Тап по дню/событию
     // открывает детали клиента в просмотре через onOpenClient.
     canEdit?: boolean;
+    canCreateClients?: boolean;
     // Создание клиента прямо из формы новой брони (sticky-кнопка в выпадашке).
     onAddClient?: (data: any, tasks?: any, records?: any) => Promise<any>;
     ClientForm?: React.ComponentType<any>;
@@ -41,6 +42,7 @@ export const CalendarView = ({
     users = [],
     priceList = [],
     canEdit = true,
+    canCreateClients = true,
     onAddClient,
     ClientForm,
 }: CalendarViewProps) => {
@@ -79,7 +81,7 @@ export const CalendarView = ({
                                 onChange={(e) => setNewEntry({...newEntry, clientName: e.target.value})}
                                 placeholder="Поиск клиента..."
                                 className="w-full bg-zinc-50 border border-zinc-200 rounded-2xl p-4 font-bold outline-none"
-                                topAction={(onAddClient && ClientForm) ? {
+                                topAction={(canCreateClients && onAddClient && ClientForm) ? {
                                     label: '+ Добавить клиента',
                                     onClick: () => setIsAddingClient(true),
                                 } : undefined}
@@ -136,6 +138,8 @@ export const CalendarView = ({
                      tags={tags}
                      users={users}
                      priceList={priceList}
+                     canEditRecords={false}
+                     canEditTasks={false}
                  />
              )}
              <div className="px-4 py-2 flex items-center justify-between bg-white/50 backdrop-blur-sm shrink-0">
@@ -169,13 +173,13 @@ export const CalendarView = ({
                                 <p className="text-sm text-zinc-400 font-medium mt-1">{selectedDateEvents.length} {selectedDateEvents.length === 1 ? 'запись' : 'записей'}</p>
                             </div>
                             <div className="flex gap-2">
-                                <Button 
+                                {canEdit && <Button
                                     variant="primary"
                                     icon={Plus}
                                     onClick={() => { setNewEntry({...newEntry, date: selectedDate}); setSelectedDate(null); setIsAdding(true); }}
                                 >
                                     Добавить
-                                </Button>
+                                </Button>}
                                 <button onClick={() => setSelectedDate(null)} className="bg-zinc-100 p-3 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center">
                                     <X size={22}/>
                                 </button>

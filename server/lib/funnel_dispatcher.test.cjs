@@ -35,8 +35,8 @@ function makeStudio({ daysExpired, paid, hoursUntilExpiry, recurring }) {
 }
 
 test('pickEventKind: s1 (никогда не платил)', () => {
-  // T+0 — окно ещё не открыто
-  assert.equal(pickEventKind(makeStudio({ daysExpired: 0, paid: false })), null);
+  // T+0 — сообщение в день истечения trial (добавлено вместе с day0-шаблоном)
+  assert.equal(pickEventKind(makeStudio({ daysExpired: 0, paid: false })), 's1.day0');
   // T+1 — день 1
   assert.equal(pickEventKind(makeStudio({ daysExpired: 1, paid: false })), 's1.day1');
   // T+2..T+4 — между точками, ничего не шлём

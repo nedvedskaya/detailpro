@@ -16,6 +16,7 @@
 #         notifempty
 #     }
 
+CRON_TZ=Europe/Moscow
 15 3 * * * /var/www/saas-crm/scripts/backup.sh >> /var/log/saas-backup.log 2>&1
 
 # Опционально — еженедельная чистка протухших сессий (понедельник 03:30):

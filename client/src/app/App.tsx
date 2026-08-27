@@ -35,7 +35,7 @@ import { useOnlineStatus } from '@/app/hooks/useOnlineStatus';
 import { usePaymentReturn } from '@/app/hooks/usePaymentReturn';
 import { ToastContainer, showToast } from '@/app/components/ui/Toast';
 import { NetworkIndicator } from '@/app/components/ui/NetworkIndicator';
-import { saveAllData, loadAllData } from '@/app/utils/offlineCache';
+import { saveAllData, loadAllData, removeFromCache } from '@/app/utils/offlineCache';
 
 // Импорт утилит и констант
 import {
@@ -55,7 +55,8 @@ import {
 import { Header } from '@/app/components/ui/Header';
 import { bootstrap as authBootstrap, getUser, getStudio, setSession, logout, isAuthenticated } from '@/utils/auth';
 import type { Studio, UserData, Role } from '@/utils/types';
-import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canEditEntities, canEditTasks, canViewFinance } from '@/utils/permissions';
+import { hasPermission, canAccessTab, getAvailableTabs, isAdmin, canViewSection, canEditSection, canEditTasks, canViewFinance } from '@/utils/permissions';
+import type { SectionPermissions } from '@/utils/permissions';
 import { api } from '@/utils/api';
 import { validateClient, validateTask, hasErrors } from '@/utils/validation';
 import { CLIENT_CARD_COLORS } from '@/utils/clientColors';
@@ -67,7 +68,7 @@ import { CLIENT_CARD_COLORS } from '@/utils/clientColors';
 // AutocompleteInput вынесен в отдельный файл: /src/app/components/ui/AutocompleteInput.tsx
 // AppointmentInputs вынесен в отдельный файл: /src/app/components/forms/AppointmentInputs.tsx
 
-const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, onTabChange = null }) => {
+const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, permissions, onTabChange = null }) => {
   const allTabs = [
     { id: 'clients', icon: Users, label: 'Клиенты' },
     { id: 'tasks', icon: CheckSquare, label: 'Задачи' },
@@ -79,7 +80,7 @@ const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, onTa
   // financeFlag — users.can_view_finance (или undefined для не-мигрированных БД).
   // canAccessTab возвращает false для master на 'finance' и для manager без флага,
   // см. permissions.ts.
-  const tabs = allTabs.filter(tab => canAccessTab(userRole as Role, tab.id, financeFlag));
+  const tabs = allTabs.filter(tab => canAccessTab(userRole as Role, tab.id, financeFlag, permissions));
   
   const handleTabClick = (tabId) => {
     setActiveTab(tabId);
@@ -102,7 +103,7 @@ const TabBar = ({ activeTab, setActiveTab, userRole = 'owner', financeFlag, onTa
 
 // --- 4. FORM COMPONENT (FIXED SCROLL) ---
 
-const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент", readOnlyIdentity = false, categories = [], tags = [], users = [], priceList = [] }) => {
+const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент", readOnlyIdentity = false, categories = [], tags = [], users = [], priceList = [], canEditRecords = true, canEditTasks = true }) => {
   const [formData, setFormData] = useState(client || getInitialClientState());
   const [newTasks, setNewTasks] = useState([]);
   const [taskInput, setTaskInput] = useState(() => getInitialTaskState());
@@ -251,7 +252,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                 </div>
                 <textarea name="comment" value={String(formData.comment || '')} onChange={handleChange} placeholder="Комментарий..." rows={3} className="w-full bg-white border border-zinc-300 rounded-xl p-4 font-medium outline-none focus:border-orange-500 resize-none shadow-sm"/>
             </div>
-            <div className="space-y-4">
+            {canEditRecords && <div className="space-y-4">
                 <div className="flex items-center justify-between">
                     <h3 className="text-xs font-black text-orange-500 uppercase tracking-widest">Запись</h3>
                     <ActionButton variant="metal" size="md" onClick={() => setIsRecordFormOpen(!isRecordFormOpen)}>+ Запись</ActionButton>
@@ -301,8 +302,8 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                         </div>
                     ))}
                 </div>
-            </div>
-            <div className="space-y-4">
+            </div>}
+            {canEditTasks && <div className="space-y-4">
                 <div className="flex items-center justify-between"><h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</h3><ActionButton variant="metal" size="md" onClick={() => setIsTaskFormOpen(!isTaskFormOpen)}>+ Задача</ActionButton></div>
                 {isTaskFormOpen && (
                     <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner">
@@ -329,7 +330,7 @@ const ClientForm = ({ onSave, onCancel, client, title = "Новый клиент
                         </div>
                     ))}
                 </div>
-            </div>
+            </div>}
             
             {/* Кнопка сохранения внизу */}
             <div className="pt-6 pb-4">
@@ -557,22 +558,71 @@ const App = () => {
   
   // Защита от двойного клика (Set содержит recordId которые сейчас обрабатываются)
   const [processingRecords, setProcessingRecords] = useState<Set<number>>(new Set());
+  const dataLoadedOnceRef = useRef(false);
+  const loadedScopeRef = useRef<string | null>(null);
+  // Synchronous revision barrier: a mutation invalidates every GET that was
+  // already in flight before React gets a chance to run effect cleanup.
+  const loadGenerationRef = useRef(0);
+  const [dataRevision, setDataRevision] = useState(0);
+  useEffect(() => {
+    const onMutation = () => {
+      loadGenerationRef.current += 1;
+      setDataRevision(value => value + 1);
+    };
+    window.addEventListener('app:crm-mutated', onMutation);
+    return () => window.removeEventListener('app:crm-mutated', onMutation);
+  }, []);
 
   // Загрузка данных из API при монтировании
   useEffect(() => {
+    let cancelled = false;
     const loadData = async () => {
+      if (!user || !studio) return;
+      const loadGeneration = loadGenerationRef.current;
+      const cacheScope = `${studio.id}:${user.id}`;
+      const isCurrentLoad = () => (
+        !cancelled
+        && loadGenerationRef.current === loadGeneration
+        && loadedScopeRef.current === cacheScope
+      );
+      const permissions = user.permissions as SectionPermissions | null | undefined;
+      const mayViewClients = canViewSection(user.role, permissions, 'clients');
+      const mayViewTasks = canViewSection(user.role, permissions, 'tasks');
+      const mayViewCalendar = canViewSection(user.role, permissions, 'calendar');
+      const mayViewFinance = canViewFinance(user.role, user.canViewFinance, permissions);
+      if (loadedScopeRef.current !== cacheScope) {
+        loadedScopeRef.current = cacheScope;
+        dataLoadedOnceRef.current = false;
+        setClients([]);
+        setTasks([]);
+        setTransactions([]);
+        setCategories([]);
+        setTags([]);
+        setStudioUsers([]);
+        setPriceList([]);
+      }
+      // Отозванные права очищают уже загруженные чувствительные данные сразу,
+      // даже если один из остальных запросов позже завершится ошибкой.
+      if (!mayViewClients) { setClients([]); removeFromCache(cacheScope, 'clients'); }
+      if (!mayViewTasks) { setTasks([]); removeFromCache(cacheScope, 'tasks'); }
+      if (!mayViewFinance) { setTransactions([]); removeFromCache(cacheScope, 'transactions'); }
+      if (!mayViewCalendar) {
+        setClients(prev => prev.map(c => ({ ...c, records: [] })));
+        removeFromCache(cacheScope, 'clients');
+      }
       try {
         setIsLoading(true);
         const [clientsData, tasksData, transactionsData, categoriesData, tagsData, recordsData, usersData, servicesData] = await Promise.all([
-          api.getClients().catch(() => []),
-          api.getTasks().catch(() => []),
-          api.getTransactions().catch(() => []),
-          api.getCategories().catch(() => []),
-          api.getTags().catch(() => []),
-          api.getClientRecords().catch(() => []),
-          api.getUsers().catch(() => []),
-          api.getServices().catch(() => []),
+          mayViewClients ? api.getClients() : Promise.resolve([]),
+          mayViewTasks ? api.getTasks() : Promise.resolve([]),
+          mayViewFinance ? api.getTransactions() : Promise.resolve([]),
+          api.getCategories(),
+          api.getTags(),
+          mayViewCalendar ? api.getClientRecords() : Promise.resolve([]),
+          api.getUsers(),
+          mayViewCalendar ? api.getServices() : Promise.resolve([]),
         ]);
+        if (!isCurrentLoad()) return;
         
         const processedTransactions = (transactionsData || []).map(normalizeTransaction);
         
@@ -597,7 +647,8 @@ const App = () => {
         setTags(tagsData || []);
         setStudioUsers(usersData || []);
         setPriceList(servicesData || []);
-        saveAllData({
+        dataLoadedOnceRef.current = true;
+        saveAllData(cacheScope, {
           clients: clientsWithRecords,
           tasks: processedTasks,
           transactions: processedTransactions,
@@ -605,18 +656,32 @@ const App = () => {
           tags: tagsData || [],
         });
       } catch (error) {
+        if (!isCurrentLoad()) return;
         console.error('Error loading data:', error);
-        const cached = loadAllData();
-        if (cached.clients) {
-          setClients(cached.clients);
-          setTasks(cached.tasks || []);
-          setTransactions(cached.transactions || []);
+        if (dataLoadedOnceRef.current) {
+          showToast('Не удалось обновить данные. Уже открытые данные сохранены на экране.', 'error');
+          return;
+        }
+        const cached = loadAllData(cacheScope);
+        const hasPermittedCache =
+          (mayViewClients && cached.clients !== null)
+          || (mayViewTasks && cached.tasks !== null)
+          || (mayViewFinance && cached.transactions !== null);
+        if (hasPermittedCache) {
+          const cachedClients = mayViewClients
+            ? (cached.clients || []).map(c => mayViewCalendar ? c : { ...c, records: [] })
+            : [];
+          setClients(cachedClients);
+          setTasks(mayViewTasks ? (cached.tasks || []) : []);
+          setTransactions(mayViewFinance ? (cached.transactions || []) : []);
           setCategories(cached.categories || []);
           setTags(cached.tags || []);
           showToast('Загружены данные из кэша. Некоторые изменения могут быть неактуальны.', 'warning');
+        } else {
+          showToast('Не удалось загрузить данные. Уже открытые данные не изменены.', 'error');
         }
       } finally {
-        setIsLoading(false);
+        if (isCurrentLoad()) setIsLoading(false);
       }
     };
     
@@ -625,7 +690,8 @@ const App = () => {
     } else if (bootstrapState !== 'pending') {
       setIsLoading(false);
     }
-  }, [bootstrapState]);
+    return () => { cancelled = true; };
+  }, [bootstrapState, user?.id, user?.role, user?.permissions, user?.canViewFinance, studio?.id, dataRevision]);
 
   // Установка мета-тегов для iOS и мобильных устройств
   useEffect(() => {
@@ -687,6 +753,15 @@ const App = () => {
 
   const handleLogout = async () => {
     await logout();
+    setClients([]);
+    setTasks([]);
+    setTransactions([]);
+    setCategories([]);
+    setTags([]);
+    setStudioUsers([]);
+    setPriceList([]);
+    dataLoadedOnceRef.current = false;
+    loadedScopeRef.current = null;
     setUser(null);
     setStudio(null);
     setBootstrapState('guest');
@@ -745,26 +820,28 @@ const App = () => {
   }
 
   // ── Permissions для CRM-views ────────────────────────────────────────
-  // canEdit: master видит CRM в режиме просмотра. Owner/manager — могут писать.
-  //          Бэкенд защищён независимо (server/routes/tenant.cjs#canWrite),
-  //          этот флаг — только для UI: скрыть кнопки «Добавить», «Удалить»,
-  //          и открыть модалки в read-only.
+  // Права считаются отдельно для каждого раздела. Один общий canEdit здесь
+  // опасен: UI показывал кнопки, которые API отклонял с 403.
   // viewerCanViewFinance: учитывает роль + per-user флаг. Используется для
   //          фильтрации вкладок в TabBar и для рендера FinanceView.
   const userRole = (user?.role || 'owner') as Role;
-  const canEdit = canEditEntities(userRole);
-  // Задачи — единственный блок, где мастер тоже пишет. См. canEditTasks().
-  const canEditTasksFlag = canEditTasks(userRole);
-  const viewerCanViewFinance = canViewFinance(userRole, user?.canViewFinance);
+  const sectionPermissions = user?.permissions as SectionPermissions | null | undefined;
+  const canEditClients = canEditSection(userRole, sectionPermissions, 'clients');
+  const canEditCalendar = canEditSection(userRole, sectionPermissions, 'calendar');
+  const canEditTasksFlag = canEditTasks(userRole, sectionPermissions);
+  const canEditFinance = canEditSection(userRole, sectionPermissions, 'finance', user?.canViewFinance);
+  const viewerCanViewFinance = canViewFinance(userRole, user?.canViewFinance, sectionPermissions);
 
   // Если активная вкладка — finance, но текущий пользователь её не видит
   // (master или manager со снятым флагом), молча переключаемся на clients.
   // Происходит, например, если owner снял у менеджера can_view_finance,
   // и тот переоткрыл /me — в кэше ещё стояла финансовая вкладка.
-  if (activeTab === 'finance' && !viewerCanViewFinance) {
+  const availableTabs = getAvailableTabs(userRole, user?.canViewFinance, sectionPermissions)
+    .filter(tab => tab !== 'admin');
+  if (!availableTabs.includes(activeTab)) {
     // Используем setTimeout (микро-deferred), чтобы не делать setState прямо
     // в render-фазе. На следующем тике activeTab уйдёт на 'clients'.
-    setTimeout(() => setActiveTabPersist('clients'), 0);
+    setTimeout(() => setActiveTabPersist(availableTabs[0] || 'clients'), 0);
   }
 
   const createAndSaveTransaction = async (data: {
@@ -822,6 +899,7 @@ const App = () => {
   };
 
   const createRecordTransactions = async (rec: any, client: any, savedRecordId: any) => {
+      if (!canEditFinance) return;
       const carInfo = `${client.carBrand || ''} ${client.carModel || ''}`.trim();
       const service = rec.service || 'Услуга';
 
@@ -859,6 +937,7 @@ const App = () => {
   };
 
   const createEditRecordTransactions = async (rec: any, oldRecord: any, client: any, savedRecordId: any) => {
+      if (!canEditFinance) return;
       const carInfo = `${client.carBrand || ''} ${client.carModel || ''}`.trim();
       const service = rec.service || 'Услуга';
 
@@ -911,77 +990,21 @@ const App = () => {
         showToast(Object.values(clientErrors)[0], 'error');
         return false;
       }
-      const now = Date.now();
-      const tempId = `temp_${now}`;
-
-      const recordsWithIds = (recs || []).map((rec, idx) => ({
-        ...rec,
-        id: `temp_rec_${now}_${idx}`
-      }));
-
-      const tasksWithIds = (tks || []).map((t, idx) => ({
-        ...t,
-        id: `temp_task_${now}_${idx}`,
-        clientId: tempId,
-        clientName: data.name,
-        completed: false
-      }));
-
-      const entry = {
-        ...data,
-        id: tempId,
-        createdDate: getDateStr(0),
-        records: recordsWithIds
-      };
-
-      setClients(prev => [entry, ...prev]);
-
-      if (tasksWithIds.length > 0) {
-        setTasks(prev => [...tasksWithIds, ...prev]);
+      if ((tks && tks.length > 0) || (recs && recs.length > 0)) {
+        showToast('Сначала сохраните клиента, затем добавьте запись или задачу в его карточке.', 'warning');
+        return false;
       }
-
       try {
         const savedClient = await api.createClient(buildClientPayload(data));
-        const realId = savedClient.id;
-
-        setClients(prev => updateById(prev, tempId, { id: realId }));
-        // Tasks ссылаются на клиента через clientId (не первичный ключ),
-        // поэтому здесь ручной map — updateById смотрит только на item.id.
-        setTasks(prev => prev.map(t => t.clientId === tempId ? { ...t, clientId: realId } : t));
-
-        for (const rec of recordsWithIds) {
-          try {
-            const recordData = buildRecordPayload(rec, realId);
-
-            const savedRecord = await api.createClientRecord(recordData);
-            const oldRecId = rec.id;
-            setClients(prev => updateById(prev, realId, {
-              records: ((prev.find(cl => cl.id === realId)?.records) || [])
-                .map(r => r.id === oldRecId ? { ...r, id: savedRecord.id } : r)
-            } as any));
-
-            await createRecordTransactions(rec, data, savedRecord.id);
-          } catch (e) {
-            handleApiError(e, `Ошибка сохранения записи "${rec.service}". Попробуйте сохранить позже.`, 'createRecord');
-            setClients(prev => updateById(prev, realId, {
-              records: ((prev.find(cl => cl.id === realId)?.records) || [])
-                .map(r => r.id === rec.id ? { ...r, saveError: true } : r)
-            } as any));
-          }
-        }
-
-        for (const task of tasksWithIds) {
-          try {
-            const savedTask = await api.createTask(buildTaskPayload(task, { client_id: realId }));
-            setTasks(prev => updateById(prev, task.id, { id: savedTask.id, clientId: realId } as any));
-          } catch (e) {
-            console.error('[createTask]', e);
-            setTasks(prev => updateById(prev, task.id, { saveError: true } as any));
-          }
-        }
+        const savedEntry = normalizeClient(savedClient, []);
+        setClients(prev => prev.some(item => matchId(item.id, savedEntry.id))
+          ? updateById(prev, savedEntry.id, savedEntry)
+          : [savedEntry, ...prev]);
+        showToast('Клиент сохранён', 'success');
+        return savedEntry;
       } catch (error) {
-        console.error('[createClient]', error);
-        showToast('Нет связи с сервером. Данные клиента сохранены локально.', 'offline');
+        handleApiError(error, 'Клиент не сохранён. Проверьте доступ и попробуйте ещё раз.', 'createClient');
+        return false;
       }
   };
 
@@ -997,8 +1020,14 @@ const App = () => {
         records: [...((prev.find(cl => cl.id === clientId)?.records) || []), newRecord]
       } as any));
 
-      // Если клиент ещё не сохранён в БД - запись и транзакции создадутся после сохранения клиента
-      if (isClientNew) return;
+      if (isClientNew) {
+        setClients(prev => updateById(prev, clientId, {
+          records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+            .filter(r => r.id !== tempRecordId)
+        } as any));
+        showToast('Сначала сохраните клиента на сервере.', 'warning');
+        return false;
+      }
 
       try {
         const recordData = buildRecordPayload(rec, clientId);
@@ -1006,6 +1035,7 @@ const App = () => {
 
         setClients(prev => updateById(prev, clientId, {
           records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+            .filter(r => r.id === tempRecordId || !matchId(r.id, saved.id))
             .map(r => r.id === tempRecordId ? { ...r, id: saved.id } : r)
         } as any));
 
@@ -1025,6 +1055,10 @@ const App = () => {
   const handleEditRecord = async (clientId, recordId, rec) => {
       const c = clients.find(cl => cl.id === clientId);
       if (!c) return;
+      if (isTempId(clientId)) {
+        showToast('Сначала сохраните клиента на сервере.', 'warning');
+        return false;
+      }
       
       const oldRecord = (c.records || []).find(r => r.id === recordId);
       const newAdvance = parseFloat(rec.advance) || 0;
@@ -1074,6 +1108,10 @@ const App = () => {
       if (!c) return;
       const record = (c.records || []).find(r => r.id === recordId);
       if (!record) return;
+      if (isTempId(clientId) || isTempId(recordId)) {
+        showToast('Запись ещё не подтверждена сервером.', 'warning');
+        return false;
+      }
       
       // Защита от двойного клика
       if (processingRecords.has(recordId)) {
@@ -1123,7 +1161,7 @@ const App = () => {
           });
         }
 
-        if (!alreadyPaid && remainingAmount > 0 && !isClientTemp) {
+        if (canEditFinance && !alreadyPaid && remainingAmount > 0 && !isClientTemp) {
             try {
               await addTransaction(
                   remainingAmount,
@@ -1157,6 +1195,7 @@ const App = () => {
   };
   
   const deleteLinkedTransactions = async (recordId) => {
+      if (!canEditFinance) return;
       const linked = transactions.filter(t => t.client_record_id === recordId);
       for (const tx of linked) {
           try {
@@ -1174,23 +1213,26 @@ const App = () => {
       const record = (c.records || []).find(r => r.id === recordId);
       if (!record) return;
       
-      await deleteLinkedTransactions(recordId);
-      
-      setClients(prev => updateById(prev, clientId, {
-        records: ((prev.find(cl => cl.id === clientId)?.records) || [])
-          .map(r => r.id === recordId ? { ...r, isPaid: false, isCompleted: false, paymentStatus: 'none' } : r)
-      } as any));
+      if (isTempId(recordId)) {
+        showToast('Запись ещё не подтверждена сервером.', 'warning');
+        return false;
+      }
 
-      if (!isTempId(recordId)) {
-        try {
-          await api.updateClientRecord(recordId, {
-            is_paid: false,
-            is_completed: false,
-            payment_status: 'none'
-          });
-        } catch (error) {
-          console.error('[restoreRecord]', error);
-        }
+      try {
+        await api.updateClientRecord(recordId, {
+          is_paid: false,
+          is_completed: false,
+          payment_status: 'none'
+        });
+        setClients(prev => updateById(prev, clientId, {
+          records: ((prev.find(cl => cl.id === clientId)?.records) || [])
+            .map(r => r.id === recordId ? { ...r, isPaid: false, isCompleted: false, paymentStatus: 'none' } : r)
+        } as any));
+        await deleteLinkedTransactions(recordId);
+        return true;
+      } catch (error) {
+        handleApiError(error, 'Не удалось восстановить запись. Данные не изменены.', 'restoreRecord');
+        return false;
       }
   };
   
@@ -1309,14 +1351,20 @@ const App = () => {
       const oldTask = tasks.find(t => t.id === updatedTask.id);
       setTasks(prev => updateById(prev, updatedTask.id, updatedTask));
 
-      if (!isRealId(updatedTask.id)) return;
+      if (!isRealId(updatedTask.id)) {
+        if (oldTask) setTasks(prev => updateById(prev, updatedTask.id, oldTask));
+        showToast('Задача ещё не подтверждена сервером.', 'warning');
+        return false;
+      }
 
       try {
         await api.updateTask(updatedTask.id, buildTaskPayload(updatedTask));
+        return true;
       } catch (error) {
         // Откат: возвращаем старую задачу
         if (oldTask) setTasks(prev => updateById(prev, updatedTask.id, oldTask));
         handleApiError(error, 'Не удалось обновить задачу', 'updateTask');
+        return false;
       }
   };
 
@@ -1327,16 +1375,25 @@ const App = () => {
       // Добавляем в локальное состояние сразу (оптимистичное обновление)
       setTasks(prev => [newTask, ...prev]);
 
-      // Если клиент ещё не сохранён - задача сохранится вместе с клиентом.
-      if (task.clientId && isTempId(task.clientId)) return;
+      if (task.clientId && isTempId(task.clientId)) {
+        setTasks(prev => removeById(prev, tempId));
+        showToast('Сначала сохраните клиента на сервере.', 'warning');
+        return false;
+      }
 
       try {
         const saved = await api.createTask(buildTaskPayload(task));
-        setTasks(prev => updateById(prev, tempId, { id: saved.id, clientId: task.clientId || null } as any));
+        setTasks(prev => updateById(
+          prev.filter(item => item.id === tempId || !matchId(item.id, saved.id)),
+          tempId,
+          { id: saved.id, clientId: task.clientId || null } as any
+        ));
+        return true;
       } catch (error) {
         // Откат: убираем temp-задачу
         setTasks(prev => removeById(prev, tempId));
         handleApiError(error, 'Не удалось добавить задачу', 'createTask');
+        return false;
       }
   };
 
@@ -1509,15 +1566,15 @@ const App = () => {
       />
       
       <div className="flex-1 min-h-0 relative overflow-hidden bg-zinc-50">
-          {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} priceList={priceList} isOnline={isOnline} canEdit={canEdit} />}
+          {activeTab === 'clients' && <ClientsView allClients={clients} onAddClient={handleAddClient} onDeleteClient={handleDeleteClient} onOpenClient={setSelectedClient} onEditClient={setEditingClient} ClientForm={ClientForm} categories={categories} tags={tags} users={studioUsers} priceList={priceList} isOnline={isOnline} canEdit={canEditClients} canEditRecords={false} canEditTasks={false} />}
           {activeTab === 'tasks' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyTasksView tasks={tasks} onToggleTask={handleToggleTask} onAddTask={handleAddTask} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} clients={clients} onOpenClient={setSelectedClient} canEdit={canEditTasksFlag} /></React.Suspense>}
-          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} priceList={priceList} canEdit={canEdit} onAddClient={handleAddClient} ClientForm={ClientForm} /></React.Suspense>}
-          {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEdit} /></React.Suspense>}
+          {activeTab === 'calendar' && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><LazyCalendarView events={events} clients={clients} onAddRecord={handleAddRecord} onOpenClient={setSelectedClient} categories={categories} tags={tags} users={studioUsers} priceList={priceList} canEdit={canEditCalendar} canCreateClients={canEditClients} onAddClient={handleAddClient} ClientForm={ClientForm} /></React.Suspense>}
+          {activeTab === 'finance' && viewerCanViewFinance && <React.Suspense fallback={<div className="flex items-center justify-center h-full"><div className="animate-pulse text-zinc-400 font-bold">Загрузка...</div></div>}><FinanceView transactions={transactions} onAddTransaction={handleAddManualTransaction} onEditTransaction={handleEditTransaction} onDeleteTransaction={handleDeleteTransaction} categories={categories} onAddCategory={handleAddCategory} onEditCategory={handleEditCategory} onDeleteCategory={handleDeleteCategory} tags={tags} onAddTag={handleAddTag} onDeleteTag={handleDeleteTag} canEdit={canEditFinance} /></React.Suspense>}
 
-          {selectedClient && <ClientDetails client={clients.find(c => String(c.id) === String(selectedClient.id)) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={handleUpdateClientAvatar} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} priceList={priceList} userRole={userRole} canEdit={canEdit} />}
-          {editingClient && canEdit && <ClientForm client={editingClient.client} onSave={async (upd) => {const ok = await handleSaveClient(upd); if (ok === false) return; setEditingClient(null); if(String(selectedClient?.id) === String(upd.id)) setSelectedClient({...selectedClient, ...upd, records: selectedClient?.records || []});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} />}
+          {selectedClient && <ClientDetails client={clients.find(c => String(c.id) === String(selectedClient.id)) || selectedClient} tasks={tasks} onBack={() => setSelectedClient(null)} onEdit={() => setEditingClient({ client: selectedClient, mode: 'full' })} onDelete={() => {handleDeleteClient(selectedClient.id); setSelectedClient(null);}} onAddTask={handleAddTask} onToggleTask={handleToggleTask} onAddRecord={handleAddRecord} onEditRecord={handleEditRecord} onCompleteRecord={handleCompleteRecord} onRestoreRecord={handleRestoreRecord} onDeleteRecord={handleDeleteRecord} onDeleteTask={handleDeleteTask} onEditTask={handleEditTask} onUpdateAvatar={canEditClients ? handleUpdateClientAvatar : undefined} avatarSavingId={avatarSavingId} categories={categories} tags={tags} users={studioUsers} priceList={priceList} userRole={userRole} canEditClient={canEditClients} canEditRecords={canEditCalendar} canEditTasks={canEditTasksFlag} />}
+          {editingClient && canEditClients && <ClientForm client={editingClient.client} onSave={async (upd) => {const ok = await handleSaveClient(upd); if (ok === false) return; setEditingClient(null); if(String(selectedClient?.id) === String(upd.id)) setSelectedClient({...selectedClient, ...upd, records: selectedClient?.records || []});}} onCancel={() => setEditingClient(null)} title={'Редактирование'} categories={categories} tags={tags} users={studioUsers} priceList={priceList} canEditRecords={false} canEditTasks={false} />}
       </div>
-      <TabBar activeTab={activeTab} setActiveTab={setActiveTabPersist} userRole={userRole} financeFlag={user?.canViewFinance} onTabChange={() => setSelectedClient(null)} />
+      <TabBar activeTab={activeTab} setActiveTab={setActiveTabPersist} userRole={userRole} financeFlag={user?.canViewFinance} permissions={sectionPermissions} onTabChange={() => setSelectedClient(null)} />
 
       {/* LockScreen: подписка истекла. Перекрываем весь UI, оставляем
           один CTA — «Перейти к тарифам». Профиль не за requireActiveStudio,

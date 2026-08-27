@@ -111,6 +111,8 @@ CREATE TABLE IF NOT EXISTS {{schema}}.clients (
 CREATE INDEX IF NOT EXISTS idx_clients_phone   ON {{schema}}.clients(phone);
 CREATE INDEX IF NOT EXISTS idx_clients_name    ON {{schema}}.clients(name);
 CREATE INDEX IF NOT EXISTS idx_clients_created ON {{schema}}.clients(created_at DESC);
+ALTER TABLE {{schema}}.clients ADD COLUMN IF NOT EXISTS operation_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_operation_id ON {{schema}}.clients(operation_id);
 
 -- ─── Транспортные средства ───
 CREATE TABLE IF NOT EXISTS {{schema}}.vehicles (
@@ -208,6 +210,8 @@ CREATE INDEX IF NOT EXISTS idx_client_records_client  ON {{schema}}.client_recor
 CREATE INDEX IF NOT EXISTS idx_client_records_vehicle ON {{schema}}.client_records(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_client_records_date    ON {{schema}}.client_records(date DESC);
 CREATE INDEX IF NOT EXISTS idx_client_records_booking ON {{schema}}.client_records(booking_id);
+ALTER TABLE {{schema}}.client_records ADD COLUMN IF NOT EXISTS operation_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_client_records_operation_id ON {{schema}}.client_records(operation_id);
 
 -- ─── Финансовые транзакции ───
 CREATE TABLE IF NOT EXISTS {{schema}}.transactions (
@@ -258,6 +262,8 @@ CREATE TABLE IF NOT EXISTS {{schema}}.tasks (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {{schema}}.tasks ADD COLUMN IF NOT EXISTS operation_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_operation_id ON {{schema}}.tasks(operation_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON {{schema}}.tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON {{schema}}.tasks(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_tasks_due      ON {{schema}}.tasks(due_date)

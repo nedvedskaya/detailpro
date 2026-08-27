@@ -12,7 +12,7 @@ interface TaskItemProps {
     urgency?: string;
     clientName?: string;
   };
-  onToggle: (id: any) => void;
+  onToggle?: (id: any) => void;
   onDelete?: (id: any) => void;
   onEdit?: (task: any) => void;
   client?: {
@@ -59,13 +59,13 @@ export const TaskItem: React.FC<TaskItemProps> = ({
   return (
     <div className={cardCls} onClick={handleCardClick} role={task.completed ? undefined : 'button'}>
       <div className="flex items-center gap-2.5">
-        <button
+        {onToggle && <button
           type="button"
           onClick={stop(() => onToggle(task.id))}
           className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${task.completed ? 'bg-green-500 border-green-500 text-white' : 'border-zinc-300 hover:border-zinc-400'}`}
         >
           {task.completed && <CheckCircle2 size={12} />}
-        </button>
+        </button>}
         <div className="flex-1 min-w-0">
           {(client || task.clientName) && (
             <button
@@ -94,7 +94,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
             <span className={`text-[11px] ${isOverdue ? 'text-red-500 font-bold' : 'text-zinc-400'}`}>
               {formatDate(task.date)} • {formatTime(task.time)}
             </span>
-            {task.completed && (
+            {task.completed && onToggle && (
               <button
                 type="button"
                 onClick={stop(() => onToggle(task.id))}

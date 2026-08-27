@@ -364,6 +364,7 @@ export const normalizeTransaction = (t: any) => {
 };
 
 export const buildClientPayload = (data: any) => ({
+  operation_id: data.operationId || data.operation_id || null,
   name: data.name,
   phone: data.phone || '',
   email: data.email || '',
@@ -382,6 +383,7 @@ export const buildClientPayload = (data: any) => ({
 });
 
 export const buildTaskPayload = (task: any, overrides: Record<string, any> = {}) => ({
+  operation_id: task.operationId || task.operation_id || null,
   title: task.title || '',
   description: task.description || '',
   status: task.completed ? 'done' : 'pending',
@@ -394,6 +396,7 @@ export const buildTaskPayload = (task: any, overrides: Record<string, any> = {})
 });
 
 export const buildRecordPayload = (rec: any, clientId: number | string, overrides: Record<string, any> = {}) => ({
+  operation_id: rec.operationId || rec.operation_id || null,
   client_id: clientId,
   service_name: rec.service || rec.service_name || '',
   description: rec.service || rec.service_name || '',

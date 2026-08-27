@@ -12,10 +12,9 @@
 
 [Unit]
 Description=SaaS CRM (multi-tenant detailing)
-After=network.target
-# Если Postgres локальный, раскомментировать:
-# After=network.target postgresql.service
-# Wants=postgresql.service
+Requires=postgresql@16-main.service
+After=network.target postgresql@16-main.service
+PartOf=postgresql@16-main.service
 
 [Service]
 Type=simple
@@ -23,6 +22,7 @@ User=deploy
 Group=deploy
 WorkingDirectory=/var/www/saas-crm
 EnvironmentFile=/var/www/saas-crm/.env
+ExecStartPre=/usr/bin/pg_isready --host=127.0.0.1 --port=5432 --timeout=10
 ExecStart=/usr/bin/env node server/server.cjs
 Restart=on-failure
 RestartSec=3

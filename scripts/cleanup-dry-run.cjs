@@ -12,7 +12,7 @@
  *
  * Если результат устраивает — cron подхватит реальные удаления сам
  * (запускается раз в сутки). Чтобы прогнать реально без cron'а, запусти:
- *   RETENTION_DRY_RUN=false node -e "require('./server/lib/cleanup.cjs').runCleanup({dryRun:false}).then(r=>console.log(JSON.stringify(r,null,2)))"
+ *   RETENTION_DELETE_ENABLED=true RETENTION_DRY_RUN=false node -e "require('./server/lib/cleanup.cjs').runCleanup({dryRun:false}).then(r=>console.log(JSON.stringify(r,null,2)))"
  *
  * Параметры по умолчанию:
  *   RETENTION_AFTER_EXPIRY_DAYS = 30  (через 30 дней после истечения удаляем)

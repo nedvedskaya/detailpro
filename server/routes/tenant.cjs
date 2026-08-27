@@ -45,10 +45,13 @@ const router = express.Router();
 // Уровни: 'edit' (полный доступ), 'view' (только чтение), 'none' (скрыто).
 // Для пользователей без JSON permissions используется фолбэк на роль.
 const canWriteClients  = sectionGuard('clients',  'edit');
+const canViewClients   = sectionGuard('clients',  'view');
 const canWriteCalendar = sectionGuard('calendar', 'edit');
+const canViewCalendar  = sectionGuard('calendar', 'view');
 const canWriteFinance  = sectionGuard('finance',  'edit');
 const canViewFinanceGrd = sectionGuard('finance', 'view');
 const canWriteTasks    = sectionGuard('tasks',    'edit');
+const canViewTasks     = sectionGuard('tasks',    'view');
 
 // Алиас на parseId() из lib/validation.cjs — оставлен под старым именем,
 // чтобы не править все вызовы в этом файле (~50+). Семантика та же:
@@ -56,6 +59,14 @@ const canWriteTasks    = sectionGuard('tasks',    'edit');
 const badId = parseId;
 function nonEmptyString(v) {
   return typeof v === 'string' && v.trim().length > 0;
+}
+
+function normalizeOperationId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) {
+    return undefined;
+  }
+  return value.toLowerCase();
 }
 
 // Лимиты для tags (теги транзакций / бронирований).
@@ -74,7 +85,7 @@ function normalizeTags(raw, fieldName = 'tags') {
 // CLIENTS
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/clients', async (req, res, next) => {
+router.get('/clients', canViewClients, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT id, name, phone, email, city, source, notes, birth_date, avatar, card_color, created_at, updated_at
@@ -102,7 +113,7 @@ function normalizeClientCardColor(raw) {
 }
 
 router.post('/clients', canWriteClients, async (req, res, next) => {
-  const { name, phone, email, notes, source, city, birth_date, avatar, card_color, cardColor } = req.body || {};
+  const { name, phone, email, notes, source, city, birth_date, avatar, card_color, cardColor, operation_id } = req.body || {};
   let nameC, phoneC, emailC, notesC, sourceC, cityC;
   try {
     nameC   = assertString(name, 'name', CLIENT_NAME_MAX);
@@ -112,12 +123,16 @@ router.post('/clients', canWriteClients, async (req, res, next) => {
     sourceC = assertOptionalString(source, 'source', CLIENT_SOURCE_MAX);
     cityC   = assertOptionalString(city, 'city', CLIENT_CITY_MAX);
   } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+  const operationId = normalizeOperationId(operation_id);
+  if (operationId === undefined) return res.status(400).json({ error: 'invalid_operation_id' });
 
   const r = await queryInSchema(
     req.session.schemaName,
-    `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date, avatar, card_color)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-    [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null, normalizeClientCardColor(card_color ?? cardColor)]
+    `INSERT INTO {{schema}}.clients (name, phone, email, notes, source, city, birth_date, avatar, card_color, operation_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (operation_id) DO UPDATE SET operation_id = EXCLUDED.operation_id
+       RETURNING *`,
+    [nameC, phoneC, emailC, notesC, sourceC, cityC, birth_date || null, avatar || null, normalizeClientCardColor(card_color ?? cardColor), operationId]
   );
   logAction(req, 'create', 'client', r.rows[0].id, r.rows[0].name);
   // Помечаем первое создание клиента для воронки прогрева (no-op для повторных).
@@ -383,7 +398,7 @@ router.post('/clients/bulk', canWriteClients, async (req, res, next) => {
 // VEHICLES
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/vehicles', async (req, res, next) => {
+router.get('/vehicles', canViewClients, async (req, res, next) => {
   const params = [];
   let where = '';
   if (req.query.client_id) {
@@ -445,7 +460,7 @@ router.delete('/vehicles/:id', canWriteClients, async (req, res, next) => {
 // SERVICES
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/services', async (req, res, next) => {
+router.get('/services', canViewCalendar, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT s.*, c.name AS category_name, c.color AS category_color
@@ -493,7 +508,7 @@ router.delete('/services/:id', canWriteCalendar, async (req, res, next) => {
 // ══════════════════════════════════════════════════════════════════════
 
 // SERVICE CATEGORIES
-router.get('/service-categories', async (req, res, next) => {
+router.get('/service-categories', canViewCalendar, async (req, res, next) => {
   const r = await queryInSchema(req.session.schemaName,
     `SELECT * FROM {{schema}}.categories WHERE type = 'service' ORDER BY name`);
   res.json(r.rows);
@@ -527,7 +542,7 @@ router.delete('/service-categories/:id', canWriteCalendar, async (req, res, next
 // BOOKINGS  (master_id JOIN на saas_meta.users)
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/bookings', async (req, res, next) => {
+router.get('/bookings', canViewCalendar, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT b.*,
@@ -724,7 +739,7 @@ router.delete('/transactions/:id', canWriteFinance, async (req, res, next) => {
 // TASKS
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/tasks', async (req, res, next) => {
+router.get('/tasks', canViewTasks, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT t.*, c.name AS client_name, u.name AS assigned_to_name
@@ -737,19 +752,23 @@ router.get('/tasks', async (req, res, next) => {
 });
 
 router.post('/tasks', canWriteTasks, async (req, res, next) => {
-  const { title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to } = req.body || {};
+  const { title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to, operation_id } = req.body || {};
   if (!nonEmptyString(title)) return res.status(400).json({ error: 'title_required' });
   let safeAssignedTo;
   try {
     safeAssignedTo = await assertUserInStudio(assigned_to, req.session.studioId, 'assigned_to');
   } catch (err) { if (handleFieldError(err, res)) return; throw err; }
+  const operationId = normalizeOperationId(operation_id);
+  if (operationId === undefined) return res.status(400).json({ error: 'invalid_operation_id' });
   const r = await queryInSchema(
     req.session.schemaName,
     `INSERT INTO {{schema}}.tasks
-       (title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+       (title, description, status, priority, due_date, due_time, client_id, vehicle_id, assigned_to, operation_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     ON CONFLICT (operation_id) DO UPDATE SET operation_id = EXCLUDED.operation_id
+     RETURNING *`,
     [title.trim(), description || null, status || 'pending', priority || 'medium',
-     due_date || null, due_time || null, badId(client_id), badId(vehicle_id), safeAssignedTo]
+     due_date || null, due_time || null, badId(client_id), badId(vehicle_id), safeAssignedTo, operationId]
   );
   logAction(req, 'create', 'task', r.rows[0].id, r.rows[0].title);
   res.status(201).json(r.rows[0]);
@@ -794,7 +813,7 @@ router.delete('/tasks/:id', canWriteTasks, async (req, res, next) => {
 // CLIENT_RECORDS  (история работ)
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/client-records', async (req, res, next) => {
+router.get('/client-records', canViewCalendar, async (req, res, next) => {
   const params = [];
   let where = '';
   if (req.query.client_id) {
@@ -822,11 +841,13 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
     client_id, vehicle_id, booking_id, service_name, description, amount,
     date, time, master_id, is_paid, is_completed, is_urgent,
     advance, advance_date, end_date, category_id, payment_status, tags, record_color, recordColor,
-    services: rawServices,
+    services: rawServices, operation_id,
   } = req.body || {};
   const cid = badId(client_id);
   if (!cid) return res.status(400).json({ error: 'client_id_required' });
   if (!date) return res.status(400).json({ error: 'date_required' });
+  const operationId = normalizeOperationId(operation_id);
+  if (operationId === undefined) return res.status(400).json({ error: 'invalid_operation_id' });
 
   // Multi-service: если фронт прислал массив services — он рулит. Бэк
   // перезапросит actual цены из прайса (защита от подмены), сложит amount,
@@ -858,8 +879,9 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
     `INSERT INTO {{schema}}.client_records
        (client_id, vehicle_id, booking_id, service_name, description, amount,
         date, time, master_id, is_paid, is_completed, is_urgent,
-        advance, advance_date, end_date, category_id, payment_status, tags, services, record_color)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb,$20)
+        advance, advance_date, end_date, category_id, payment_status, tags, services, record_color, operation_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19::jsonb,$20,$21)
+     ON CONFLICT (operation_id) DO UPDATE SET operation_id = EXCLUDED.operation_id
      RETURNING *`,
     [
       cid, badId(vehicle_id), badId(booking_id),
@@ -871,7 +893,7 @@ router.post('/client-records', canWriteCalendar, async (req, res, next) => {
       payment_status || 'none',
       JSON.stringify(normalizedTags),
       JSON.stringify(finalServices),
-      normalizeClientCardColor(record_color ?? recordColor),
+      normalizeClientCardColor(record_color ?? recordColor), operationId,
     ]
   );
   logAction(req, 'create', 'client_record', r.rows[0].id, finalServiceName);
@@ -1067,7 +1089,7 @@ router.delete('/tags/:id', canWriteFinance, async (req, res, next) => {
 // ENTITY_TAGS  (n:m связь tag → произвольная сущность)
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/entity-tags', async (req, res, next) => {
+router.get('/entity-tags', canViewClients, async (req, res, next) => {
   const params = [];
   const conds = [];
   if (req.query.entity_type) { params.push(req.query.entity_type); conds.push(`et.entity_type = $${params.length}`); }
@@ -1117,7 +1139,7 @@ router.delete('/entity-tags/:id', canWriteClients, async (req, res, next) => {
 // APP_DATA (kv-настройки)
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/data/:key', async (req, res, next) => {
+router.get('/data/:key', canViewClients, async (req, res, next) => {
   const r = await queryInSchema(
     req.session.schemaName,
     `SELECT value FROM {{schema}}.app_data WHERE key = $1`,

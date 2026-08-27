@@ -9,7 +9,9 @@
     "migrate:ugt": "node server/migrate_ugt.cjs",
     "start": "node server/server.cjs",
     "dev": "node --watch server/server.cjs",
-    "backup": "bash scripts/backup.sh"
+    "backup": "bash scripts/backup.sh",
+    "test:incident": "node --test server/lib/incident_regression.test.cjs",
+    "check:incident": "npm run test:incident && npm --prefix client run typecheck && npm --prefix client run build && bash -n scripts/backup.sh"
   },
   "dependencies": {
     "dotenv": "^17.0.0",

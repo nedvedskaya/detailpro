@@ -96,7 +96,7 @@ server.on('error', (err) => {
 });
 
 let shuttingDown = false;
-async function shutdown(signal) {
+async function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[saas-crm] received ${signal}, shutting down...`);
@@ -113,7 +113,7 @@ async function shutdown(signal) {
     try {
       await closePool();
       console.log('[saas-crm] graceful shutdown complete');
-      process.exit(0);
+      process.exit(exitCode);
     } catch (err) {
       console.error('[saas-crm] pool close error:', err.message);
       process.exit(1);
@@ -128,5 +128,5 @@ process.on('unhandledRejection', (reason) => {
 });
 process.on('uncaughtException', (err) => {
   console.error('[uncaughtException]', err);
-  // не валим процесс — пусть pm2/systemd рестартит при необходимости
+  void shutdown('uncaughtException', 1);
 });

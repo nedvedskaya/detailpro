@@ -1,11 +1,14 @@
 import { getDateStr } from './helpers';
 
+const newOperationId = (): string => crypto.randomUUID();
+
 /**
  * Начальные состояния форм. Параметр branch удалён вместе с понятием филиала
  * (SaaS multi-tenant модель — все записи в одной схеме студии).
  */
 
 export const getInitialTaskState = () => ({
+  operationId: newOperationId(),
   title: '',
   date: getDateStr(0),
   time: '12:00',
@@ -14,6 +17,7 @@ export const getInitialTaskState = () => ({
 });
 
 export const getInitialBookingState = (options?: { clientName?: string }) => ({
+  operationId: newOperationId(),
   ...(options?.clientName !== undefined && { clientName: options.clientName }),
   service: '',
   amount: '',
@@ -36,6 +40,7 @@ export const getInitialRecordState = () => getInitialBookingState();
  * Начальное состояние формы клиента (поле branch удалено).
  */
 export const getInitialClientState = () => ({
+  operationId: newOperationId(),
   createdAt: getDateStr(0),
   name: '',
   phone: '',

@@ -39,7 +39,7 @@ const multer = require('multer');
 const sharp = require('sharp');
 
 const { pool, queryInSchema } = require('../lib/db.cjs');
-const { requireRole } = require('../lib/middleware.cjs');
+const { sectionGuard } = require('../lib/middleware.cjs');
 const { markFirstEvent } = require('../lib/funnel.cjs');
 const { logFromReq: logAction } = require('../lib/audit.cjs');
 const {
@@ -81,8 +81,8 @@ const upload = multer({
   },
 });
 
-// Только owner и manager могут править документы; master — read-only.
-const canWrite = requireRole('owner', 'manager');
+const canView = sectionGuard('calendar', 'view');
+const canWrite = sectionGuard('calendar', 'edit');
 
 // ──────────────────────────────────────────────────────────────────────
 // Helpers
@@ -485,7 +485,7 @@ function validateZones(zones) {
 // ══════════════════════════════════════════════════════════════════════
 // Возвращает client + vehicle, известные из БД, чтобы фронт мог пред-заполнить
 // поля акта/наряда. Если vehicle нет, возвращаем null — фронт оставит поля пустыми.
-router.get('/document-context/:bookingId', async (req, res, next) => {
+router.get('/document-context/:bookingId', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.bookingId);
     if (!id) return res.status(400).json({ error: 'invalid_booking_id' });
@@ -503,7 +503,7 @@ router.get('/document-context/:bookingId', async (req, res, next) => {
 // WORK ORDERS
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/work-orders/:bookingId', async (req, res, next) => {
+router.get('/work-orders/:bookingId', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.bookingId);
     if (!id) return res.status(400).json({ error: 'invalid_booking_id' });
@@ -650,7 +650,7 @@ router.put('/work-orders/:bookingId', canWrite, async (req, res, next) => {
   }
 });
 
-router.get('/work-orders/:bookingId/pdf', async (req, res, next) => {
+router.get('/work-orders/:bookingId/pdf', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.bookingId);
     if (!id) return res.status(400).json({ error: 'invalid_booking_id' });
@@ -692,7 +692,7 @@ router.get('/work-orders/:bookingId/pdf', async (req, res, next) => {
 // ACCEPTANCE ACTS
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/acceptance-acts/:bookingId', async (req, res, next) => {
+router.get('/acceptance-acts/:bookingId', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.bookingId);
     if (!id) return res.status(400).json({ error: 'invalid_booking_id' });
@@ -802,7 +802,7 @@ router.put('/acceptance-acts/:bookingId', canWrite, async (req, res, next) => {
   }
 });
 
-router.get('/acceptance-acts/:bookingId/pdf', async (req, res, next) => {
+router.get('/acceptance-acts/:bookingId/pdf', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.bookingId);
     if (!id) return res.status(400).json({ error: 'invalid_booking_id' });
@@ -848,7 +848,7 @@ router.get('/acceptance-acts/:bookingId/pdf', async (req, res, next) => {
 // ORDER PHOTOS
 // ══════════════════════════════════════════════════════════════════════
 
-router.get('/order-photos', async (req, res, next) => {
+router.get('/order-photos', canView, async (req, res, next) => {
   try {
     const bookingId = badId(req.query.bookingId);
     if (!bookingId) return res.status(400).json({ error: 'booking_id_required' });
@@ -971,7 +971,7 @@ router.post('/order-photos', canWrite, (req, res, next) => {
 });
 
 // Стрим оригинала. requireActiveStudio + проверка, что фото принадлежит этой студии.
-router.get('/order-photos/:id/file', async (req, res, next) => {
+router.get('/order-photos/:id/file', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_id' });
@@ -989,7 +989,7 @@ router.get('/order-photos/:id/file', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.get('/order-photos/:id/thumb', async (req, res, next) => {
+router.get('/order-photos/:id/thumb', canView, async (req, res, next) => {
   try {
     const id = badId(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_id' });

@@ -89,6 +89,10 @@ async function main() {
       if (r.ok) console.log('  ✓ ' + r.schemaName);
       else      console.log('  ✗ ' + r.schemaName + ' — ' + r.error);
     }
+    const failed = results.filter((r) => !r.ok);
+    if (failed.length > 0) {
+      throw new Error(`tenant migrations failed: ${failed.map((r) => r.schemaName).join(', ')}`);
+    }
   }
 }
 

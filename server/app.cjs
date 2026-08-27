@@ -42,6 +42,16 @@ const app = express();
 // ──────────────────────────────────────────────────────────────────────
 app.set('trust proxy', 1);                // X-Forwarded-For для req.ip + secure cookies
 app.disable('x-powered-by');
+app.disable('etag');
+
+// CRM API всегда должен отражать текущее состояние БД. Браузерные/прокси 304
+// для динамических данных маскировали сбои загрузки и показывали старый снимок.
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 // pg возвращает DATE/TIME/TIMESTAMP как строки, без преобразования в JS Date.
 // Это поведение унаследовано из Crm-new-main (фронт ожидает строки).
@@ -241,6 +251,16 @@ app.use('/api', (req, res, next) => {
 // ──────────────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, ts: new Date().toISOString() });
+});
+
+app.get('/api/ready', async (req, res) => {
+  try {
+    const { query } = require('./lib/db.cjs');
+    await query('SELECT 1');
+    res.json({ ok: true, database: 'ready', ts: new Date().toISOString() });
+  } catch (err) {
+    res.status(503).json({ ok: false, database: 'unavailable' });
+  }
 });
 
 // ──────────────────────────────────────────────────────────────────────

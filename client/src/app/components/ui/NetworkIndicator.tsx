@@ -16,7 +16,7 @@ export const NetworkIndicator: React.FC<NetworkIndicatorProps> = ({ isOnline }) 
           ? 'bg-emerald-500 animate-pulse' 
           : 'bg-amber-500 animate-pulse'
       }`} />
-      <span>{isOnline ? 'В сети' : 'Офлайн-режим'}</span>
+      <span>{isOnline ? 'CRM доступна' : 'Сервер недоступен'}</span>
     </div>
   );
 };

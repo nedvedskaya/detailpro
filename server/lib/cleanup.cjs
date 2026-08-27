@@ -45,12 +45,22 @@ const tg = require('./telegram.cjs');
 const { applyGender } = require('./gender.cjs');
 
 // Через сколько дней после истечения access_until удаляем студию.
-const RETENTION_AFTER_EXPIRY_DAYS = Number(process.env.RETENTION_AFTER_EXPIRY_DAYS) || 30;
+function boundedInt(name, fallback, min, max) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+
+const RETENTION_AFTER_EXPIRY_DAYS = boundedInt('RETENTION_AFTER_EXPIRY_DAYS', 30, 1, 3650);
 // За сколько дней до удаления шлём предупреждение.
-const WARNING_BEFORE_DAYS = Number(process.env.RETENTION_WARNING_DAYS) || 7;
+const WARNING_BEFORE_DAYS = boundedInt('RETENTION_WARNING_DAYS', 7, 1, RETENTION_AFTER_EXPIRY_DAYS);
 // Максимум студий за один прогон cron-а.
-const DELETE_BATCH_LIMIT = Number(process.env.RETENTION_BATCH_LIMIT) || 10;
-const WARNING_BATCH_LIMIT = Number(process.env.RETENTION_WARNING_BATCH) || 50;
+const DELETE_BATCH_LIMIT = boundedInt('RETENTION_BATCH_LIMIT', 10, 1, 100);
+const WARNING_BATCH_LIMIT = boundedInt('RETENTION_WARNING_BATCH', 50, 1, 500);
 
 const APP_ORIGIN = (process.env.APP_ORIGIN || 'https://detailprocrm.ru').replace(/\/$/, '');
 
@@ -225,6 +235,29 @@ async function deleteStudio(studio, opts = {}) {
 
   let droppedSchema = false;
   await withTx(async (client) => {
+    // Повторная проверка под блокировкой закрывает race с оплатой/продлением
+    // между первоначальным SELECT кандидатов и разрушительным DELETE/DROP.
+    const eligible = await client.query(
+      `SELECT id, schema_name
+         FROM saas_meta.studios s
+        WHERE s.id = $1
+          AND (
+            (s.access_until < (now() - ($2 || ' days')::interval)
+             AND NOT EXISTS (
+               SELECT 1 FROM saas_meta.payments p
+                WHERE p.studio_id = s.id AND p.status = 'paid'
+                  AND p.received_at > (now() - ($2 || ' days')::interval)
+             ))
+            OR (s.deletion_requested_at IS NOT NULL
+                AND s.deletion_requested_at < (now() - ($2 || ' days')::interval))
+          )
+        FOR UPDATE`,
+      [studio.id, String(RETENTION_AFTER_EXPIRY_DAYS)]
+    );
+    if (eligible.rowCount !== 1 || eligible.rows[0].schema_name !== studio.schema_name) {
+      throw new Error('cleanup_candidate_no_longer_eligible');
+    }
+
     // 1. Снимаем consent.user_id (FK ON DELETE SET NULL — но если миграция
     //    013 ещё не накатилась на этом инстансе, явный UPDATE гарантирует
     //    что DELETE FROM users не упадёт).
@@ -278,7 +311,15 @@ async function deleteStudio(studio, opts = {}) {
 async function runCleanup(opts = {}) {
   const dryRun = !!opts.dryRun;
   const startedAt = Date.now();
-  const result = { warningsSent: 0, studiosDeleted: 0, errors: [] };
+  const result = { warningsSent: 0, studiosDeleted: 0, wouldDelete: 0, errors: [] };
+
+  // Удаление данных никогда не включается отсутствием флага. Для live-режима
+  // нужен отдельный осознанный opt-in в окружении.
+  if (!dryRun && (process.env.RETENTION_DELETE_ENABLED || '').toLowerCase() !== 'true') {
+    const summary = { ...result, disabled: true, dryRun: false, candidatesFound: 0, warningsCandidates: 0, durationMs: Date.now() - startedAt };
+    console.warn('[cleanup] destructive retention disabled; set RETENTION_DELETE_ENABLED=true to enable');
+    return summary;
+  }
 
   // 1. Warnings — отключены: их функцию выполняет funnel_dispatcher
   // (Day 24 = T+24 от access_until = за 7 дней до удаления). Раньше
@@ -297,8 +338,9 @@ async function runCleanup(opts = {}) {
 
   for (const s of candidates) {
     try {
-      await deleteStudio(s, { dryRun });
-      result.studiosDeleted++;
+      const deletion = await deleteStudio(s, { dryRun });
+      if (deletion && deletion.deleted === true) result.studiosDeleted++;
+      if (deletion && deletion.dryRun === true) result.wouldDelete++;
     } catch (err) {
       console.error(`[cleanup] deleteStudio failed for studio ${s.id}:`, err.message);
       result.errors.push({ stage: 'delete', studio_id: s.id, message: err.message });

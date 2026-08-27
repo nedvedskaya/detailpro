@@ -22,6 +22,8 @@ interface ClientsViewProps {
   priceList?: any[];
   isOnline?: boolean;
   canEdit?: boolean;
+  canEditRecords?: boolean;
+  canEditTasks?: boolean;
 }
 
 const sortOptions: { value: SortMode; label: string }[] = [
@@ -43,6 +45,8 @@ export const ClientsView = ({
   priceList = [],
   isOnline = true,
   canEdit = true,
+  canEditRecords = true,
+  canEditTasks = true,
 }: ClientsViewProps) => {
   const [isAdding, setIsAdding] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('date');
@@ -108,6 +112,8 @@ export const ClientsView = ({
           tags={tags}
           users={users}
           priceList={priceList}
+          canEditRecords={canEditRecords}
+          canEditTasks={canEditTasks}
         />
       )}
       

@@ -15,7 +15,7 @@ import type { ProfileResponse, Studio, StudioUser, ActivityLogEntry } from './ty
 
 const API_BASE = '/api';
 
-const baseInit: RequestInit = { credentials: 'include' };
+const baseInit: RequestInit = { credentials: 'include', cache: 'no-store' };
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 class ApiError extends Error {
@@ -100,7 +100,13 @@ function send<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, body
     method,
     headers: jsonHeaders,
     body: body === undefined ? undefined : JSON.stringify(body),
-  }).then(handleResponse<T>);
+  }).then(handleResponse<T>).then((data) => {
+    const crmPrefixes = ['/clients', '/tasks', '/client-records', '/transactions', '/categories', '/tags', '/services', '/service-categories', '/bookings', '/vehicles'];
+    if (crmPrefixes.some(prefix => path === prefix || path.startsWith(`${prefix}/`))) {
+      try { window.dispatchEvent(new CustomEvent('app:crm-mutated')); } catch (_) {}
+    }
+    return data;
+  });
 }
 
 function qs(params: Record<string, unknown> | undefined): string {

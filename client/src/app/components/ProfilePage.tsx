@@ -49,7 +49,7 @@ import { ChevronDown, ChevronLeft, Lock } from 'lucide-react';
 import { api } from '@/utils/api';
 import { translateApiError } from '@/utils/errorMessages';
 import { getRoleName } from '@/utils/constants';
-import { patchCachedUser } from '@/utils/auth';
+import { getUser, patchCachedUser } from '@/utils/auth';
 import {
   canEditStudio,
   canEditOwnProfile,
@@ -57,6 +57,7 @@ import {
   canManageReferrals,
   canManageServices,
   canEditEntities,
+  canViewSection,
 } from '@/utils/permissions';
 import { handleApiError } from '@/utils/stateHelpers';
 import { isValidEmail } from '@/utils/validation';
@@ -2033,7 +2034,7 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
             может только тот, кто их же и создаёт в обычном CRUD-флоу. Сервер
             перепроверяет на роли в POST /clients/bulk.
           */}
-          {canEditEntities(role) && (
+          {canEditEntities(role, getUser()?.permissions as any) && (
             <div className="px-6 py-4">
               <span className="text-xs text-zinc-400 block mb-2">База клиентов</span>
               <button
@@ -2165,12 +2166,12 @@ export const ProfilePage = ({ onBack, onServicesChange, scrollToTg }: ProfilePag
         {/* ── 3b. Прайс-лист услуг (owner + manager) ───────────────────
             Услуги используются в выпадашке «Из прайса» при создании
             заказ-наряда. Master видит этот раздел в режиме чтения. */}
-        <CollapsibleSection
+        {canViewSection(role, getUser()?.permissions as any, 'calendar') && <CollapsibleSection
           title="Прайс-лист услуг"
           subtitle="Используются при создании заказ-наряда"
         >
-          <ServicesManager canEdit={canManageServices(role)} onServicesChange={onServicesChange} />
-        </CollapsibleSection>
+          <ServicesManager canEdit={canManageServices(role, getUser()?.permissions as any)} onServicesChange={onServicesChange} />
+        </CollapsibleSection>}
 
         {/* ── 4+5. Подписка (объединена с тарифами) ────────────────
             Видна ТОЛЬКО собственнику. Менеджер/мастер — сотрудники студии,

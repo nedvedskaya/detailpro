@@ -421,7 +421,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.is_active, u.studio_id, u.permissions,
+      `SELECT u.id, u.email, u.name, u.password_hash, u.role, u.is_active, u.studio_id, u.permissions, u.can_view_finance,
               s.schema_name, s.is_active AS studio_active, s.access_until
          FROM saas_meta.users u
          JOIN saas_meta.studios s ON s.id = u.studio_id
@@ -517,7 +517,14 @@ router.post('/login', async (req, res, next) => {
 
     res.json({
       ok: true,
-      user: { id: user.id, email: user.email, role: user.role, permissions: user.permissions || null },
+      user: {
+        id: user.id,
+        name: user.name || '',
+        email: user.email,
+        role: user.role,
+        permissions: user.permissions || null,
+        canViewFinance: user.role === 'master' ? false : (user.role === 'owner' ? true : user.can_view_finance !== false),
+      },
       studio: { id: user.studio_id, schemaName: user.schema_name, accessUntil: user.access_until },
     });
   } catch (err) {

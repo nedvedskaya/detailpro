@@ -186,6 +186,16 @@ function sectionGuard(section, minLevel) {
     if (!req.session) return res.status(401).json({ error: 'unauthenticated' });
     const actual = _resolveSection(req.session, section);
     if ((_LEVEL_RANK[actual] || 0) >= (_LEVEL_RANK[minLevel] || 0)) return next();
+    console.warn(JSON.stringify({
+      event: 'permission_denied',
+      user_id: req.session.userId,
+      studio_id: req.session.studioId,
+      method: req.method,
+      path: req.originalUrl || req.url,
+      section,
+      required: minLevel,
+      actual,
+    }));
     return res.status(403).json({ error: 'forbidden' });
   };
 }

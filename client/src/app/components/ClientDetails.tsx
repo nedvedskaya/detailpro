@@ -25,7 +25,7 @@ interface ClientDetailsProps {
   onBack: () => void;
   tasks: any[];
   onEdit: () => void;
-  onAddTask: (task: any) => void;
+  onAddTask: (task: any) => Promise<boolean | void>;
   onDelete: () => void;
   onToggleTask: (id: any) => void;
   onAddRecord: (clientId: any, record: any) => Promise<boolean | void>;
@@ -34,7 +34,7 @@ interface ClientDetailsProps {
   onRestoreRecord: (clientId: any, recordId: any) => void;
   onDeleteRecord: (clientId: any, recordId: any) => void;
   onDeleteTask: (id: any) => void;
-  onEditTask: (task: any) => void;
+  onEditTask: (task: any) => Promise<boolean | void>;
   onUpdateAvatar?: (clientId: any, avatar: string | null) => void;
   avatarSavingId?: any;
   categories: any[];
@@ -43,17 +43,17 @@ interface ClientDetailsProps {
   // Прайс-лист услуг — для ServicesPicker внутри AppointmentInputs.
   priceList?: any[];
   userRole?: string;
-  // canEdit=false → master видит карточку клиента в режиме просмотра:
-  // скрываются кнопки «Редактировать» / «Удалить» в шапке, форма
-  // добавления задач/брони не показывается, поля профиля недоступны для правки.
-  canEdit?: boolean;
+  canEditClient?: boolean;
+  canEditRecords?: boolean;
+  canEditTasks?: boolean;
 }
 
 export const ClientDetails = ({
   client, onBack, tasks, onEdit, onAddTask, onDelete, onToggleTask,
   onAddRecord, onEditRecord, onCompleteRecord, onRestoreRecord, onDeleteRecord,
   onDeleteTask, onEditTask, onUpdateAvatar, avatarSavingId,
-  categories, tags = [], users = [], priceList = [], userRole = 'owner', canEdit = true,
+  categories, tags = [], users = [], priceList = [], userRole = 'owner',
+  canEditClient = true, canEditRecords = true, canEditTasks = true,
 }: ClientDetailsProps) => {
   const clientTasks = tasks.filter(t => t.clientId && client.id && String(t.clientId) === String(client.id));
   const activeTasks = clientTasks.filter(t => !t.completed);
@@ -69,6 +69,7 @@ export const ClientDetails = ({
   const [completingRecordId, setCompletingRecordId] = useState<any>(null);
   const [deletingRecordId, setDeletingRecordId] = useState<any>(null);
   const [savingRecord, setSavingRecord] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
   const cardColorHex = getClientCardColorHex(client.cardColor);
   // Открытое окно документа (акт приёмки / заказ-наряд) для конкретной брони.
   // null — закрыто. id здесь — bookingId; форма сама подгрузит/создаст документ.
@@ -103,6 +104,7 @@ export const ClientDetails = ({
   const handleEditTask = (task: any) => {
     setEditingTask(task);
     setNewTask({
+      operationId: task.operationId || task.operation_id || crypto.randomUUID(),
       title: task.title || '',
       date: task.date || getDateStr(0),
       time: task.time || '12:00',
@@ -112,20 +114,25 @@ export const ClientDetails = ({
     setIsAddingTask(true);
   };
   
-  const handleSaveTask = () => {
+  const handleSaveTask = async () => {
+    if (savingTask) return;
     const taskErrors = validateTask({ title: newTask.title });
     if (hasErrors(taskErrors)) {
       alert(Object.values(taskErrors)[0]);
       return;
     }
-    if (editingTask) {
-      onEditTask({ ...editingTask, ...newTask, urgency: newTask.isUrgent ? 'high' : 'low' });
+    setSavingTask(true);
+    try {
+      const result = editingTask
+        ? await onEditTask({ ...editingTask, ...newTask, urgency: newTask.isUrgent ? 'high' : 'low' })
+        : await onAddTask({...newTask, clientId: client.id, clientName: client.name, completed: false, urgency: newTask.isUrgent ? 'high' : 'low'});
+      if (result === false) return;
       setEditingTask(null);
-    } else {
-      onAddTask({...newTask, clientId: client.id, clientName: client.name, completed: false, urgency: newTask.isUrgent ? 'high' : 'low'});
+      setIsAddingTask(false);
+      setNewTask(getInitialTaskState());
+    } finally {
+      setSavingTask(false);
     }
-    setIsAddingTask(false);
-    setNewTask(getInitialTaskState());
   };
 
   const handleCancelTask = () => {
@@ -162,7 +169,7 @@ export const ClientDetails = ({
     >
       <div className="px-5 pb-4 bg-white border-b border-zinc-200 flex items-center justify-between shrink-0" style={{paddingTop: 'max(env(safe-area-inset-top, 12px), 48px)'}}>
         <button onClick={editingRecordId ? () => { setEditingRecordId(null); setNewRecord(getInitialRecordState()); } : onBack} className="flex items-center gap-1 text-zinc-600 font-bold"><ChevronLeft size={24} />{editingRecordId ? 'Назад к карточке' : 'Назад'}</button>
-        {!editingRecordId && canEdit
+        {!editingRecordId && canEditClient
           ? <div className="flex gap-4"><button onClick={onEdit} className="text-zinc-500 hover:text-black transition-colors"><Edit3 size={20} /></button><button onClick={onDelete} className="text-red-500 transition-colors"><Trash2 size={20} /></button></div>
           : <div />}
       </div>
@@ -175,7 +182,7 @@ export const ClientDetails = ({
               name={client.name}
               avatar={client.avatar}
               size="lg"
-              editable={!!onUpdateAvatar}
+              editable={canEditClient && !!onUpdateAvatar}
               expandable
               isSaving={avatarSavingId === client.id}
               onAvatarChange={(avatar) => onUpdateAvatar?.(client.id, avatar)}
@@ -261,7 +268,7 @@ export const ClientDetails = ({
         <div>
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-black text-orange-500 uppercase tracking-widest">{editingRecordId ? 'Редактирование записи' : 'Запись'}</span>
-            {!isAddingRecord && !editingRecordId && (
+            {canEditRecords && !isAddingRecord && !editingRecordId && (
               <button onClick={() => setIsAddingRecord(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>
                 + Добавить
               </button>
@@ -271,7 +278,7 @@ export const ClientDetails = ({
             <p className="text-sm text-zinc-500 font-medium mb-4">{client.name} — {newRecord.service || 'Без названия'}</p>
           )}
           
-          {(isAddingRecord || editingRecordId) && (
+          {canEditRecords && (isAddingRecord || editingRecordId) && (
             <div className="bg-white border border-zinc-200 p-4 rounded-xl space-y-4 mb-4">
               <AppointmentInputs data={newRecord} onChange={(e: any) => {
                 if (e.target.name === '_batch') {
@@ -403,7 +410,7 @@ export const ClientDetails = ({
                         )}
                       </div>
                     </div>
-                    {deletingRecordId === record.id ? (
+                    {canEditRecords && (deletingRecordId === record.id ? (
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
@@ -452,9 +459,9 @@ export const ClientDetails = ({
                           <Trash2 size={16} className="text-red-400" />
                         </button>
                       </div>
-                    )}
+                    ))}
                     {/* Документы по брони — акт приёмки + заказ-наряд. */}
-                    {deletingRecordId !== record.id && (
+                    {canEditRecords && deletingRecordId !== record.id && (
                       <div className="flex gap-2">
                         <button
                           onClick={() => setOpenDoc({
@@ -514,7 +521,7 @@ export const ClientDetails = ({
                             {record.isPaid && <PaymentBadge status="paid" size="sm" />}
                           </div>
                           
-                          <button 
+                          {canEditRecords && <button
                             onClick={() => {
                               if (window.confirm('Восстановить запись? Связанная транзакция будет удалена из финансов.')) {
                                 onRestoreRecord(client.id, record.id);
@@ -524,7 +531,7 @@ export const ClientDetails = ({
                             title="Восстановить запись"
                           >
                             <RotateCcw size={14} />
-                          </button>
+                          </button>}
                         </div>
                         <p className="text-base font-bold text-zinc-700">{String(record.service || '')}</p>
                         <div className="flex justify-between items-center">
@@ -533,7 +540,7 @@ export const ClientDetails = ({
                         </div>
                         {/* Быстрый доступ к документам выполненной брони —
                             чтобы вспомнить, что было сделано в прошлый раз. */}
-                        <div className="flex gap-2 pt-2">
+                        {canEditRecords && <div className="flex gap-2 pt-2">
                           <button
                             onClick={() => setOpenDoc({
                               bookingId: Number(record.id),
@@ -556,7 +563,7 @@ export const ClientDetails = ({
                             <FileText size={13} />
                             Заказ-наряд
                           </button>
-                        </div>
+                        </div>}
                       </div>
                     </div>
                   ))}
@@ -570,9 +577,9 @@ export const ClientDetails = ({
         {!editingRecordId && <div>
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-black text-zinc-400 uppercase tracking-widest">Задачи</span>
-            <button onClick={() => setIsAddingTask(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>+ Создать</button>
+            {canEditTasks && <button onClick={() => setIsAddingTask(true)} className={`text-xs font-bold px-3 py-1.5 rounded-lg ${BTN_METAL}`}>+ Создать</button>}
           </div>
-          {isAddingTask && (
+          {canEditTasks && isAddingTask && (
             <div className="bg-zinc-100 p-4 rounded-xl space-y-3 shadow-inner mb-4 animate-in fade-in">
               <TaskFormFields
                 taskData={{
@@ -589,14 +596,14 @@ export const ClientDetails = ({
               
               <div className="flex gap-2">
                 <Button variant="secondary" onClick={handleCancelTask} className="flex-1">Отмена</Button>
-                <Button variant="primary" onClick={handleSaveTask} className="flex-1">
-                  {editingTask ? 'Сохранить' : 'Добавить'}
+                <Button variant="primary" onClick={handleSaveTask} disabled={savingTask} className="flex-1">
+                  {savingTask ? 'Сохранение...' : (editingTask ? 'Сохранить' : 'Добавить')}
                 </Button>
               </div>
             </div>
           )}
-          <div className="space-y-2">{activeTasks.map(t => <TaskItem key={t.id} task={t} onToggle={onToggleTask} onDelete={onDeleteTask} onEdit={handleEditTask} />)}</div>
-          {completedTasks.length > 0 && (<div className="mt-6"><button onClick={() => setShowArchive(!showArchive)} className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all">Архив ({completedTasks.length}) <ChevronDown size={12} className={showArchive ? 'rotate-180' : ''} /></button>{showArchive && <div className="space-y-2 opacity-60 animate-in fade-in">{completedTasks.map(t => <TaskItem key={t.id} task={t} onToggle={onToggleTask} />)}</div>}</div>)}
+          <div className="space-y-2">{activeTasks.map(t => <TaskItem key={t.id} task={t} onToggle={canEditTasks ? onToggleTask : undefined} onDelete={canEditTasks ? onDeleteTask : undefined} onEdit={canEditTasks ? handleEditTask : undefined} />)}</div>
+          {completedTasks.length > 0 && (<div className="mt-6"><button onClick={() => setShowArchive(!showArchive)} className="flex items-center gap-2 text-xs font-bold text-zinc-400 uppercase tracking-widest mb-3 hover:text-zinc-600 transition-all">Архив ({completedTasks.length}) <ChevronDown size={12} className={showArchive ? 'rotate-180' : ''} /></button>{showArchive && <div className="space-y-2 opacity-60 animate-in fade-in">{completedTasks.map(t => <TaskItem key={t.id} task={t} onToggle={canEditTasks ? onToggleTask : undefined} />)}</div>}</div>)}
         </div>}
       </div>
 
