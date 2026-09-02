@@ -93,11 +93,11 @@ if [ "${DEPLOY_SKIP_CHECKS:-0}" != "1" ]; then
 fi
 
 # ── 1.6 Pre-deploy DB backup ───────────────────────────────────────────
-# Snapshot БД ПЕРЕД pull — на случай, если новый код или миграция испортят
-# данные. Daily-cron уже бэкапит, но между его запусками может пройти до 24ч.
+# Recovery point ПЕРЕД pull — на случай, если новый код или миграция испортят
+# данные. Та же systemd-служба кратко останавливает записи и сохраняет БД+var/.
 if [ "${DEPLOY_SKIP_BACKUP:-0}" != "1" ]; then
-  log "pre-deploy backup: ssh ${REMOTE} bash scripts/backup.sh"
-  if ! ssh "${REMOTE}" "cd ${DEPLOY_PATH} && bash scripts/backup.sh" 2>&1 | tail -10; then
+  log "pre-deploy backup: systemctl start saas-crm-backup.service"
+  if ! ssh -tt "${REMOTE}" "sudo -n /bin/systemctl start saas-crm-backup.service" 2>&1 | tail -10; then
     fail "pre-deploy backup упал. Деплой остановлен (или DEPLOY_SKIP_BACKUP=1 чтобы катить без бэкапа)."
   fi
 fi

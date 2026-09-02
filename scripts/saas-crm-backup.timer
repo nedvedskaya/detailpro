@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly DetailPro CRM backup
+
+[Timer]
+OnCalendar=*:05:00
+Persistent=true
+RandomizedDelaySec=120
+AccuracySec=1min
+Unit=saas-crm-backup.service
+
+[Install]
+WantedBy=timers.target

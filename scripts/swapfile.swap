@@ -1,0 +1,9 @@
+[Unit]
+Description=Swap file for DetailPro CRM VPS
+ConditionPathExists=/swapfile
+
+[Swap]
+What=/swapfile
+
+[Install]
+WantedBy=swap.target

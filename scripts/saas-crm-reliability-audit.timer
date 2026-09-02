@@ -1,0 +1,11 @@
+[Unit]
+Description=DetailPro CRM local reliability checks every five minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=saas-crm-reliability-audit.service
+
+[Install]
+WantedBy=timers.target

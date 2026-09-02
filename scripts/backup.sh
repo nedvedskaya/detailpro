@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# saas-crm: ежедневный pg_dump с проверкой целостности и ротацией.
+# saas-crm: полный recovery point (PostgreSQL + var/) с проверкой и ротацией.
 #
 # Запуск: bash scripts/backup.sh
-# Cron:   см. scripts/backup-cron.txt
+# Schedule: systemd unit saas-crm-backup.timer
 #
 # Как читать .env:
 #   set -a    # автоэкспорт переменных
@@ -30,10 +30,19 @@
 
 set -euo pipefail
 
+# The database and persistent files form one logical recovery point.  The
+# systemd unit stops application writes before invoking this script; refusing
+# direct execution prevents a dump and a live file tree from drifting apart.
+if [ "${BACKUP_WRITES_QUIESCED:-0}" != "1" ]; then
+  echo "FAIL: backup requires BACKUP_WRITES_QUIESCED=1 from saas-crm-backup.service" >&2
+  exit 1
+fi
+
 # ── 1. Чтение .env ────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_ROOT/.env"
+cd "$PROJECT_ROOT"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "[$(date -Iseconds)] FAIL: .env не найден в $PROJECT_ROOT" >&2
@@ -73,7 +82,7 @@ DB_PASSWORD="$(get_env_var DB_PASSWORD)"
 DB_CA_CERT_PATH="$(get_env_var DB_CA_CERT_PATH)"
 BACKUP_DIR="$(get_env_var BACKUP_DIR)"
 BACKUP_RETENTION_DAYS="$(get_env_var BACKUP_RETENTION_DAYS)"
-AVATARS_DIR_RAW="$(get_env_var AVATARS_DIR)"
+PERSISTENT_DATA_DIR_RAW="$(get_env_var PERSISTENT_DATA_DIR)"
 PGSSLMODE_RAW="$(get_env_var PGSSLMODE)"
 
 # ── 2. Валидация переменных ───────────────────────────────────────────
@@ -84,6 +93,12 @@ PGSSLMODE_RAW="$(get_env_var PGSSLMODE)"
 : "${DB_PASSWORD:?DB_PASSWORD не задан}"
 : "${BACKUP_DIR:?BACKUP_DIR не задан}"
 : "${BACKUP_RETENTION_DAYS:=14}"
+
+[[ "$BACKUP_RETENTION_DAYS" =~ ^[0-9]+$ ]] || { echo "FAIL: BACKUP_RETENTION_DAYS must be an integer" >&2; exit 1; }
+if [ "$BACKUP_RETENTION_DAYS" -lt 1 ] || [ "$BACKUP_RETENTION_DAYS" -gt 365 ]; then
+  echo "FAIL: BACKUP_RETENTION_DAYS must be between 1 and 365" >&2
+  exit 1
+fi
 
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
@@ -98,15 +113,26 @@ fi
 
 # Логи помечаем меткой времени
 TS="$(date +%Y%m%d-%H%M%S)-$$"
+BACKUP_STARTED_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DUMP_FILE="$BACKUP_DIR/saas-${TS}.dump"
 DUMP_PARTIAL="$DUMP_FILE.partial"
-AVATARS_PARTIAL=""
+FILES_TGZ=""
+FILES_PARTIAL=""
+MANIFEST_FILE=""
+MANIFEST_PARTIAL=""
+BACKUP_COMPLETE=0
 LOG_PREFIX="[$(date -Iseconds)]"
 
 cleanup_partial() {
   rm -f "$DUMP_PARTIAL"
   rm -f "$DUMP_PARTIAL.toc"
-  if [ -n "$AVATARS_PARTIAL" ]; then rm -f "$AVATARS_PARTIAL"; fi
+  if [ -n "$FILES_PARTIAL" ]; then rm -f "$FILES_PARTIAL"; fi
+  if [ -n "$MANIFEST_PARTIAL" ]; then rm -f "$MANIFEST_PARTIAL"; fi
+  if [ "$BACKUP_COMPLETE" != "1" ]; then
+    rm -f "$DUMP_FILE" "$DUMP_FILE.sha256"
+    if [ -n "$FILES_TGZ" ]; then rm -f "$FILES_TGZ" "$FILES_TGZ.sha256"; fi
+    if [ -n "$MANIFEST_FILE" ]; then rm -f "$MANIFEST_FILE"; fi
+  fi
 }
 trap cleanup_partial EXIT
 
@@ -126,6 +152,62 @@ fail() {
   echo "$LOG_PREFIX FAIL: $1" >&2
   exit 1
 }
+
+# Conservative capacity metadata is recorded from the source, not inferred
+# from compressed archives.  Restore verification uses it before creating a
+# second database or extracting files.
+psql_scalar() {
+  psql \
+    --host="$DB_HOST" \
+    --port="$DB_PORT" \
+    --username="$DB_USER" \
+    --dbname="$DB_NAME" \
+    --no-align --tuples-only \
+    --command="$1" | tr -d '[:space:]'
+}
+
+DB_SOURCE_BYTES="$(psql_scalar 'select pg_database_size(current_database());')"
+[[ "$DB_SOURCE_BYTES" =~ ^[0-9]+$ ]] || fail "could not determine source database size"
+
+STUDIOS_SOURCE_COUNT="$(psql_scalar 'select count(*) from saas_meta.studios;')"
+TENANT_SCHEMA_OUTPUT="$(psql \
+  --host="$DB_HOST" --port="$DB_PORT" --username="$DB_USER" --dbname="$DB_NAME" \
+  --no-align --tuples-only \
+  --command="select nspname from pg_namespace where nspname like 'studio\\_%' escape '\\' order by nspname;")"
+CLIENTS_SOURCE_COUNT=0
+RECORDS_SOURCE_COUNT=0
+TASKS_SOURCE_COUNT=0
+TENANT_SCHEMA_SOURCE_COUNT=0
+while IFS= read -r tenant_schema; do
+  [ -n "$tenant_schema" ] || continue
+  [[ "$tenant_schema" =~ ^studio_[a-z0-9_]+$ ]] || fail "unsafe tenant schema name: $tenant_schema"
+  tenant_clients="$(psql_scalar "select count(*) from \"$tenant_schema\".clients;")"
+  tenant_records="$(psql_scalar "select count(*) from \"$tenant_schema\".client_records;")"
+  tenant_tasks="$(psql_scalar "select count(*) from \"$tenant_schema\".tasks;")"
+  for entity_count in "$tenant_clients" "$tenant_records" "$tenant_tasks"; do
+    [[ "$entity_count" =~ ^[0-9]+$ ]] || fail "could not determine critical entity counts"
+  done
+  CLIENTS_SOURCE_COUNT=$((CLIENTS_SOURCE_COUNT + tenant_clients))
+  RECORDS_SOURCE_COUNT=$((RECORDS_SOURCE_COUNT + tenant_records))
+  TASKS_SOURCE_COUNT=$((TASKS_SOURCE_COUNT + tenant_tasks))
+  TENANT_SCHEMA_SOURCE_COUNT=$((TENANT_SCHEMA_SOURCE_COUNT + 1))
+done <<< "$TENANT_SCHEMA_OUTPUT"
+for entity_count in "$STUDIOS_SOURCE_COUNT" "$TENANT_SCHEMA_SOURCE_COUNT" "$CLIENTS_SOURCE_COUNT" "$RECORDS_SOURCE_COUNT" "$TASKS_SOURCE_COUNT"; do
+  [[ "$entity_count" =~ ^[0-9]+$ ]] || fail "invalid critical entity count"
+done
+
+PERSISTENT_DATA_DIR="${PERSISTENT_DATA_DIR_RAW:-$PROJECT_ROOT/var}"
+[ -d "$PERSISTENT_DATA_DIR" ] || fail "каталог постоянных файлов не найден: $PERSISTENT_DATA_DIR"
+if find "$PERSISTENT_DATA_DIR" -type l -print -quit | grep -q .; then
+  fail "persistent data contains a symlink"
+fi
+if find "$PERSISTENT_DATA_DIR" ! -type d ! -type f -print -quit | grep -q .; then
+  fail "persistent data contains an unsupported special file"
+fi
+FILES_SOURCE_COUNT="$(find "$PERSISTENT_DATA_DIR" -type f -printf '.' | wc -c | tr -d ' ')"
+FILES_REGULAR_BYTES="$(find "$PERSISTENT_DATA_DIR" -type f -printf '%s\n' | awk '{sum += $1} END {print sum + 0}')"
+[[ "$FILES_SOURCE_COUNT" =~ ^[0-9]+$ ]] || fail "could not determine persistent file count"
+[[ "$FILES_REGULAR_BYTES" =~ ^[0-9]+$ ]] || fail "could not determine persistent file size"
 
 # ── 4. pg_dump ────────────────────────────────────────────────────────
 echo "$LOG_PREFIX pg_dump → $DUMP_PARTIAL"
@@ -165,26 +247,50 @@ chmod 600 "$DUMP_FILE.sha256"
 SIZE=$(du -h "$DUMP_FILE" | awk '{print $1}')
 echo "$LOG_PREFIX OK: размер $SIZE, записей в TOC $ENTRIES"
 
-# ── 6. Аватары пользователей ──────────────────────────────────────────
-# Не пихаем в pg_dump (раздулся бы). tar отдельным файлом, ротация общая.
-# AVATARS_DIR можно переопределить в .env, по умолчанию — стандартное место.
-AVATARS_DIR="${AVATARS_DIR_RAW:-$PROJECT_ROOT/var/avatars}"
-AVATARS_TGZ="$BACKUP_DIR/avatars-${TS}.tgz"
-AVATARS_PARTIAL="$AVATARS_TGZ.partial"
-if [ -d "$AVATARS_DIR" ]; then
-  echo "$LOG_PREFIX tar avatars/ → $AVATARS_TGZ"
-  if tar -C "$(dirname "$AVATARS_DIR")" -czf "$AVATARS_PARTIAL" "$(basename "$AVATARS_DIR")" 2>/dev/null; then
-    chmod 600 "$AVATARS_PARTIAL"
-    mv "$AVATARS_PARTIAL" "$AVATARS_TGZ"
-    AVATARS_SIZE=$(du -h "$AVATARS_TGZ" | awk '{print $1}')
-    echo "$LOG_PREFIX OK avatars: $AVATARS_SIZE"
-  else
-    echo "$LOG_PREFIX WARN: tar avatars failed (продолжаем — БД сохранена)" >&2
-    rm -f "$AVATARS_PARTIAL"
-  fi
-else
-  echo "$LOG_PREFIX skip avatars: $AVATARS_DIR не существует"
+# ── 6. Все постоянные файлы CRM ───────────────────────────────────────
+# В var/ находятся не только аватары, но и фотографии заказов, миниатюры
+# и сформированные документы. Ошибка архивации делает recovery point
+# неполным, поэтому такой запуск обязан завершиться ошибкой.
+FILES_TGZ="$BACKUP_DIR/files-${TS}.tgz"
+FILES_PARTIAL="$FILES_TGZ.partial"
+echo "$LOG_PREFIX tar persistent data → $FILES_TGZ"
+if ! tar -C "$(dirname "$PERSISTENT_DATA_DIR")" -czf "$FILES_PARTIAL" "$(basename "$PERSISTENT_DATA_DIR")"; then
+  fail "tar persistent data failed"
 fi
+chmod 600 "$FILES_PARTIAL"
+mv "$FILES_PARTIAL" "$FILES_TGZ"
+sha256sum "$FILES_TGZ" > "$FILES_TGZ.sha256"
+chmod 600 "$FILES_TGZ.sha256"
+FILES_SIZE=$(du -h "$FILES_TGZ" | awk '{print $1}')
+echo "$LOG_PREFIX OK persistent data: $FILES_SIZE"
+
+# Off-site процесс использует только точки, для которых manifest был
+# опубликован последним атомарным mv после успешной БД и всех файлов.
+MANIFEST_FILE="$BACKUP_DIR/recovery-${TS}.manifest"
+MANIFEST_PARTIAL="$MANIFEST_FILE.partial"
+cat > "$MANIFEST_PARTIAL" <<EOF
+format_version=2
+backup_started_utc=$BACKUP_STARTED_UTC
+backup_completed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+database_file=$(basename "$DUMP_FILE")
+database_sha256=$(sha256sum "$DUMP_FILE" | awk '{print $1}')
+database_bytes=$(stat -c %s "$DUMP_FILE")
+database_source_bytes=$DB_SOURCE_BYTES
+database_toc_entries=$ENTRIES
+studios_count=$STUDIOS_SOURCE_COUNT
+tenant_schemas_count=$TENANT_SCHEMA_SOURCE_COUNT
+clients_count=$CLIENTS_SOURCE_COUNT
+client_records_count=$RECORDS_SOURCE_COUNT
+tasks_count=$TASKS_SOURCE_COUNT
+files_file=$(basename "$FILES_TGZ")
+files_sha256=$(sha256sum "$FILES_TGZ" | awk '{print $1}')
+files_bytes=$(stat -c %s "$FILES_TGZ")
+files_uncompressed_bytes=$FILES_REGULAR_BYTES
+files_count=$FILES_SOURCE_COUNT
+EOF
+chmod 600 "$MANIFEST_PARTIAL"
+mv "$MANIFEST_PARTIAL" "$MANIFEST_FILE"
+BACKUP_COMPLETE=1
 
 # ── 7. Lastrun-маркер для внешнего мониторинга ────────────────────────
 date -Iseconds > "$BACKUP_DIR/.lastrun.timestamp.$$"
@@ -192,7 +298,7 @@ mv "$BACKUP_DIR/.lastrun.timestamp.$$" "$BACKUP_DIR/lastrun.timestamp"
 
 # ── 8. Ротация ────────────────────────────────────────────────────────
 echo "$LOG_PREFIX ротация: старше ${BACKUP_RETENTION_DAYS} дней"
-find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'saas-*.dump' -o -name 'saas-*.dump.sha256' -o -name 'avatars-*.tgz' \) \
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'saas-*.dump' -o -name 'saas-*.dump.sha256' -o -name 'avatars-*.tgz' -o -name 'files-*.tgz' -o -name 'files-*.tgz.sha256' -o -name 'recovery-*.manifest' \) \
      -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete || true
 
 echo "$LOG_PREFIX done"

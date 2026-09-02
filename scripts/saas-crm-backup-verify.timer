@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly DetailPro CRM recovery drill
+
+[Timer]
+OnCalendar=Sun *-*-* 01:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+Unit=saas-crm-backup-verify.service
+
+[Install]
+WantedBy=timers.target

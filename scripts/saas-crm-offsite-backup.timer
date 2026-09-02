@@ -1,0 +1,12 @@
+[Unit]
+Description=Hourly encrypted DetailPro CRM off-site backup
+
+[Timer]
+OnCalendar=*:20:00
+Persistent=true
+RandomizedDelaySec=120
+AccuracySec=1min
+Unit=saas-crm-offsite-backup.service
+
+[Install]
+WantedBy=timers.target

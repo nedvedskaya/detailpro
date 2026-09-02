@@ -93,6 +93,76 @@ test('backup uses lock, partial file and unique timestamped final name', () => {
   assert.match(source, /DUMP_PARTIAL=.*\.partial/);
   assert.match(source, /saas-\$\{TS\}\.dump/);
   assert.match(source, /mv "\$DUMP_PARTIAL" "\$DUMP_FILE"/);
+  assert.match(source, /BACKUP_WRITES_QUIESCED/);
+  assert.match(source, /BACKUP_COMPLETE=0/);
+  assert.match(source, /rm -f "\$DUMP_FILE" "\$DUMP_FILE\.sha256"/);
+  assert.ok(source.indexOf('BACKUP_COMPLETE=1') > source.indexOf('mv "$MANIFEST_PARTIAL" "$MANIFEST_FILE"'));
+});
+
+test('backup completion requires database and all persistent CRM files', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../scripts/backup.sh'), 'utf8');
+  assert.match(source, /PERSISTENT_DATA_DIR=.*\$PROJECT_ROOT\/var/);
+  assert.match(source, /files-\$\{TS\}\.tgz/);
+  assert.match(source, /fail "tar persistent data failed"/);
+  assert.match(source, /database_sha256=/);
+  assert.match(source, /files_sha256=/);
+  assert.match(source, /database_source_bytes=/);
+  assert.match(source, /files_uncompressed_bytes=/);
+  assert.match(source, /clients_count=\$CLIENTS_SOURCE_COUNT/);
+  assert.match(source, /client_records_count=\$RECORDS_SOURCE_COUNT/);
+  assert.match(source, /tasks_count=\$TASKS_SOURCE_COUNT/);
+  assert.ok(source.indexOf('mv "$MANIFEST_PARTIAL" "$MANIFEST_FILE"') < source.lastIndexOf('lastrun.timestamp'));
+});
+
+test('off-site backup fails closed on stale, incomplete or public recovery targets', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../scripts/offsite-backup.sh'), 'utf8');
+  assert.match(source, /recovery-\*\.manifest/);
+  assert.match(source, /newest completed recovery point is stale/);
+  assert.match(source, /SOURCE_STARTED_EPOCH/);
+  assert.match(source, /HOURLY_KEY=.*SOURCE_STARTED_EPOCH/);
+  assert.match(source, /database_sha256/);
+  assert.match(source, /files_sha256/);
+  assert.match(source, /refusing to upload CRM recovery data to a publicly visible GitHub repository/);
+  assert.match(source, /remote GitHub commit verification failed/);
+  assert.match(source, /unexpected file in off-site repository/);
+  assert.match(source, /already uploaded; success marker intentionally unchanged/);
+});
+
+test('restore drill cannot target production and restores database plus files', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../scripts/verify-backup-restore.sh'), 'utf8');
+  const firstDrop = source.indexOf('dropdb');
+  assert.ok(firstDrop > source.indexOf('saas_crm_restore_verify|saas_crm_restore_verify_*'));
+  assert.ok(firstDrop > source.indexOf('verification database must never equal the production database'));
+  assert.match(source, /pg_restore --no-owner --no-acl --exit-on-error/);
+  assert.match(source, /files\.tgz/);
+  assert.match(source, /files\/var\/documents/);
+  assert.match(source, /DB_SOURCE_BYTES \* 2 \+ FILES_SOURCE_BYTES \* 2/);
+  assert.match(source, /runuser -u nobody -- tar/);
+  assert.match(source, /restored database references \$MISSING_FILES missing persistent file/);
+  assert.match(source, /restored critical counts differ from manifest/);
+  assert.match(source, /extracted file inventory differs from manifest/);
+  assert.match(source, /could not read avatar references from restored database/);
+  assert.match(source, /could not read document references from restored schema/);
+  assert.doesNotMatch(source, /done < <\(runuser -u postgres -- psql/);
+});
+
+test('backup unit quiesces writes and always brings CRM back', () => {
+  const unit = fs.readFileSync(path.join(__dirname, '../../scripts/saas-crm-backup.service'), 'utf8');
+  const wrapper = fs.readFileSync(path.join(__dirname, '../../scripts/run-quiesced-backup.sh'), 'utf8');
+  const healthcheck = fs.readFileSync(path.join(__dirname, '../../scripts/healthcheck.sh'), 'utf8');
+  assert.match(unit, /run-quiesced-backup\.sh/);
+  assert.match(unit, /ExecStopPost=-\/bin\/systemctl start saas-crm\.service/);
+  assert.match(wrapper, /flock -x 8/);
+  assert.match(wrapper, /systemctl stop saas-crm\.service/);
+  assert.match(wrapper, /BACKUP_WRITES_QUIESCED=1/);
+  assert.match(healthcheck, /saas-crm-backup-quiesced/);
+  const lastReadyProbe = healthcheck.lastIndexOf('if is_ready');
+  const finalLock = healthcheck.indexOf('flock -n 8');
+  const restart = healthcheck.indexOf('systemctl restart saas-crm.service');
+  assert.ok(lastReadyProbe < finalLock && finalLock < restart);
+  const audit = fs.readFileSync(path.join(__dirname, '../../scripts/reliability-audit.sh'), 'utf8');
+  assert.match(audit, /flock -n 8/);
+  assert.match(audit, /audit skipped during coordinated maintenance/);
 });
 
 test('ambiguous POST retries are idempotent for clients, records and tasks', () => {

@@ -1,0 +1,29 @@
+name: Production reliability monitor
+
+on:
+  schedule:
+    # Avoid the first minute of the hour, when scheduled Actions are busiest.
+    - cron: "3-58/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-reliability-monitor
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check public readiness and database
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error \
+            --retry 3 --retry-delay 2 --retry-all-errors \
+            --connect-timeout 5 --max-time 15 \
+            https://detailprocrm.ru/api/ready)"
+          jq -e '.ok == true and .database == "ready"' <<<"$response" >/dev/null

@@ -1,0 +1,15 @@
+[Unit]
+Description=DetailPro CRM failure alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/www/saas-crm/scripts/notify-telegram.sh %i
+StateDirectory=saas-crm-alerts
+StateDirectoryMode=0700
+TimeoutStartSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/www/saas-crm/.env
+ReadWritePaths=/var/lib/saas-crm-alerts

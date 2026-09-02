@@ -1,0 +1,11 @@
+[Unit]
+Description=DetailPro CRM local readiness watchdog
+After=saas-crm.service
+OnFailure=saas-crm-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/www/saas-crm/scripts/healthcheck.sh
+TimeoutStartSec=60s
+ProtectHome=true
+PrivateTmp=true

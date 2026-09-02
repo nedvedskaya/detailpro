@@ -1,0 +1,23 @@
+[Unit]
+Description=Encrypted DetailPro CRM off-site backup to private GitHub repository
+After=network-online.target saas-crm-backup.service
+Wants=network-online.target
+OnFailure=saas-crm-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+EnvironmentFile=/etc/saas-crm/offsite-backup.env
+ExecStart=/bin/bash /var/www/saas-crm/scripts/offsite-backup.sh
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/var/backups/saas-crm /etc/saas-crm
+ReadWritePaths=/var/lib/saas-crm-offsite
+StateDirectory=saas-crm-offsite
+StateDirectoryMode=0700
+TimeoutStartSec=15min

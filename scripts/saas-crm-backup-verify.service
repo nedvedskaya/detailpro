@@ -1,0 +1,16 @@
+[Unit]
+Description=DetailPro CRM full backup restore verification
+After=postgresql@16-main.service saas-crm-backup.service
+Requires=postgresql@16-main.service
+OnFailure=saas-crm-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/www/saas-crm/scripts/verify-backup-restore.sh
+Nice=15
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/saas-crm /var/lib/postgresql /var/tmp
+TimeoutStartSec=20min

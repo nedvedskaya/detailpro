@@ -11,7 +11,7 @@
     "dev": "node --watch server/server.cjs",
     "backup": "bash scripts/backup.sh",
     "test:incident": "node --test server/lib/incident_regression.test.cjs",
-    "check:incident": "npm run test:incident && npm --prefix client run typecheck && npm --prefix client run build && bash -n scripts/backup.sh"
+    "check:incident": "npm run test:incident && npm --prefix client run typecheck && npm --prefix client run build && bash -n scripts/backup.sh scripts/run-quiesced-backup.sh scripts/offsite-backup.sh scripts/verify-backup-restore.sh scripts/healthcheck.sh scripts/reliability-audit.sh scripts/notify-telegram.sh scripts/deploy.sh"
   },
   "dependencies": {
     "dotenv": "^17.0.0",

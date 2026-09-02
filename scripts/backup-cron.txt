@@ -1,23 +1,9 @@
-# Образец crontab для ежедневного бэкапа saas-crm.
-# Установить:
-#     crontab -e
-# и вставить строку ниже (с поправкой пути).
-#
-# Время — 03:15 ночи локально, чтобы не пересекаться с пиковыми часами
-# студий (детейлинг работает обычно 9:00–21:00).
-#
-# Перенаправление в /var/log/saas-backup.log даёт историю запусков для
-# разбора инцидентов. logrotate для этого файла (отдельным конфигом):
-#     /var/log/saas-backup.log {
-#         weekly
-#         rotate 8
-#         compress
-#         missingok
-#         notifempty
-#     }
-
-CRON_TZ=Europe/Moscow
-15 3 * * * /var/www/saas-crm/scripts/backup.sh >> /var/log/saas-backup.log 2>&1
+# Архивный пример. Прямой cron-запуск backup.sh больше не поддерживается:
+# PostgreSQL и var/ должны сниматься при остановленных записях приложения.
+# Используйте saas-crm-backup.timer + saas-crm-backup.service. Журнал:
+#     journalctl -u saas-crm-backup.service
+# Старую строку cron с scripts/backup.sh необходимо удалить после включения
+# и проверки systemd timer, иначе она будет завершаться безопасной ошибкой.
 
 # Опционально — еженедельная чистка протухших сессий (понедельник 03:30):
 30 3 * * 1 cd /var/www/saas-crm && /usr/bin/node -e "require('./server/lib/auth.cjs').cleanupExpiredSessions().then(n => console.log('cleaned ' + n + ' sessions')).catch(e => { console.error(e.message); process.exit(1); })" >> /var/log/saas-cron.log 2>&1

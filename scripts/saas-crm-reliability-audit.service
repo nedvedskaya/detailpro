@@ -1,0 +1,14 @@
+[Unit]
+Description=DetailPro CRM local reliability deadman checks
+After=network-online.target saas-crm.service
+OnFailure=saas-crm-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/www/saas-crm/scripts/reliability-audit.sh
+TimeoutStartSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/backups/saas-crm -/var/lib/saas-crm-offsite /etc/saas-crm

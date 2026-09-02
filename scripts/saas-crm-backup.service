@@ -1,0 +1,19 @@
+[Unit]
+Description=DetailPro CRM verified PostgreSQL backup
+After=postgresql@16-main.service saas-crm.service
+Requires=postgresql@16-main.service
+OnFailure=saas-crm-failure-alert@%n.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/saas-crm
+ExecStart=/bin/bash /var/www/saas-crm/scripts/run-quiesced-backup.sh
+ExecStopPost=-/bin/systemctl start saas-crm.service
+ExecStopPost=-/usr/bin/rm -f /run/saas-crm-backup-quiesced
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/saas-crm /var/www/saas-crm/var /run
+TimeoutStartSec=30min
