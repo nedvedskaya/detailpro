@@ -12,3 +12,4 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadOnlyPaths=/var/backups/saas-crm -/var/lib/saas-crm-offsite /etc/saas-crm
+ReadWritePaths=/run

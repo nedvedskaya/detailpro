@@ -14,6 +14,6 @@ Nice=10
 IOSchedulingClass=idle
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 ReadWritePaths=/var/backups/saas-crm /var/www/saas-crm/var /run
 TimeoutStartSec=30min
